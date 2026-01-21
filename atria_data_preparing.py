@@ -14,7 +14,6 @@ from utils.surface_utils import (
     scale_to_unit_sphere, make_trimesh_from_pv,
     sample_surface_for_deepsdf,
     compute_signed_distance_o3d,
-    sample_sdf_near_surface,
 )
 
 from config import (
@@ -140,22 +139,42 @@ def make_surface_with_tags_watertight(surface_mesh: pv.PolyData, elemtagskey):
 
     surface_closed = pv.PolyData(vertices_fixed, faces_pv)
 
-    # just for sanity
-    surface_closed = surface_closed.clean(
-        tolerance=0.0,
-        inplace=True
-    )
-
     if not check_watertight(surface_closed):
         logger.warning(f"Mesh is not watertight (found boundary edges)")
 
     # mark patches holes cells
-    orig_face_sets = {} # to lookup faces, stored as tuples of actual vertices coordinates
-    for face_id, tri in enumerate(faces):  # faces = original triangles
-        key = frozenset(tuple(vertices[v]) for v in tri)
+    edge_lengths = np.linalg.norm(
+        vertices[faces[:, 0]] - vertices[faces[:, 1]],
+        axis=1
+    )
+    tol = 1e-3 * np.mean(edge_lengths) # to scale with actual mesh size
+    # orig_face_sets = {} # to lookup faces, stored as tuples of actual vertices coordinates
+    # for face_id, tri in enumerate(faces):  # faces = original triangles
+    #     # # ====== ❗ Why this is broken
+    #     # # You are:
+    #     # # comparing floating-point vertex coordinates
+    #     # # after MeshFix + clean + normals
+    #     # # expecting bitwise equality
+    #     # # This cannot be made reliable.
+    #     # key = frozenset(tuple(vertices[v]) for v in tri) # ---> This line relies on exact float equality and will always break eventually
+    #     # SOLUTION: "quantize" the vertex key
+    #     key = frozenset( tuple(np.round(vertices[v] / tol).astype(np.int64)) for v in tri) 
+    #     orig_face_sets[key] = clean_mesh.cell_data[elemtagskey][face_id]
+    orig_face_sets = {}
+    for face_id, tri in enumerate(faces):
+        key = frozenset(
+            tuple(np.round(vertices[v] / tol).astype(np.int64))
+            for v in tri
+        )
         orig_face_sets[key] = clean_mesh.cell_data[elemtagskey][face_id]
-        
-    closed_face_sets = [ frozenset(tuple(vertices_fixed[v]) for v in tri) for tri in faces_fixed ] # to iterate over: faces of original mesh + closed holes
+
+    closed_face_sets = [
+        frozenset(
+            tuple(np.round(vertices_fixed[v] / tol).astype(np.int64))
+            for v in tri
+        )
+        for tri in faces_fixed
+    ]# to iterate over: faces of original mesh + closed holes
 
     all_tags = np.full(len(faces_fixed), -1, dtype=clean_mesh.cell_data[elemtagskey].dtype) # original tags, default is -1 for new cells
 
@@ -204,6 +223,8 @@ def make_surface_with_tags_watertight(surface_mesh: pv.PolyData, elemtagskey):
 
     surface_closed.cell_data[elemtagskey] = tags
 
+
+
     return surface_closed
 
 def extract_raw_atria_surfaces(patient_name, source_dir, tags_metadata = ATRIA_TAGS_METADATA):
@@ -217,6 +238,8 @@ def extract_raw_atria_surfaces(patient_name, source_dir, tags_metadata = ATRIA_T
         logger.info("Extracting raw epicardium and left/right endocardium surfaces from original volume mesh ...")
         
         mesh = pv.read( mesh_path )
+
+        mesh.field_data.clear()
 
         if hasattr(mesh, "cell_data"):
             if "elemTag" in mesh.cell_data:
@@ -346,6 +369,10 @@ def extract_closed_atria_surfaces(patient_name, source_dir, tags_metadata = ATRI
         merged = merged.connectivity(extraction_mode = 'largest')
         LA_endo_surface = merged.extract_surface()
 
+        # clear field data that has been copied from patches or some original mesh stuff ...
+        for m in (epicardium_surface, LA_endo_surface, RA_endo_surface):
+            m.field_data.clear()
+
         #TODO: (I don't need it for now) add isholepatch cell data also in LA and RA again. They all have element tags data. 
 
     return {"epicardium_surface" : epicardium_surface, "LA_endo_surface" : LA_endo_surface, "RA_endo_surface" : RA_endo_surface}
@@ -356,6 +383,7 @@ def extract_processed_atria_surfaces(patient_name, reference_name, reference_mes
         then aligns them to the reference mesh, storing alignment data in the original mesh .vtu file, and returns
         the scaled, closed, and aligned surfaces.
     """
+
     patient_dir = Path(source_dir) / patient_name
 
     original_mesh_path = next( patient_dir.glob("*.vtu"), None)
@@ -371,34 +399,27 @@ def extract_processed_atria_surfaces(patient_name, reference_name, reference_mes
     RA_endo = extracted_surfaces["RA_endo_surface"]
     epicardium = extracted_surfaces["epicardium_surface"]
 
-    # align at the unit sphere scale (so center -> scale -> align to reference)
+    # center -> scale
     original_scaled = original_mesh.copy()
-    _, c, max_radius = scale_to_unit_sphere(original_scaled.points, return_transf_params=True)
-    #TODO: instead of scaling every mesh inside unit scale, pick ONE scaling factor and use for all meshes,
-    # so all meshes are scaled overall by the same factor, keeping real relative dimensions 
-    # supposing I know the largest bounding box or radius
-    # max_radius = 84664.4677682752 + 10 # maxiumum distance of a (centered) mesh point from the origin for all patient meshes --> centered with the CENTROID, in the ORIGINAL scale!
-    # ACTUALLY: just scale everything inside unit sphere, then the relative scale can always be applied later, this has two benefits:
-    # - all the alignment happens discarding the relative scale of the meshes so it intuitively should be more accurate
-    # - scaling to a certain range can always be done on points alone at any time:
-    # - just STORE the scaled, standardized meshes all inside the unit sphere, and save the original scaling factor as metadata, to be used whenever
-    # --> points and sdf sampled and computed at unit scale !! SDF computation should be a little more "stable" ??
-    original_scaled.points -= c
+    _, centre, max_radius = scale_to_unit_sphere(original_scaled.points, return_transf_params=True)
+    original_scaled.points -= centre
     original_scaled.points /= max_radius     
 
-    # scale also extracted surfaces
-    epicardium.points -= c
+    # center and scale also extracted surfaces
+    epicardium.points -= centre
     epicardium.points /= max_radius
-    LA_endo.points -= c
+    LA_endo.points -= centre
     LA_endo.points /= max_radius
-    RA_endo.points -= c
+    RA_endo.points -= centre
     RA_endo.points /= max_radius
 
-    # now align: use ICP on point clouds IN THE UNIT SCALE !! resulting rotation and traslation data will be in this scale
+    # now align: use ICP on point clouds AT THE STANDARD UNIT SCALE !! resulting rotation and traslation data will be in this scale
+
     if patient_name != reference_name: # skip alignment for reference mesh
         reference_mesh_scaled = reference_mesh.copy()
-        reference_mesh_scaled.points -= np.mean(reference_mesh.points, axis=0)
-        reference_mesh_scaled.points /= max_radius
+        _, centre_ref, max_radius_ref = scale_to_unit_sphere(reference_mesh_scaled.points, return_transf_params=True)
+        reference_mesh_scaled.points -= centre_ref
+        reference_mesh_scaled.points /= max_radius_ref
         # ICP to align
         logger.info("Aligning ...")
         _, R, t = align_to_reference_mesh(
@@ -413,18 +434,23 @@ def extract_processed_atria_surfaces(patient_name, reference_name, reference_mes
         epicardium.points = apply_icp_result(R, t, epicardium.points)
         LA_endo.points = apply_icp_result(R, t, LA_endo.points)
         RA_endo.points = apply_icp_result(R, t, RA_endo.points)
+    
+    if patient_name == reference_name:
+        R = np.eye(3, dtype=np.float64)
+        t = np.zeros(3, dtype=np.float64)
 
-        # store alignment data in original mesh file 
-        original_mesh.field_data[f'alignto{reference_name}-rotation'] = R
-        original_mesh.field_data[f'alignto{reference_name}-traslation'] = t
-
-    # save scaling factors also for reference mesh 
-    original_mesh.field_data[f'alignto{reference_name}-rotation'] = np.eye(3, dtype = R.dtype )
-    original_mesh.field_data[f'alignto{reference_name}-traslation'] = np.zeros_like(t)
-    original_mesh.field_data['scale-centroid'] = c 
-    original_mesh.field_data['scale-radius'] = max_radius 
+    # store scaling and alignment data in original mesh file 
+    original_mesh.field_data[f'alignto{reference_name}-rotation'] = R
+    original_mesh.field_data[f'alignto{reference_name}-traslation'] = t
+    original_mesh.field_data['centre-centroid'] = centre 
+    original_mesh.field_data['scale-tounitradius'] = max_radius 
 
     original_mesh.save(original_mesh_path)
+
+    # store scaling factor also in every surface data to find it easily later to get back to original scale, without having to load the original mesh
+    epicardium.field_data['scale-tounitradius'] = max_radius 
+    LA_endo.field_data['scale-tounitradius'] = max_radius 
+    RA_endo.field_data['scale-tounitradius'] = max_radius     
 
     return {"epicardium_surface" : epicardium, "LA_endo_surface" : LA_endo, "RA_endo_surface" : RA_endo}
 
@@ -625,6 +651,13 @@ def _create_deepsdf_data_npy(
                 RA_endo.save(patient_dir / "ra_endo-processed.vtp")
 
         # ------------------------------------------
+        # Bring sufaces to standardized range as requested:
+        # 1. scale all of the original meshes by the SAME value, to maintain respective dimensions
+        # 2. Scale all of the original meshes by their own value, to fit them inside a unit sphere
+        # --> actually always do this second thing now !!! then the various scales can be stored as field data and used optionally to later scale the data if requested
+        # ------------------------------------------
+
+        # ------------------------------------------
         # Sample surfaces
         # ------------------------------------------
         logger.info("Sampling surfaces...")
@@ -676,19 +709,9 @@ def _create_deepsdf_data_npy(
 
         for surface in [epicardium, LA_endo, RA_endo]:
             if surface is not None:
-                if use_scans_for_sdf:
-                    result = sample_sdf_near_surface(
-                        mesh_raw = make_trimesh_from_pv(surface),
-                        pointcloud=query_points,
-                        normal_sample_count=211, # higher --> more likely to get sign right
-                        bounding_radius=np.max( np.linalg.norm(query_points, axis=1) ) + 0.1 # just be sure all points can be seen from cameras around the object
-                    )
-                    _, sdf = result
-                    sdfs.append(sdf)
-                else:
-                    sdfs.append(
-                        compute_signed_distance_o3d(mesh=surface, query_points=query_points)
-                    )
+                sdfs.append(
+                    compute_signed_distance_o3d(mesh=surface, query_points=query_points)
+                )
 
         sdfs = np.stack(sdfs, axis=1).astype(np.float32)
 
@@ -723,5 +746,40 @@ if __name__ == "__main__":
     # )
 
     from config import PATIENT_MESHES_DIR
+    from time import time
+
+    patients = [f.name for f in PATIENT_MESHES_DIR.iterdir()]
+    reference_mesh = pv.read(PATIENT_MESHES_DIR / "AF069" / "AF069.vtu")
+
+    for patient in  patients:
+        patient="LEU_NORM_F004"
+        patient_dir = PATIENT_MESHES_DIR / patient 
+        mesh_original = pv.read( patient_dir / f"{patient}.vtu")
+
+        print(patient)
+
+        # extracted = extract_processed_atria_surfaces(patient, "AF069", reference_mesh, PATIENT_MESHES_DIR)
+
+        extracted = extract_closed_atria_surfaces(patient, source_dir=PATIENT_MESHES_DIR)
+        LA_endo = extracted["LA_endo_surface"]
+        RA_endo = extracted["RA_endo_surface"]
+        epicardium = extracted["epicardium_surface"]
+
+        # logger.info("Saving processed surfaces meshes")
+        
+        # epicardium.save( patient_dir / "epicardium-processed.vtp")
+        # LA_endo.save( patient_dir / "la_endo-processed.vtp")
+        # RA_endo.save( patient_dir / "ra_endo-processed.vtp")
+
+        plotter = pv.Plotter()
+        plotter.add_mesh(epicardium, color = "lightgray", opacity=0.5)
+        plotter.add_mesh(LA_endo, color="red", opacity=0.5)
+        plotter.add_mesh(RA_endo,  color="skyblue", opacity=0.5)
+        plotter.show_grid()
+        plotter.show()
+
+        break
+
+
 
     
