@@ -1,11 +1,10 @@
 import numpy as np
 import trimesh
-from mesh_to_sdf.surface_point_cloud import sample_from_mesh
 from .surface_utils import make_trimesh_from_pv
 from loguru import logger
 if not hasattr(np, "infty"): # to not have conflicts with old versions of numpy
     np.infty = np.inf
-
+from scipy.spatial import KDTree
 
 def get_tagged_centroids(mesh, all_tags, wanted_tags):
     
@@ -318,7 +317,6 @@ def align_to_reference_mesh(
         target_mesh,
         num_source_samples = 10000,
         num_target_samples = 20000,
-        method = "point",
         max_iter = 25,
         max_rot_deg = 10,
         max_trasl = 0.1,
@@ -337,42 +335,19 @@ def align_to_reference_mesh(
             A copy of source_mesh with transformed points locations, rotation and translation of the transformation, and optionally some metrics.
     """
 
-    #TODO: make returning R and t available instead of modified points only
-
-    if method == "point":
-        calculate_normals = False
-    elif method == "plane":
-        calculate_normals = True
-    else:
-        raise ValueError(f"Unknown ICP method requested. Can be 'point' or 'plane', got {method}.")
-
     source_surface = make_trimesh_from_pv(source_mesh)
     
     target_surface = make_trimesh_from_pv(target_mesh)
 
-    source_spc = sample_from_mesh(
-        mesh = source_surface,
-        sample_point_count = num_source_samples,
-        calculate_normals = False
-    )
+    source_pc = source_surface.sample(num_source_samples)
 
-    target_spc = sample_from_mesh(
-            mesh = target_surface,
-            sample_point_count = num_target_samples,
-            calculate_normals = calculate_normals
-        )
+    target_pc = target_surface.sample(num_target_samples)
     
-    normals = target_spc.normals # None if not requested --> use icp point to point
-    
-    source_pc = source_spc.points
-
-    target_pc = target_spc.points
-    
-    target_kdtree = target_spc.kd_tree
+    target_kdtree = KDTree(target_pc)
 
     # ICP
-    _, R, t, metrics_log = icp(source_pc, target_pc, target_kdtree, normals, max_iter,
-                                max_rot_deg, max_trasl, keep_metrics_log, verbose_out)
+    _, R, t, metrics_log = icp(source_pc, target_pc, target_kdtree, max_iter=max_iter,
+                                max_rot_deg=max_rot_deg, max_trasl=max_trasl, keep_metrics_log=keep_metrics_log, verbose_out=verbose_out)
 
     source_mesh_moved = source_mesh.copy()
 

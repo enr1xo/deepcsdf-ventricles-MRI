@@ -11,9 +11,8 @@ from scipy.spatial import KDTree
 import pymeshfix
 from utils.surface_utils import (
     check_watertight,
-    scale_to_unit_sphere, make_trimesh_from_pv,
+    scale_to_unit_sphere,
     sample_surface_for_deepsdf,
-    compute_signed_distance_o3d,
     compute_signed_distance_libigl
 )
 
@@ -23,8 +22,6 @@ from config import (
     DATA_DIR,
     PATIENTS_NPY_DATA_DIR,
     PATIENTS_COORDS_AND_SDFS_DIR,
-    TRAIN_DATA_DIR,
-    TEST_DATA_DIR
 )
 
 
@@ -347,14 +344,13 @@ def extract_processed_atria_surfaces(patient_name, reference_name, reference_mes
             verbose_out=False
         )
 
-    # extract CLOSED surfaces, directly from the mesh
-    extracted_surfaces = extract_closed_atria_surfaces(original_scaled)
-    # retrieve extracted closed surfaces, apply scaling and alignment
+    # extract CLOSED surfaces, from original volumetric mesh to avoid extracting from manipulated vertices
+    extracted_surfaces = extract_closed_atria_surfaces(original_mesh)
+    # retrieve extracted closed surfaces
     LA_endo = extracted_surfaces["LA_endo_surface"]
     RA_endo = extracted_surfaces["RA_endo_surface"]
     epicardium = extracted_surfaces["epicardium_surface"]
-
-    # center and scale also extracted surfaces
+    # apply scaling and alignment
     epicardium.points -= centre
     epicardium.points /= max_radius
     LA_endo.points -= centre
@@ -395,12 +391,12 @@ def _create_processed_surfaces_meshes(
         Helper to only create all processed meshes first
     """
 
-    patients = [f.name for f in PATIENT_MESHES_DIR.iterdir()]
+    patients = [f.name for f in PATIENT_MESHES_DIR.iterdir() if f.is_dir()]
     reference_mesh = pv.read(PATIENT_MESHES_DIR / "AF069" / "AF069.vtu")
 
     for patient in  patients:
         
-        logger.info(f"Processing patient {patient}")
+        logger.warning(f"Processing patient {patient}")
 
         if patient in already_processed:
             logger.warning("Processed meshes already present, skipping creation")
@@ -414,315 +410,310 @@ def _create_processed_surfaces_meshes(
 
         logger.info("Saving processed surfaces meshes")
         
-        epicardium.save( save_to_dir / "epicardium-processed.vtp")
-        LA_endo.save( save_to_dir / "la_endo-processed.vtp")
-        RA_endo.save( save_to_dir / "ra_endo-processed.vtp")
+        epicardium.save( save_to_dir / patient / "epicardium-processed.vtp")
+        LA_endo.save( save_to_dir / patient / "la_endo-processed.vtp")
+        RA_endo.save( save_to_dir / patient / "ra_endo-processed.vtp")
 
-        for m in [epicardium,LA_endo,RA_endo]:
-            print(m.field_data)
-            plotter = pv.Plotter()
-            plotter.add_mesh(m)
-            plotter.show()
-
-        break
+        # plotter = pv.Plotter()
+        # plotter.add_mesh(epicardium, color="lightgray",opacity=0.5)
+        # plotter.add_mesh(LA_endo, color="red")
+        # plotter.add_mesh(RA_endo, color="blue")
+        # plotter.show_grid()
+        # plotter.show()
 
     return
 
-# def _create_deepsdf_data_npy(
-#     source_dir,
-#     save_to_dir,
-#     reference_patient = "AF069",
-#     num_epi_samples=None,
-#     num_lendo_samples=None,
-#     num_rendo_samples=None,
-#     rho = 0.75,
-#     lamb = 0.1,
-#     create_processed_meshes=False,
-#     store_processed_meshes=False,
-# ):
-#     """
-#     Save .npy files for each patient in `source_dir`, containing sampled points
-#     and signed distance functions (SDFs) from specified cardiac regions.
+def _create_deepsdf_data_npy(
+    source_dir,
+    save_to_dir,
+    reference_patient = "AF069",
+    num_epi_samples=None,
+    num_lendo_samples=None,
+    num_rendo_samples=None,
+    rho = 0.75,
+    lamb = 0.1,
+    create_processed_meshes=False,
+    store_processed_meshes=False,
+):
+    """
+    Save .npy files for each patient in `source_dir`, containing sampled points
+    and signed distance functions (SDFs) from specified cardiac regions.
 
-#     Each saved array has shape at most (N, 6), where:
+    Each saved array has shape at most (N, 6), where:
 
-#         [:, :3]  : 3D coordinates
-#         [:, 3]   : SDF from epicardium surface (if requested)
-#         [:, 4]   : SDF from left endocardium (if requested)
-#         [:, 5]   : SDF from right endocardium (if requested)
+        [:, :3]  : 3D coordinates
+        [:, 3]   : SDF from epicardium surface (if requested)
+        [:, 4]   : SDF from left endocardium (if requested)
+        [:, 5]   : SDF from right endocardium (if requested)
 
-#     Only the requested SDF columns are included. The column order always follows
-#     the sequence: epicardium → left endocardium → right endocardium. 
+    Only the requested SDF columns are included. The column order always follows
+    the sequence: epicardium → left endocardium → right endocardium. 
 
-#     Args:
-#         `source_dir` (`str`): Directory containing patient folders with surface meshes. 
-#             See Notes for expected formats.
-#         `save_to_dir` (`str`): Directory in which to save the generated `.npy` files.
-#         `reference_patient` (`str`): Patient folder name used as reference for alignment if needed.
-#         `num_epicardium_samples` (`int | None`): Number of points to sample from the epicardium surface.
-#         `num_left_endocardium_samples` (`int | None`): Number of points to sample from the left endocardium surface.
-#         `num_right_endocardium_samples` (`int | None`): Number of points to sample from the right endocardium surface.
-#         `create_processed_meshes` (`bool`): If True, extracts and processes meshes from `.vtu` files at runtime.
-#         `store_processed_meshes` (`bool`): If True, saves the processed meshes alongside original files.
+    Args:
+        `source_dir` (`str`): Directory containing patient folders with surface meshes. 
+            See Notes for expected formats.
+        `save_to_dir` (`str`): Directory in which to save the generated `.npy` files.
+        `reference_patient` (`str`): Patient folder name used as reference for alignment if needed.
+        `num_epicardium_samples` (`int | None`): Number of points to sample from the epicardium surface.
+        `num_left_endocardium_samples` (`int | None`): Number of points to sample from the left endocardium surface.
+        `num_right_endocardium_samples` (`int | None`): Number of points to sample from the right endocardium surface.
+        `create_processed_meshes` (`bool`): If True, extracts and processes meshes from `.vtu` files at runtime.
+        `store_processed_meshes` (`bool`): If True, saves the processed meshes alongside original files.
 
-#     Notes:
-#         - If `create_processed_meshes` is False, `source_dir` is expected to contain surface meshes in `<region>-processed.vtp` format,
-#           already scaled and aligned consistently. No geometry checks are performed.
-#         - If `create_processed_meshes` is True, `source_dir` must contain each patient's `.vtu` mesh.
-#           The required surfaces will be extracted and processed at runtime, and alignment information (rotation matrix + traslation vector)
-#           will be stored as data of the original mesh using `field_data` method of `pyvista.UnstructuredGrid`. 
-#         - Processed meshes can be optionally saved using `store_processed_meshes=True`.
-#     """
+    Notes:
+        - If `create_processed_meshes` is False, `source_dir` is expected to contain surface meshes in `<region>-processed.vtp` format,
+          already scaled and aligned consistently. No geometry checks are performed.
+        - If `create_processed_meshes` is True, `source_dir` must contain each patient's `.vtu` mesh.
+          The required surfaces will be extracted and processed at runtime, and alignment information (rotation matrix + traslation vector)
+          will be stored as data of the original mesh using `field_data` method of `pyvista.UnstructuredGrid`. 
+        - Processed meshes can be optionally saved using `store_processed_meshes=True`.
+    """
 
-#     source_dir = Path(source_dir)
-#     save_to_dir = Path(save_to_dir)
+    source_dir = Path(source_dir)
+    save_to_dir = Path(save_to_dir)
 
-#     # ------------------------------------------
-#     # Sampling settings
-#     # ------------------------------------------
-#     if (
-#         num_epi_samples is None
-#         and num_lendo_samples is None
-#         and num_rendo_samples is None
-#     ):
-#         raise ValueError("Number of samples not specified for any region.")
+    # ------------------------------------------
+    # Sampling settings
+    # ------------------------------------------
+    if (
+        num_epi_samples is None
+        and num_lendo_samples is None
+        and num_rendo_samples is None
+    ):
+        raise ValueError("Number of samples not specified for any region.")
 
-#     num_samp_per_scene = 0
-#     opt = ""
+    num_samp_per_scene = 0
+    opt = ""
 
-#     if num_epi_samples is not None:
-#         num_samp_per_scene += num_epi_samples
-#         opt += "epi_"
+    if num_epi_samples is not None:
+        num_samp_per_scene += num_epi_samples
+        opt += "epi_"
 
-#     if num_lendo_samples is not None:
-#         num_samp_per_scene += num_lendo_samples
-#         opt += "la_"
+    if num_lendo_samples is not None:
+        num_samp_per_scene += num_lendo_samples
+        opt += "la_"
 
-#     if num_rendo_samples is not None:
-#         num_samp_per_scene += num_rendo_samples
-#         opt += "ra_"
+    if num_rendo_samples is not None:
+        num_samp_per_scene += num_rendo_samples
+        opt += "ra_"
 
-#     # ------------------------------------------
-#     # Load reference mesh if needed for processed surfaces extraction
-#     # ------------------------------------------
-#     if create_processed_meshes:
-#         ref_dir = source_dir / reference_patient
-#         mesh_path = next(ref_dir.glob("*.vtu"), None)
-#         if mesh_path is None:
-#             raise FileNotFoundError(
-#                 f"No volumetric '.vtu' mesh found for reference patient '{reference_patient}' in {ref_dir}."
-#             )
-#         reference_mesh = pv.read(mesh_path)
-#         logger.warning(
-#             "Requested creation of processed surfaces before sampling and SDF computation. "
-#             "This will extract, scale, and align all patients; alignment data will be stored "
-#             "in each patient's original mesh file as field_data attributes."
-#         )
-#     else:
-#         logger.warning("Using already processed meshes.")
+    # ------------------------------------------
+    # Load reference mesh if needed for processed surfaces extraction
+    # ------------------------------------------
+    if create_processed_meshes:
+        ref_dir = source_dir / reference_patient
+        mesh_path = next(ref_dir.glob("*.vtu"), None)
+        if mesh_path is None:
+            raise FileNotFoundError(
+                f"No volumetric '.vtu' mesh found for reference patient '{reference_patient}' in {ref_dir}."
+            )
+        reference_mesh = pv.read(mesh_path)
+        logger.warning(
+            "Requested creation of processed surfaces before sampling and SDF computation. "
+            "This will extract, scale, and align all patients; alignment data will be stored "
+            "in each patient's original mesh file as field_data attributes."
+        )
+    else:
+        logger.warning("Using already processed meshes.")
 
-#     # ------------------------------------------
-#     # Iterate over all patients
-#     # ------------------------------------------
-#     source_dirs = list( source_dir.iterdir() )
+    # ------------------------------------------
+    # Iterate over all patients
+    # ------------------------------------------
+    source_dirs = list( source_dir.iterdir() )
 
-#     for idx, patient_dir in enumerate(source_dirs):
+    for idx, patient_dir in enumerate(source_dirs):
 
-#         if not patient_dir.is_dir():
-#             continue
+        if not patient_dir.is_dir():
+            continue
 
-#         patient_name = patient_dir.name
-#         logger.info(f"Processing patient {patient_name}: {idx + 1} / {len(source_dirs)}.")
+        patient_name = patient_dir.name
+        logger.info(f"Processing patient {patient_name}: {idx + 1} / {len(source_dirs)}.")
 
-#         # Output filename
-#         out_name = f"{patient_name}_{opt}{num_samp_per_scene}_coords_and_sdf.npy"
-#         out_path = save_to_dir / out_name
+        # Output filename
+        out_name = f"{patient_name}_{opt}{num_samp_per_scene}_coords_and_sdf.npy"
+        out_path = save_to_dir / out_name
 
-#         if out_path.is_file():
-#             logger.warning(
-#                 f"Data file with requested creation modality already exists for patient {patient_name}, skipping."
-#             )
-#             continue
+        if out_path.is_file():
+            logger.warning(
+                f"Data file with requested creation modality already exists for patient {patient_name}, skipping."
+            )
+            continue
 
-#         files = list(patient_dir.iterdir())
+        files = list(patient_dir.iterdir())
 
-#         epicardium = None
-#         LA_endo = None
-#         RA_endo = None
+        epicardium = None
+        LA_endo = None
+        RA_endo = None
 
-#         # Extract surfaces if requested
-#         extracted = (
-#             extract_processed_atria_surfaces(patient_name, reference_mesh, source_dir)
-#             if create_processed_meshes
-#             else None
-#         )
+        # Extract surfaces if requested
+        extracted = (
+            extract_processed_atria_surfaces(patient_name, reference_mesh, source_dir)
+            if create_processed_meshes
+            else None
+        )
 
-#         # -----------------------------
-#         # Load or extract epicardium
-#         # -----------------------------
-#         if num_epi_samples is not None:
-#             epi_file = next(
-#                 (f for f in files if f.is_file() and "epicardium-processed.vtp" in f.name),
-#                 None,
-#             )
-#             if epi_file and not create_processed_meshes:
-#                 epicardium = pv.read(epi_file)
-#             elif extracted is not None:
-#                 epicardium = extracted["epicardium_surface"]
-#             else:
-#                 raise ValueError(
-#                     "Epicardium samples requested, but no `epicardium-processed.vtp` file found and "
-#                     "`create_processed_meshes=False`."
-#                 )
+        # -----------------------------
+        # Load or extract epicardium
+        # -----------------------------
+        if num_epi_samples is not None:
+            epi_file = next(
+                (f for f in files if f.is_file() and "epicardium-processed.vtp" in f.name),
+                None,
+            )
+            if epi_file and not create_processed_meshes:
+                epicardium = pv.read(epi_file)
+            elif extracted is not None:
+                epicardium = extracted["epicardium_surface"]
+            else:
+                raise ValueError(
+                    "Epicardium samples requested, but no `epicardium-processed.vtp` file found and "
+                    "`create_processed_meshes=False`."
+                )
 
-#         # -----------------------------
-#         # Load or extract LA endocardium
-#         # -----------------------------
-#         if num_lendo_samples is not None:
-#             la_file = next(
-#                 (f for f in files if f.is_file() and "la_endo-processed.vtp" in f.name),
-#                 None,
-#             )
-#             if la_file and not create_processed_meshes:
-#                 LA_endo = pv.read(la_file)
-#             elif extracted is not None:
-#                 LA_endo = extracted["LA_endo_surface"]
-#             else:
-#                 raise ValueError(
-#                     "Left-endocardium samples requested, but no `la_endo-processed.vtp` file found and "
-#                     "`create_processed_meshes=False`."
-#                 )
+        # -----------------------------
+        # Load or extract LA endocardium
+        # -----------------------------
+        if num_lendo_samples is not None:
+            la_file = next(
+                (f for f in files if f.is_file() and "la_endo-processed.vtp" in f.name),
+                None,
+            )
+            if la_file and not create_processed_meshes:
+                LA_endo = pv.read(la_file)
+            elif extracted is not None:
+                LA_endo = extracted["LA_endo_surface"]
+            else:
+                raise ValueError(
+                    "Left-endocardium samples requested, but no `la_endo-processed.vtp` file found and "
+                    "`create_processed_meshes=False`."
+                )
 
-#         # -----------------------------
-#         # Load or extract RA endocardium
-#         # -----------------------------
-#         if num_rendo_samples is not None:
-#             ra_file = next(
-#                 (f for f in files if f.is_file() and "ra_endo-processed.vtp" in f.name),
-#                 None,
-#             )
-#             if ra_file and not create_processed_meshes:
-#                 RA_endo = pv.read(ra_file)
-#             elif extracted is not None:
-#                 RA_endo = extracted["RA_endo_surface"]
-#             else:
-#                 raise ValueError(
-#                     "Right-endocardium samples requested, but no `ra_endo-processed.vtp` file found and "
-#                     "`create_processed_meshes=False`."
-#                 )
+        # -----------------------------
+        # Load or extract RA endocardium
+        # -----------------------------
+        if num_rendo_samples is not None:
+            ra_file = next(
+                (f for f in files if f.is_file() and "ra_endo-processed.vtp" in f.name),
+                None,
+            )
+            if ra_file and not create_processed_meshes:
+                RA_endo = pv.read(ra_file)
+            elif extracted is not None:
+                RA_endo = extracted["RA_endo_surface"]
+            else:
+                raise ValueError(
+                    "Right-endocardium samples requested, but no `ra_endo-processed.vtp` file found and "
+                    "`create_processed_meshes=False`."
+                )
 
-#         # ------------------------------------------
-#         # Save processed meshes if requested
-#         # ------------------------------------------
-#         if create_processed_meshes and store_processed_meshes:
-#             logger.info("Saving processed surfaces meshes")
-#             if epicardium is not None:
-#                 epicardium.save(patient_dir / "epicardium-processed.vtp")
-#             if LA_endo is not None:
-#                 LA_endo.save(patient_dir / "la_endo-processed.vtp")
-#             if RA_endo is not None:
-#                 RA_endo.save(patient_dir / "ra_endo-processed.vtp")
+        # ------------------------------------------
+        # Save processed meshes if requested
+        # ------------------------------------------
+        if create_processed_meshes and store_processed_meshes:
+            logger.info("Saving processed surfaces meshes")
+            if epicardium is not None:
+                epicardium.save(patient_dir / "epicardium-processed.vtp")
+            if LA_endo is not None:
+                LA_endo.save(patient_dir / "la_endo-processed.vtp")
+            if RA_endo is not None:
+                RA_endo.save(patient_dir / "ra_endo-processed.vtp")
 
-#         for m in [epicardium, LA_endo, RA_endo]:
-#             plotter = pv.Plotter()
-#             plotter.add_mesh(m, scalars = "isholepatch")
-#             plotter.show()
 
-#         # # ------------------------------------------
-#         # # Sample surfaces
-#         # # ------------------------------------------
-#         # logger.info("Sampling surfaces...")
-#         # query_sets = []
+        # ------------------------------------------
+        # Sample surfaces
+        # ------------------------------------------
+        logger.info("Sampling surfaces...")
+        query_sets = []
 
-#         # # if epicardium is not None:
-#         # #     query_sets.append(
-#         # #         sample_surface_for_deepsdf(
-#         # #             epicardium.copy(),
-#         # #             number_of_points=num_epi_samples,
-#         # #             use_deepsdf_convention=True,
-#         # #             rho=rho,
-#         # #             lamb=lamb,
-#         # #             ratio=48 / 50,
-#         # #         )
-#         # #     )
+        if epicardium is not None:
+            query_sets.append(
+                sample_surface_for_deepsdf(
+                    epicardium.copy(),
+                    number_of_points=num_epi_samples,
+                    use_deepsdf_convention=True,
+                    rho=rho,
+                    lamb=lamb,
+                    ratio=48 / 50,
+                )
+            )
 
-#         # if LA_endo is not None:
-#         #     query_sets.append(
-#         #         sample_surface_for_deepsdf(
-#         #             LA_endo.copy(),
-#         #             number_of_points=num_lendo_samples,
-#         #             use_deepsdf_convention=True,
-#         #             rho=rho,
-#         #             lamb=lamb,
-#         #             ratio=48 / 50,
-#         #         )
-#         #     )
+        if LA_endo is not None:
+            query_sets.append(
+                sample_surface_for_deepsdf(
+                    LA_endo.copy(),
+                    number_of_points=num_lendo_samples,
+                    use_deepsdf_convention=True,
+                    rho=rho,
+                    lamb=lamb,
+                    ratio=48 / 50,
+                )
+            )
 
-#         # if RA_endo is not None:
-#         #     query_sets.append(
-#         #         sample_surface_for_deepsdf(
-#         #             RA_endo.copy(),
-#         #             number_of_points=num_rendo_samples,
-#         #             use_deepsdf_convention=True,
-#         #             rho=rho,
-#         #             lamb=lamb,
-#         #             ratio=48 / 50,
-#         #         )
-#         #     )
+        if RA_endo is not None:
+            query_sets.append(
+                sample_surface_for_deepsdf(
+                    RA_endo.copy(),
+                    number_of_points=num_rendo_samples,
+                    use_deepsdf_convention=True,
+                    rho=rho,
+                    lamb=lamb,
+                    ratio=48 / 50,
+                )
+            )
 
-#         # query_points = np.concatenate(query_sets).astype(np.float32)
+        query_points = np.concatenate(query_sets).astype(np.float32)
 
-#         # # ------------------------------------------
-#         # # Compute SDFs
-#         # # ------------------------------------------
-#         # logger.info("Computing SDF ...")
-#         # sdfs = []
+        # ------------------------------------------
+        # Compute SDFs
+        # ------------------------------------------
+        logger.info("Computing SDF ...")
+        sdfs = []
 
-#         # # if epicardium is not None:
-#         # #     sdfs.append(
-#         # #         -1 * compute_signed_distance_libigl(mesh=epicardium, query_points=query_points)
-#         # #         # compute_signed_distance_o3d(mesh=epicardium, query_points=query_points)
-#         # #     )
-#         # if LA_endo is not None:
-#         #     sdfs.append(
-#         #         -1 * compute_signed_distance_libigl(mesh=LA_endo, query_points=query_points)
-#         #         #compute_signed_distance_o3d(mesh=LA_endo, query_points=query_points)
-#         #     )
-#         # # if RA_endo is not None:
-#         # #     sdfs.append(
-#         # #         -1 * compute_signed_distance_libigl(mesh=RA_endo, query_points=query_points)
-#         # #         #compute_signed_distance_o3d(mesh=RA_endo, query_points=query_points)
-#         # #     )
+        if epicardium is not None:
+            sdfs.append(
+                -1 * compute_signed_distance_libigl(mesh=epicardium, query_points=query_points)
+                # compute_signed_distance_o3d(mesh=epicardium, query_points=query_points)
+            )
+        if LA_endo is not None:
+            sdfs.append(
+                -1 * compute_signed_distance_libigl(mesh=LA_endo, query_points=query_points)
+                #compute_signed_distance_o3d(mesh=LA_endo, query_points=query_points)
+            )
+        if RA_endo is not None:
+            sdfs.append(
+                -1 * compute_signed_distance_libigl(mesh=RA_endo, query_points=query_points)
+                #compute_signed_distance_o3d(mesh=RA_endo, query_points=query_points)
+            )
 
-#         # sdfs = np.stack(sdfs, axis=1).astype(np.float32)
+        sdfs = np.stack(sdfs, axis=1).astype(np.float32)
 
-#         # # ------------------------------------------
-#         # # Save final data
-#         # # ------------------------------------------
-#         # # dat = np.hstack([query_points, sdfs]).astype(np.float32)
-#         # # np.save(out_path, dat, allow_pickle=False)
-#         # # logger.info("Saved coords and sdfs.")
+        # ------------------------------------------
+        # Save final data
+        # ------------------------------------------
+        dat = np.hstack([query_points, sdfs]).astype(np.float32)
+        np.save(out_path, dat, allow_pickle=False)
+        logger.info("Saved coords and sdfs.")
 
-#         # gc.collect()
+        gc.collect()
 
-#         # points = pv.PolyData(query_points)
-#         # # points["sdf_epi"] = sdfs[:,0]
-#         # points["sdf_la"] = sdfs[:,0]
-#         # # points["sdf_ra"] = sdfs[:,2]
+        # points = pv.PolyData(query_points)
+        # points["sdf_epi"] = sdfs[:,0]
+        # points["sdf_la"] = sdfs[:,1]
+        # points["sdf_ra"] = sdfs[:,2]
         
-#         # # plotter = pv.Plotter()
-#         # # plotter.add_mesh(epicardium, color = "white", opacity=0.5)
-#         # # plotter.add_mesh(points, scalars="sdf_epi", cmap = "jet_r", render_points_as_spheres=True)
-#         # # plotter.show()
-#         # plotter = pv.Plotter()
-#         # plotter.add_mesh(LA_endo, color = "white", opacity=0.5)
-#         # plotter.add_mesh(points, scalars="sdf_la", cmap = "jet_r", render_points_as_spheres=True)
-#         # plotter.show()
+        # plotter = pv.Plotter()
+        # plotter.add_mesh(epicardium, color = "white", opacity=0.5)
+        # plotter.add_mesh(points, scalars="sdf_epi", cmap = "jet_r", render_points_as_spheres=True)
+        # plotter.show()
+        # plotter = pv.Plotter()
+        # plotter.add_mesh(LA_endo, color = "white", opacity=0.5)
+        # plotter.add_mesh(points, scalars="sdf_la", cmap = "jet_r", render_points_as_spheres=True)
+        # plotter.show()
 
-#         break
+        # break
 
         
-#     logger.info(" Done. ")
+    logger.info(" Done. ")
 
 
 if __name__ == "__main__":
@@ -731,15 +722,13 @@ if __name__ == "__main__":
 
     #TODO: example usage
 
-    _create_processed_surfaces_meshes()
-
-    # _create_deepsdf_data_npy(
-    #     source_dir=PATIENT_MESHES_DIR,
-    #     save_to_dir= PATIENTS_COORDS_AND_SDFS_DIR / "single_patients_100000pts_npy",
-    #     num_epi_samples=30000,
-    #     num_lendo_samples=35000,
-    #     num_rendo_samples=35000,
-    #     create_processed_meshes=False,
-    #     store_processed_meshes=False
-    # )
+    _create_deepsdf_data_npy(
+        source_dir=PATIENT_MESHES_DIR,
+        save_to_dir= PATIENTS_COORDS_AND_SDFS_DIR / "single_patients_100000pts_npy",
+        num_epi_samples=30000,
+        num_lendo_samples=35000,
+        num_rendo_samples=35000,
+        create_processed_meshes=False,
+        store_processed_meshes=False
+    )
 

@@ -44,7 +44,9 @@ ATRIA_TAGS_METADATA = {
 
 DATA_DIR = PROJ_ROOT / "data"
 
-PATIENTS_NPY_DATA_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtriaPointsAndSDF") / "single_patients_100000pts_npy"
+PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtriaPointsAndSDF")
+
+PATIENTS_NPY_DATA_DIR =  PATIENTS_COORDS_AND_SDFS_DIR / "single_patients_100000pts_npy"
 
 SPECS_FILES_DIR = PROJ_ROOT / "specs_files"
 
