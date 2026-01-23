@@ -33,6 +33,20 @@ from config import SPECS_FILES_DIR, DATA_DIR, EXPERIMENTS_DIR
 SPECS_FILE = SPECS_FILES_DIR / "specs_deepsdfatria.json" # default if not specified on execution
 
 
+# ============================== #
+# HELPERS
+# ============================== #
+def deep_update(specs_base: dict, override_specs: dict) -> dict:
+    for k, v in override_specs.items():
+        if (
+            k in specs_base
+            and isinstance(specs_base[k], dict)
+            and isinstance(v, dict)
+        ):
+            deep_update(specs_base[k], v)
+        else:
+            specs_base[k] = v
+    return specs_base
 
 
 # ============================== #
@@ -51,16 +65,14 @@ class SaveDecoderCallback(pl.Callback):
 # ============================== #
 EXPERIMENT_NAME = "deepsdfatria_training_local"
 
-def train(specs_file = None, show_progress = False):
+def train(specs: str | dict, show_progress = False):
 
-    if specs_file is None:
-        specs_file = SPECS_FILE
+    if specs.isistance(str):
+        specs_name = Path(specs).name
 
-    specs_name = Path(specs_file).name
+        logger.info(f"Training with specs file: {specs_name}.")
 
-    logger.info(f"Training with specs file: {specs_name}.")
-
-    specs = json.load( open(specs_file) )
+        specs = json.load( open(specs) )
 
     # region SETUP 
     datamodule = SDFBalancedDataModuleGPU(
@@ -121,7 +133,6 @@ def train(specs_file = None, show_progress = False):
     #     save_top_k=-1,
     # )
 
-
     # region TRAIN
     NumEpochs = specs.get("NumEpochs", 5)
 
@@ -158,15 +169,36 @@ if __name__ == "__main__":
                         help="Default is deepsdf_atria_training, and becomes the directory " \
                         "name in which checkpoints and logs are saved, under version_x folder for each run."
     )
+    parser.add_argument("--train_mode", type=str, default="use_specs_file")
+    parser.add_argument("--override_specs", type=str, default=None)
     parser.add_argument("--show_progress", action="store_true")
     args = parser.parse_args()
 
-    if args.specs_file_path is not None:
-        SPECS_FILE = str(args.specs_file_path)
-    
-    if args.experiment_name is not None:
-        EXPERIMENT_NAME = str(args.experiment_name)
+    match args.train_mode:
 
-    version = train( specs_file = SPECS_FILE, show_progress = args.show_progress )
+        case "use_specs_file":
+            if args.specs_file_path is not None:
+                SPECS_FILE = str(args.specs_file_path)
+            
+            if args.experiment_name is not None:
+                EXPERIMENT_NAME = str(args.experiment_name)
 
-    print(f"TRAINING_DONE_VERSION={version}", flush=True) # this is to then be captured from a bash file and retrieve the version that has been trained to send myself an email
+            version = train( specs_file = SPECS_FILE, show_progress = args.show_progress )
+
+        case "compose_specs_from_options":
+            if args.specs_file_path is not None:
+                SPECS_FILE = str(args.specs_file_path)
+            
+            # now overwrite specs fields with wanted specs
+            specs = json.load(open(SPECS_FILE))
+            override_specs = json.loads(args.override_specs) # in args arriva dal bash come STRINGA json
+            specs = deep_update(specs, override_specs)
+
+            if args.experiment_name is not None:
+                EXPERIMENT_NAME = str(args.experiment_name)
+
+            version = train( specs = specs, show_progress = args.show_progress )
+
+    # this is to then be captured from a bash file and retrieve the version that has been trained to send myself an email
+    print(f"TRAINING_DONE_VERSION={version}", flush=True)
+

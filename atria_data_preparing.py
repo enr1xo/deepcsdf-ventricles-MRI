@@ -391,8 +391,8 @@ def _create_processed_surfaces_meshes(
         Helper to only create all processed meshes first
     """
 
-    patients = [f.name for f in PATIENT_MESHES_DIR.iterdir() if f.is_dir()]
-    reference_mesh = pv.read(PATIENT_MESHES_DIR / "AF069" / "AF069.vtu")
+    patients = [f.name for f in source_dir.iterdir() if f.is_dir()]
+    reference_mesh = pv.read(source_dir / "AF069" / "AF069.vtu")
 
     for patient in  patients:
         
@@ -687,6 +687,22 @@ def _create_deepsdf_data_npy(
 
         sdfs = np.stack(sdfs, axis=1).astype(np.float32)
 
+
+        points = pv.PolyData(query_points)
+        points["sdf_epi"] = sdfs[:,0]
+        points["sdf_la"] = sdfs[:,1]
+        points["sdf_ra"] = sdfs[:,2]
+        
+        plotter = pv.Plotter()
+        plotter.add_mesh(points, scalars="sdf_epi", cmap = "jet_r", render_points_as_spheres=True)
+        plotter.show()
+        plotter = pv.Plotter()
+        plotter.add_mesh(points, scalars="sdf_la", cmap = "jet_r", render_points_as_spheres=True)
+        plotter.show()
+        plotter = pv.Plotter()
+        plotter.add_mesh(points, scalars="sdf_ra", cmap = "jet_r", render_points_as_spheres=True)
+        plotter.show()
+
         # ------------------------------------------
         # Save final data
         # ------------------------------------------
@@ -696,21 +712,7 @@ def _create_deepsdf_data_npy(
 
         gc.collect()
 
-        # points = pv.PolyData(query_points)
-        # points["sdf_epi"] = sdfs[:,0]
-        # points["sdf_la"] = sdfs[:,1]
-        # points["sdf_ra"] = sdfs[:,2]
-        
-        # plotter = pv.Plotter()
-        # plotter.add_mesh(epicardium, color = "white", opacity=0.5)
-        # plotter.add_mesh(points, scalars="sdf_epi", cmap = "jet_r", render_points_as_spheres=True)
-        # plotter.show()
-        # plotter = pv.Plotter()
-        # plotter.add_mesh(LA_endo, color = "white", opacity=0.5)
-        # plotter.add_mesh(points, scalars="sdf_la", cmap = "jet_r", render_points_as_spheres=True)
-        # plotter.show()
-
-        # break
+        break
 
         
     logger.info(" Done. ")
@@ -724,11 +726,13 @@ if __name__ == "__main__":
 
     _create_deepsdf_data_npy(
         source_dir=PATIENT_MESHES_DIR,
-        save_to_dir= PATIENTS_COORDS_AND_SDFS_DIR / "single_patients_100000pts_npy",
-        num_epi_samples=30000,
-        num_lendo_samples=35000,
-        num_rendo_samples=35000,
+        save_to_dir= DATA_DIR / "single_patients_npy",
+        num_epi_samples=10000,
+        num_lendo_samples=20000,
+        num_rendo_samples=20000,
         create_processed_meshes=False,
         store_processed_meshes=False
     )
+
+
 

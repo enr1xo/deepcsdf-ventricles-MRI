@@ -1,0 +1,44 @@
+{
+    "Description" : "...",
+
+    "TrainSplit" : "train/data_fnames_train.json",
+
+    "TestSplit" : "test/data_fnames_test.json",
+
+    "Network_specs" : {
+        "latent_size" : 128,
+        "out_dim" : 3,
+        "dims" : [256,256,256,256,256,256,256],
+        "latent_in" : [3],
+        "positional_encoding" : false,
+        "pos_enc_dim" : 4,   
+        "lipschitz_layers" : [0,1,2,3,4,5,6],
+        "activation" : "GELU",
+        "last_tanh" : false,
+        "norm_layers" : [-1],
+        "batch_norm" : false,
+        "dropout_prob" : 0.2,
+        "dropout_layers" : [-1]       
+    },
+    
+    "NumEpochs" : 500,
+    "lr_weights" : 1e-3,
+    "lr_latents" : 1e-3,
+    "num_samp_per_scene" : 4096,
+    "sampling_scene_method" : "random",
+    "batch_size" : 8,
+    "scale_spatial_inputs_by" : 100,
+    "use_loss" : "MSE",
+    "enforce_minmax" : false,
+    "clamp_distance" : 0.2,
+    "use_lipreg_loss" : true,
+    "Lipschitz_alpha" : 1e-5,
+    "code_reg_lambda" : 1e-3,
+    "use_lr_scheduler" : true,
+    "lr_weights_final" : 5e-5,
+    "lr_latents_final" : 5e-5,
+    "checkpoint_every_n_epochs" : 1000000000,
+    "resume_training_from_version" : "_",
+    "resume_from" : "last",
+    "reference_patient" : "AF069"  
+}
