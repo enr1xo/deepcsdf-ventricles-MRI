@@ -65,14 +65,7 @@ class SaveDecoderCallback(pl.Callback):
 # ============================== #
 EXPERIMENT_NAME = "deepsdfatria_training_local"
 
-def train(specs: str | dict, show_progress = False):
-
-    if specs.isistance(str):
-        specs_name = Path(specs).name
-
-        logger.info(f"Training with specs file: {specs_name}.")
-
-        specs = json.load( open(specs) )
+def train(specs: dict, show_progress = False):
 
     # region SETUP 
     datamodule = SDFBalancedDataModuleGPU(
@@ -183,7 +176,7 @@ if __name__ == "__main__":
             if args.experiment_name is not None:
                 EXPERIMENT_NAME = str(args.experiment_name)
 
-            version = train( specs_file = SPECS_FILE, show_progress = args.show_progress )
+            version = train( specs = json.load(open(SPECS_FILE)), show_progress = args.show_progress )
 
         case "compose_specs_from_options":
             if args.specs_file_path is not None:
@@ -196,6 +189,10 @@ if __name__ == "__main__":
 
             if args.experiment_name is not None:
                 EXPERIMENT_NAME = str(args.experiment_name)
+
+            from pprint import pprint
+
+            pprint(specs)
 
             version = train( specs = specs, show_progress = args.show_progress )
 
