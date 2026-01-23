@@ -530,7 +530,7 @@ def _create_deepsdf_data_npy(
         logger.info(f"Processing patient {patient_name}: {idx + 1} / {len(source_dirs)}.")
 
         # Output filename
-        out_name = f"{patient_name}_{opt}{num_samp_per_scene}_coords_and_sdf.npy"
+        out_name = f"{patient_name}-{opt}{num_samp_per_scene}_coords_and_sdf.npy"
         out_path = save_to_dir / out_name
 
         if out_path.is_file():
@@ -688,20 +688,20 @@ def _create_deepsdf_data_npy(
         sdfs = np.stack(sdfs, axis=1).astype(np.float32)
 
 
-        points = pv.PolyData(query_points)
-        points["sdf_epi"] = sdfs[:,0]
-        points["sdf_la"] = sdfs[:,1]
-        points["sdf_ra"] = sdfs[:,2]
+        # points = pv.PolyData(query_points)
+        # points["sdf_epi"] = sdfs[:,0]
+        # points["sdf_la"] = sdfs[:,1]
+        # points["sdf_ra"] = sdfs[:,2]
         
-        plotter = pv.Plotter()
-        plotter.add_mesh(points, scalars="sdf_epi", cmap = "jet_r", render_points_as_spheres=True)
-        plotter.show()
-        plotter = pv.Plotter()
-        plotter.add_mesh(points, scalars="sdf_la", cmap = "jet_r", render_points_as_spheres=True)
-        plotter.show()
-        plotter = pv.Plotter()
-        plotter.add_mesh(points, scalars="sdf_ra", cmap = "jet_r", render_points_as_spheres=True)
-        plotter.show()
+        # plotter = pv.Plotter()
+        # plotter.add_mesh(points, scalars="sdf_epi", cmap = "jet_r", render_points_as_spheres=True)
+        # plotter.show()
+        # plotter = pv.Plotter()
+        # plotter.add_mesh(points, scalars="sdf_la", cmap = "jet_r", render_points_as_spheres=True)
+        # plotter.show()
+        # plotter = pv.Plotter()
+        # plotter.add_mesh(points, scalars="sdf_ra", cmap = "jet_r", render_points_as_spheres=True)
+        # plotter.show()
 
         # ------------------------------------------
         # Save final data
@@ -724,15 +724,40 @@ if __name__ == "__main__":
 
     #TODO: example usage
 
-    _create_deepsdf_data_npy(
-        source_dir=PATIENT_MESHES_DIR,
-        save_to_dir= DATA_DIR / "single_patients_npy",
-        num_epi_samples=10000,
-        num_lendo_samples=20000,
-        num_rendo_samples=20000,
-        create_processed_meshes=False,
-        store_processed_meshes=False
-    )
+    # _create_deepsdf_data_npy(
+    #     source_dir=PATIENT_MESHES_DIR,
+    #     save_to_dir= PATIENTS_NPY_DATA_DIR / "single_patients_100000pts_npy",
+    #     num_epi_samples=30000,
+    #     num_lendo_samples=35000,
+    #     num_rendo_samples=35000,
+    #     create_processed_meshes=False,
+    #     store_processed_meshes=False
+    # )
+
+    # patient = "AF001"
+
+    # data = np.load(PATIENTS_NPY_DATA_DIR / f"{patient}_epi_la_ra_100000_coords_and_sdf.npy") 
+
+    # coords = data[:,:3]
+    # sdfs = data[:,3:]
+
+    # points = pv.PolyData(coords)
+    # points["sdf_epi"] = sdfs[:,0]
+    # points["sdf_la"] = sdfs[:,1]
+    # points["sdf_ra"] = sdfs[:,2]
+
+    # plotter = pv.Plotter()
+    # plotter.add_mesh(points, scalars="sdf_epi", cmap="jet_r", render_points_as_spheres = True)
+    # plotter.show()
+
+    # plotter = pv.Plotter()
+    # plotter.add_mesh(points, scalars="sdf_la", cmap="jet_r", render_points_as_spheres = True)
+    # plotter.show()
+
+    # plotter = pv.Plotter()
+    # plotter.add_mesh(points, scalars="sdf_ra", cmap="jet_r", render_points_as_spheres = True)
+    # plotter.show()
 
 
+        
 

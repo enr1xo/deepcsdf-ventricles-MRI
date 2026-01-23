@@ -10,7 +10,7 @@ from deel.torchlip.modules.linear import SpectralLinear
 
 act_fn = {
     "ReLU": nn.ReLU(), "Tanh" : nn.Tanh(), 
-    "Softplus": nn.Softplus(beta=200), 
+    "Softplus": nn.Softplus(beta=100), 
     "SiLU": nn.SiLU(),
     "GELU" : nn.GELU(), 
     "GELUApprox": nn.GELU(approximate="tanh")

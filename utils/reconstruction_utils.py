@@ -68,14 +68,6 @@ def isosurface_from_query_sdf(query_points, sdf_values):
 
     return mesh
 
-def remesh(mesh, n_points=100000):
-    clus = pyacvd.Clustering(mesh)
-    n_subdivs = round(np.log(n_points // mesh.n_points + 1)) + 1
-    clus.subdivide(n_subdivs)
-    clus.cluster(n_points)
-    return clus.create_mesh()
-
-
 
 if __name__ == "__main__":
 
