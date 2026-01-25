@@ -3,35 +3,165 @@ from pathlib import Path
 from loguru import logger
 import torch
 import numpy as np
-import re
-from tabulate import tabulate
 import pyvista as pv
 from model.atria_deepsdf_decoder import Decoder, DeepSDF
 from model.atria_dataloader import SDFDataModule
-from utils.metrics import chamfer_distance_L2, LDDMM_loss
-from utils.surface_utils import remesh, make_trimesh_from_pv
+# from utils.metrics import chamfer_distance_L2, LDDMM_loss
+# from utils.surface_utils import remesh, make_trimesh_from_pv
 from utils.reconstruction_utils import isosurface_from_sdf
-import trimesh
-from scipy.spatial import KDTree
-# from torch.distributions.multivariate_normal import MultivariateNormal
 from tqdm import tqdm
 import pandas as pd
+import trimesh
+import pyacvd
+from scipy.spatial import KDTree
+import gc
 
-from config import EXPERIMENTS_DIR, RESULTS_DIR, IMAGES_DIR, RECONSTRUCTED_MESHES_DIR, LATENTS_DIR, TEST_DATA_DIR, PATIENT_MESHES_DIR, PATIENTS_NPY_DATA_DIR, DATA_DIR
+from config_local import (
+    EXPERIMENTS_DIR,
+    RESULTS_DIR,
+    IMAGES_DIR,
+    RECONSTRUCTED_MESHES_DIR,
+    LATENTS_DIR,
+    TEST_DATA_DIR,
+    PATIENT_MESHES_DIR,
+    PATIENTS_NPY_DATA_DIR,
+    DATA_DIR
+)
 
-def get_dataset_patients_names(data_file):
+
+def get_dataset_patients_names(data: dict):
     patient_names = []
-    if data_file.suffix == ".json":
-        loaded = json.load( open(data_file) )
-        
-        # file names are <patient_name>-<suffix>.npy where suffix isn't supposed to have any - in it
-        for fullfname in loaded:
-            patient_name = fullfname.split("-")[0]
-            patient_names.append(patient_name)
+
+    # file names are <patient_name>-<suffix>.npy where suffix isn't supposed to have any - in it
+    for fullfname in data:
+        patient_name = fullfname.split("-")[0]
+        patient_names.append(patient_name)
 
     return patient_names
 
+
 scale_to_unit = lambda points: (points - np.mean(points, axis = 0)) / np.max( np.linalg.norm(points - np.mean(points, axis = 0), axis=1) )
+
+
+def remesh(mesh, n_points=50000):
+    clus = pyacvd.Clustering(mesh)
+    n_subdivs = round(np.log(n_points // mesh.n_points + 1)) + 1
+    clus.subdivide(n_subdivs)
+    clus.cluster(n_points)
+    return clus.create_mesh()
+
+
+def make_trimesh_from_pv(mesh: pv.UnstructuredGrid | pv.PolyData | trimesh.Trimesh ):
+    if not isinstance(mesh, trimesh.Trimesh):
+        surface = mesh.extract_surface()
+        faces = surface.faces.reshape((-1, 4))[:, 1:] 
+        vertices = surface.points
+        return trimesh.Trimesh(vertices=vertices, faces=faces)
+    else:
+        return mesh
+    
+
+def chamfer_distance_L2(points1, points2):
+    if len(points1) == 0 or len(points2) == 0:
+        return float("nan")
+    tree = KDTree(points1)
+    dists_1, _ = tree.query(points2)
+    tree = KDTree(points2)
+    dists_2, _ = tree.query(points1)
+    return np.mean(dists_1)  + np.mean(dists_2)
+
+
+def varifold_inner(faces1, faces2, gamma = 1.0, block=1024):
+    faces1 = faces1.to("cuda")
+    faces2 = faces2.to("cuda")
+
+    c1 = faces1[:, :3]
+    n1 = faces1[:, 3:6]
+    a1 = faces1[:, 6]
+
+    c2 = faces2[:, :3]
+    n2 = faces2[:, 3:6]
+    a2 = faces2[:, 6]
+
+    total = torch.zeros(1, device="cuda")
+
+    c2_norm2 = (c2 ** 2).sum(dim=1)  # (N2,)
+    n2T = n2.t()                     # (3, N2)
+
+    for i in tqdm(range(0, c1.shape[0], block)):
+        c1b = c1[i:i+block]
+        n1b = n1[i:i+block]
+        a1b = a1[i:i+block]
+
+        # squared distances (B, N2)
+        d2 = (
+            (c1b ** 2).sum(dim=1)[:, None]
+            + c2_norm2[None, :]
+            - 2 * c1b @ c2.t()
+        )
+
+        K = torch.exp(-gamma * d2)
+
+        # normal dot products (B, N2)
+        Ndot = n1b @ n2T
+
+        total += torch.sum(
+            K * Ndot * a1b[:, None] * a2[None, :]
+        )
+
+    return total
+
+
+def LDDMM_loss(mesh1: pv.PolyData, mesh2: pv.PolyData, compute_normals = True, remeshing = True, n_points = 50000, gamma = 1.0):
+
+    # remeshing to have same resolution
+    if remeshing:
+        # logger.info("Remeshing")
+        mesh1 = remesh(mesh1, n_points)
+        mesh2 = remesh(mesh2, n_points)
+
+    # logger.info("Extracting faces data")
+    data = [None, None]
+
+    for i,m in enumerate([mesh1, mesh2]):
+
+        if compute_normals:
+            m.compute_normals(
+                cell_normals=True,
+                point_normals=False,
+                auto_orient_normals=True,
+                split_vertices=False,
+                inplace=True
+            )
+
+        faces = m.faces.reshape((-1, 4))[:, 1:4]
+
+        cell_centers = m.cell_centers().points
+
+        cell_normals = m.cell_normals
+
+        v0 = m.points[faces[:, 0]]
+        v1 = m.points[faces[:, 1]]
+        v2 = m.points[faces[:, 2]]
+        cell_areas = 0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0), axis=1)
+
+        data[i] = np.concatenate([cell_centers, cell_normals, cell_areas[:,None]], axis=1)
+
+    faces1 = torch.from_numpy( data[0]).to(dtype=torch.float32)
+    faces2 = torch.from_numpy( data[1] ).to(dtype=torch.float32 )
+
+    # print("Number of faces mesh 1: ", faces1.shape )
+    # print("Number of faces mesh 2: ", faces2.shape )
+
+    # logger.info("Computing LDDMM loss")
+    K11 = varifold_inner(faces1, faces1, gamma)
+    K22 = varifold_inner(faces2, faces2, gamma)
+    K12 = varifold_inner(faces1, faces2, gamma)
+
+    dL = K11 + K22 - 2*K12
+
+    return dL.cpu().detach().numpy()[0]
+
 
 def compute_chd_dists(mesh_orig, mesh_organ):
 
@@ -107,7 +237,7 @@ def run(
 
     # retrieve original patient names in current dataset
     data_file = dataset.data_file
-    patient_names = get_dataset_patients_names(data_file)
+    patient_names = get_dataset_patients_names(json.load(open(data_file)))
 
     decoder_input_scale = specs.get("scale_spatial_inputs_by", 100)
 
@@ -168,11 +298,11 @@ def run(
         
         loss_l1 = torch.nn.L1Loss(reduction="sum")
 
-        code_reg_lambda = 2e-4
+        code_reg_lambda = 2e-5
 
-        num_epochs = 300
+        num_epochs = 100
 
-        optimizer = torch.optim.Adam(params=[latent], lr=5e-3)
+        optimizer = torch.optim.Adam(params=[latent], lr=1e-2)
         
         num_samp_per_scene = sdf_gt.shape[0]
 
@@ -260,6 +390,7 @@ def run(
                         xyz = torch.from_numpy(xyz_raw[250000 * i :]).cuda()
 
                     if decoder.use_positional_encoding:
+                    
                         freqs = 2.0 ** torch.arange(decoder.pos_enc_dim)
                         x_proj = [xyz]
                         for freq in freqs:
@@ -277,6 +408,13 @@ def run(
                 
             sdf_pred = np.concatenate(sdf_preds, axis=0)
             
+            # del decoder, model, optimizer
+            # del xyz, latent, batch_vecs, input_
+            
+            # gc.collect()
+            # torch.cuda.empty_cache()
+            # torch.cuda.synchronize()
+
             # ==================================================== #
             # region process model prediction
             # ==================================================== #
@@ -300,11 +438,12 @@ def run(
                         logger.warning( f"Version {version}: skipping isosurface extraction: not found for current isovalue")
                         return
                     
-                    
                     patient_dir = PATIENT_MESHES_DIR / patient_name
                     mesh_file = next( patient_dir.rglob(f"{organ}-processed.vtp"), None)
                     mesh_gt = pv.read(mesh_file)
-                    mesh_gt.points *= specs.get("scale_spatial_inputs_by", 100) #  scale to decoder range !
+                    mesh_gt.points *= specs.get("scale_spatial_inputs_by", 100 ) #  scale to decoder range !
+
+                    # TODO: bring these meshes back to either ORIGINAL scale, OR STANDARDIZED, UNIT SCALE before computing metrics !!!
                     
                     # ======= COMPUTE METRICS ======= #
                     mesh_gt = remesh(mesh_gt)
@@ -318,12 +457,18 @@ def run(
 
     if save_metrics:
         logger.info("Saving metrics data to csv")
+
         # chamfer
         rows = []
         for name, organs in chamfer_dists.items():
             for organ, metric in organs.items():
-                row = {"name": name, "organ": organ, "chamfer" :metric}
-                rows.append(row)
+                rows.append({
+                    "version": int(version.split("_")[-1]),
+                    "patient": name,
+                    "organ": organ,
+                    "metric": "chamfer",
+                    "value": metric,
+                })
         df = pd.DataFrame(rows)
         df.to_csv(RESULTS_DIR / "metrics" / f"{version}-chamfer.csv", index=False)
 
@@ -331,8 +476,13 @@ def run(
         rows = []
         for name, organs in LDDMM_losses.items():
             for organ, metric in organs.items():
-                row = {"name": name, "organ": organ, "LDDMM" : metric}
-                rows.append(row)
+                rows.append({
+                    "version": int(version.split("_")[-1]),
+                    "patient": name,
+                    "organ": organ,
+                    "metric": "LDDMM",
+                    "value": metric,
+                })
         df = pd.DataFrame(rows)
         df.to_csv(RESULTS_DIR / "metrics" / f"{version}-LDDMM.csv", index=False)
 
@@ -424,9 +574,11 @@ if __name__ == "__main__":
     # parser.add_argument("--mode", type=str, default = "process_test_dataset")
     # args = parser.parse_args()
 
-    experiment_name = "deepsdfatria_training_sweeps"
+    experiment_name = "deepsdf_atria_training_concurrent"
 
-    versions = [vers.name for vers in Path(EXPERIMENTS_DIR / experiment_name).iterdir()]
+    # versions = [vers.name for vers in Path(EXPERIMENTS_DIR / experiment_name).iterdir()]
+
+    versions = ["version_114","version_100","version_89"]
 
     test_dataset = "test/data_fnames-AF001-LEU_NORM_F004-AF009_P2R-LEU_NORM_0032.json"
 
