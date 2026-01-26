@@ -1,15 +1,15 @@
 {
     "Description" : "...",
 
-    "TrainSplit" : "train/data_fnames-AF001-LEU_NORM_F004-AF009_P2R-LEU_NORM_0032.json",
+    "TrainSplit" : "train/data_fnames_train.json",
 
     "TestSplit" : "test/data_fnames_test.json",
 
     "Network_specs" : {
-        "latent_size" : 64,
+        "latent_size" : 128,
         "out_dim" : 3,
-        "dims" : [256,256,256,256,256],
-        "latent_in" : [2],
+        "dims" : [256,256,256,256,256,256,256],
+        "latent_in" : [3],
         "positional_encoding" : false,
         "pos_enc_dim" : 4,   
         "lipschitz_layers" : [0,1,2,3,4],
@@ -21,24 +21,22 @@
         "dropout_layers" : [-1]       
     },
     
-    "NumEpochs" : 1000,
-    "lr_weights" : 5e-4,
-    "lr_latents" : 1e-3,
-    "num_samp_per_scene" : 8196,
-    "sampling_scene_method" : "random",
-    "batch_size" : 4,
-    "scale_spatial_inputs_by" : 100,
-    "use_loss" : "MSE",
-    "enforce_minmax" : false,
-    "clamp_distance" : 0.2,
-    "use_lipreg_loss" : false,
-    "Lipschitz_alpha" : 1e-5,
-    "code_reg_lambda" : 1e-4,
-    "use_lr_scheduler" : false,
-    "lr_weights_final" : 5e-5,
-    "lr_latents_final" : 5e-5,
-    "checkpoint_every_n_epochs" : 1000000000,
-    "resume_training_from_version" : "_",
-    "resume_from" : "last",
-    "reference_patient" : "AF069"  
+    "NumEpochs": 100000,
+    "lr_weights": 0.001,
+    "lr_latents": 0.005,
+    "num_samp_per_scene": 4096,
+    "sampling_scene_method": "random",
+    "batch_size": 32,
+    "scale_spatial_inputs_by": 100,
+    "enforce_minmax": true,
+    "clamp_distance": 0.2,
+    "use_loss": "L1",
+    "use_lipreg_loss": false,
+    "lipschitz_alpha": 2e-06,
+    "code_reg_lambda": 2e-05,
+    "use_lr_scheduler": true,
+    "lr_weights_final": 1e-05,
+    "lr_latents_final": 5e-05,
+    "checkpoint_every_n_epochs": 10000000,
+    "reference_patient": "AF069"
 }

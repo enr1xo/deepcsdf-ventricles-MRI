@@ -317,6 +317,42 @@ def visually_check_sdfs_distribution(source_dir):
         plt.tight_layout()
         plt.show()  # shows 16 plots at a time
 
+def visually_check_all_surfaces(source_dir):
+
+    patients_dirs =  list( Path(source_dir).iterdir() )
+
+    n_rows, n_cols = 4,5
+    batch_size = n_rows * n_cols
+
+    for batch_start in range(0, len(patients_dirs), batch_size):
+
+        batch_dirs = patients_dirs[batch_start : batch_start + batch_size]
+
+        plotter = pv.Plotter(shape=(n_rows, n_cols), window_size=[1920, 1600])
+
+        for i, patient_dir in enumerate(batch_dirs):
+
+            patient = patient_dir.name
+            epi = pv.read( patient_dir / "epicardium-processed.vtp")
+            la = pv.read( patient_dir / "la_endo-processed.vtp")
+            ra = pv.read( patient_dir / "ra_endo-processed.vtp")
+            
+            row = i // n_cols
+            col = i % n_cols
+            
+            plotter.subplot(row,col)
+            plotter.add_mesh(epi, color="white", opacity = 0.5)
+            plotter.add_mesh(la, color="red", opacity= 1.0)
+            plotter.add_mesh(ra, color="skyblue", opacity= 1.0)
+            plotter.add_title(patient)
+            plotter.show_grid()
+
+        plotter.link_views()
+        plotter.show()
+
+        plotter.close()
+
+    return
 
 # ================================================================ #
 # region latent space visualization
@@ -383,6 +419,14 @@ if __name__ == "__main__":
 
     from pathlib import Path
 
-    mesh = pv.read()
+    # PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtriaPointsAndSDF")
+
+    # PATIENTS_NPY_DATA_DIR =  PATIENTS_COORDS_AND_SDFS_DIR / "single_patients_100000pts_npy"
+
+    # visually_check_sdfs_distribution(PATIENTS_NPY_DATA_DIR)
+    
+    PATIENT_MESHES_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtrialGeometries")
+
+    visually_check_all_surfaces(PATIENT_MESHES_DIR)
     
     pass

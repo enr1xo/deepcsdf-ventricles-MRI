@@ -6,6 +6,7 @@ import subprocess
 import os
 import gc
 import json
+from tqdm import tqdm
 from utils.align_atrial_mesh import apply_icp_result, align_to_reference_mesh
 from scipy.spatial import KDTree
 import pymeshfix
@@ -305,7 +306,6 @@ def extract_closed_atria_surfaces(mesh, tags_metadata = ATRIA_TAGS_METADATA):
     for m in (epicardium_surface, LA_endo_surface, RA_endo_surface):
         m.field_data.clear()
 
-
     return {"epicardium_surface" : epicardium_surface, "LA_endo_surface" : LA_endo_surface, "RA_endo_surface" : RA_endo_surface}
 
 def extract_processed_atria_surfaces(patient_name, reference_name, reference_mesh, source_dir = PATIENT_MESHES_DIR):
@@ -317,20 +317,38 @@ def extract_processed_atria_surfaces(patient_name, reference_name, reference_mes
 
     patient_dir = Path(source_dir) / patient_name
 
+    # VOLUMETRIC MESH
     original_mesh_path = next( patient_dir.glob("*.vtu"), None)
     if not original_mesh_path:
         raise FileNotFoundError(f"Volumetric mesh for patient {patient_name} not found in {patient_dir}.")
     original_mesh = pv.read(original_mesh_path)
 
+    # extract CLOSED surfaces, from ORIGINAL volumetric mesh to avoid extracting from manipulated vertices
+    extracted_surfaces = extract_closed_atria_surfaces(original_mesh) # from here I am SURE meshes are watertight. But then I am gonna scale and move them --> numerically this can introduce some errors
+    # retrieve extracted closed surfaces
+    LA_endo = extracted_surfaces["LA_endo_surface"]
+    RA_endo = extracted_surfaces["RA_endo_surface"]
+    epicardium = extracted_surfaces["epicardium_surface"]
+
     # center -> scale
     original_scaled = original_mesh.copy()
-    _, centre, max_radius = scale_to_unit_sphere(original_scaled.points, return_transf_params=True)
+    # careful to not have the points passed already scaled by this function !
+    # Python passes references to objects; only in-place mutation affects the caller. the function now should be implemented to avoid any in place modification
+    centre, max_radius = scale_to_unit_sphere(original_scaled.points, return_transf_params=True)
     original_scaled.points -= centre
     original_scaled.points /= max_radius     
+    # apply scaling and alignment to extracted surfaces
+    epicardium.points -= centre
+    epicardium.points /= max_radius
+    LA_endo.points -= centre
+    LA_endo.points /= max_radius
+    RA_endo.points -= centre
+    RA_endo.points /= max_radius
+
     # now align: use ICP on point clouds AT THE STANDARD UNIT SCALE !! resulting rotation and traslation data will be in this scale
     if patient_name != reference_name: # skip alignment for reference mesh
         reference_mesh_scaled = reference_mesh.copy()
-        _, centre_ref, max_radius_ref = scale_to_unit_sphere(reference_mesh_scaled.points, return_transf_params=True)
+        centre_ref, max_radius_ref = scale_to_unit_sphere(reference_mesh_scaled.points, return_transf_params=True)
         reference_mesh_scaled.points -= centre_ref
         reference_mesh_scaled.points /= max_radius_ref
         # ICP to align
@@ -344,20 +362,6 @@ def extract_processed_atria_surfaces(patient_name, reference_name, reference_mes
             verbose_out=False
         )
 
-    # extract CLOSED surfaces, from original volumetric mesh to avoid extracting from manipulated vertices
-    extracted_surfaces = extract_closed_atria_surfaces(original_mesh)
-    # retrieve extracted closed surfaces
-    LA_endo = extracted_surfaces["LA_endo_surface"]
-    RA_endo = extracted_surfaces["RA_endo_surface"]
-    epicardium = extracted_surfaces["epicardium_surface"]
-    # apply scaling and alignment
-    epicardium.points -= centre
-    epicardium.points /= max_radius
-    LA_endo.points -= centre
-    LA_endo.points /= max_radius
-    RA_endo.points -= centre
-    RA_endo.points /= max_radius
-
     if patient_name == reference_name:
         R = np.eye(3, dtype=np.float64)
         t = np.zeros(3, dtype=np.float64)
@@ -365,61 +369,75 @@ def extract_processed_atria_surfaces(patient_name, reference_name, reference_mes
         epicardium.points = apply_icp_result(R, t, epicardium.points)
         LA_endo.points = apply_icp_result(R, t, LA_endo.points)
         RA_endo.points = apply_icp_result(R, t, RA_endo.points)
-    
+
     # store scaling and alignment data in original mesh file 
     original_mesh.field_data[f'alignto{reference_name}-rotation'] = R
     original_mesh.field_data[f'alignto{reference_name}-traslation'] = t
     original_mesh.field_data['centre-centroid'] = centre 
     original_mesh.field_data['scale-tounitradius'] = max_radius 
 
-    original_mesh.save(original_mesh_path)
-
     # store scaling factor also in every surface data to find it easily later to get back to original scale, without having to load the original mesh
     epicardium.field_data['scale-tooriginalrange'] = max_radius 
     LA_endo.field_data['scale-tooriginalrange'] = max_radius 
-    RA_endo.field_data['scale-tooriginalrange'] = max_radius     
+    RA_endo.field_data['scale-tooriginalrange'] = max_radius   
 
-    return {"epicardium_surface" : epicardium, "LA_endo_surface" : LA_endo, "RA_endo_surface" : RA_endo}
+    # sanity check: make sure numerical transformations haven't broken watertightness
+    if not check_watertight(epicardium):
+        logger.error("Epicardium mesh isn't watertight: found boundary edges")
+
+    if not check_watertight(LA_endo):
+        logger.error("LA endocardium mesh isn't watertight: found boundary edges")
+    
+    if not check_watertight(RA_endo):
+        logger.error("RA endocardium isn't watertight: found boundary edges")
+
+    ### to go back precisely from original --> extracted in the ORIGINAL SCALE:
+    # original_mesh.points -= centre
+    # original_mesh.points /= max_radius
+    # original_mesh.points = apply_icp_result(R,t,original_mesh.points)
+    # original_mesh.points *= epicardium.field_data["scale-tooriginalrange"]
+
+    return {"epicardium_surface" : epicardium, "LA_endo_surface" : LA_endo, "RA_endo_surface" : RA_endo, "original_mesh" : original_mesh}
 
 def _create_processed_surfaces_meshes(
     source_dir = PATIENT_MESHES_DIR,
     save_to_dir = PATIENT_MESHES_DIR,
-    reference_patient = "AF069",
-    already_processed = []
+    reference_patient = "AF069"
 ):
     """
         Helper to only create all processed meshes first
     """
 
     patients = [f.name for f in source_dir.iterdir() if f.is_dir()]
+
     reference_mesh = pv.read(source_dir / "AF069" / "AF069.vtu")
 
-    for patient in  patients:
+    for patient in patients:
         
         logger.warning(f"Processing patient {patient}")
 
-        if patient in already_processed:
-            logger.warning("Processed meshes already present, skipping creation")
-            continue
+        patient_save_dir = Path(save_to_dir) / patient
 
-        extracted = extract_processed_atria_surfaces(patient, "AF069", reference_mesh, PATIENT_MESHES_DIR)
+        # if next( patient_save_dir.rglob("*-processed.vtp"), None) is not None:
+        #     logger.warning(f"Processed meshes already present at {str(patient_save_dir)}, skipping creation")
+        #     continue
+        
+        Path( patient_save_dir ).mkdir( exist_ok=True)
+        
+        extracted = extract_processed_atria_surfaces(patient, reference_patient, reference_mesh, source_dir)
 
         LA_endo = extracted["LA_endo_surface"]
         RA_endo = extracted["RA_endo_surface"]
         epicardium = extracted["epicardium_surface"]
+        original = extracted["original_mesh"]
 
         logger.info("Saving processed surfaces meshes")
         
-        epicardium.save( save_to_dir / patient / "epicardium-processed.vtp")
-        LA_endo.save( save_to_dir / patient / "la_endo-processed.vtp")
-        RA_endo.save( save_to_dir / patient / "ra_endo-processed.vtp")
+        epicardium.save( patient_save_dir / "epicardium-processed.vtp")
+        LA_endo.save( patient_save_dir / "la_endo-processed.vtp")
+        RA_endo.save( patient_save_dir / "ra_endo-processed.vtp")
 
-        # plotter = pv.Plotter()
-        # plotter.add_mesh(epicardium, color="lightgray",opacity=0.5)
-        # plotter.add_mesh(LA_endo, color="red")
-        # plotter.add_mesh(RA_endo, color="blue")
-        # plotter.show_grid()
-        # plotter.show()
+        original.save( patient_save_dir / f"{patient}.vtu")
 
     return
 
@@ -435,6 +453,8 @@ def _create_deepsdf_data_npy(
     create_processed_meshes=False,
     store_processed_meshes=False,
 ):
+    # TODO: save npz files instead of npy arrays, to more clearly indicate from which surface SDF are from instead of picking a convention
+    # this would also mean modifying dataloader and training step !
     """
     Save .npy files for each patient in `source_dir`, containing sampled points
     and signed distance functions (SDFs) from specified cardiac regions.
@@ -462,7 +482,8 @@ def _create_deepsdf_data_npy(
 
     Notes:
         - If `create_processed_meshes` is False, `source_dir` is expected to contain surface meshes in `<region>-processed.vtp` format,
-          already scaled and aligned consistently. No geometry checks are performed.
+          already scaled and aligned consistently.
+          No geometry trasformations are performed, the meshes are only flagged non-destructively if not watertight before SDF computation.
         - If `create_processed_meshes` is True, `source_dir` must contain each patient's `.vtu` mesh.
           The required surfaces will be extracted and processed at runtime, and alignment information (rotation matrix + traslation vector)
           will be stored as data of the original mesh using `field_data` method of `pyvista.UnstructuredGrid`. 
@@ -514,7 +535,7 @@ def _create_deepsdf_data_npy(
             "in each patient's original mesh file as field_data attributes."
         )
     else:
-        logger.warning("Using already processed meshes.")
+        logger.warning(f"Using already processed meshes from directory {source_dir}.")
 
     # ------------------------------------------
     # Iterate over all patients
@@ -527,9 +548,10 @@ def _create_deepsdf_data_npy(
             continue
 
         patient_name = patient_dir.name
-        logger.info(f"Processing patient {patient_name}: {idx + 1} / {len(source_dirs)}.")
+        logger.warning(f"Processing patient {patient_name}: {idx + 1} / {len(source_dirs)}.")
 
         # Output filename
+        save_to_dir.mkdir(exist_ok=True)
         out_name = f"{patient_name}-{opt}{num_samp_per_scene}_coords_and_sdf.npy"
         out_path = save_to_dir / out_name
 
@@ -622,7 +644,7 @@ def _create_deepsdf_data_npy(
         # ------------------------------------------
         # Sample surfaces
         # ------------------------------------------
-        logger.info("Sampling surfaces...")
+        logger.info("Sampling surfaces ...")
         query_sets = []
 
         if epicardium is not None:
@@ -671,22 +693,21 @@ def _create_deepsdf_data_npy(
 
         if epicardium is not None:
             sdfs.append(
-                -1 * compute_signed_distance_libigl(mesh=epicardium, query_points=query_points)
+                compute_signed_distance_libigl(mesh=epicardium, query_points=query_points)
                 # compute_signed_distance_o3d(mesh=epicardium, query_points=query_points)
             )
         if LA_endo is not None:
             sdfs.append(
-                -1 * compute_signed_distance_libigl(mesh=LA_endo, query_points=query_points)
+                compute_signed_distance_libigl(mesh=LA_endo, query_points=query_points)
                 #compute_signed_distance_o3d(mesh=LA_endo, query_points=query_points)
             )
         if RA_endo is not None:
             sdfs.append(
-                -1 * compute_signed_distance_libigl(mesh=RA_endo, query_points=query_points)
+                compute_signed_distance_libigl(mesh=RA_endo, query_points=query_points)
                 #compute_signed_distance_o3d(mesh=RA_endo, query_points=query_points)
             )
 
         sdfs = np.stack(sdfs, axis=1).astype(np.float32)
-
 
         # points = pv.PolyData(query_points)
         # points["sdf_epi"] = sdfs[:,0]
@@ -712,10 +733,8 @@ def _create_deepsdf_data_npy(
 
         gc.collect()
 
-        break
-
-        
     logger.info(" Done. ")
+
 
 
 if __name__ == "__main__":
@@ -724,15 +743,26 @@ if __name__ == "__main__":
 
     #TODO: example usage
 
-    # _create_deepsdf_data_npy(
-    #     source_dir=PATIENT_MESHES_DIR,
-    #     save_to_dir= PATIENTS_NPY_DATA_DIR / "single_patients_100000pts_npy",
-    #     num_epi_samples=30000,
-    #     num_lendo_samples=35000,
-    #     num_rendo_samples=35000,
-    #     create_processed_meshes=False,
-    #     store_processed_meshes=False
+    # _create_processed_surfaces_meshes(
+    #     source_dir  = Path("/home/navarri/AtriaProject/DATASETS/AtrialGeometriesOriginal"),
+    #     save_to_dir = Path("/home/navarri/AtriaProject/DATASETS/AtrialGeometries"),
+    #     reference_patient="AF069"
     # )
+
+    num_epi_samples = 30000
+    num_lendo_samples = 35000
+    num_rendo_samples = 35000
+    num = num_epi_samples + num_lendo_samples + num_rendo_samples
+
+    _create_deepsdf_data_npy(
+        source_dir=PATIENT_MESHES_DIR,
+        save_to_dir= PATIENTS_COORDS_AND_SDFS_DIR / f"single_patients_{num}pts_npy",
+        num_epi_samples=num_epi_samples,
+        num_lendo_samples=num_lendo_samples,
+        num_rendo_samples=num_rendo_samples,
+        create_processed_meshes=False,
+        store_processed_meshes=False
+    )
 
     # patient = "AF001"
 

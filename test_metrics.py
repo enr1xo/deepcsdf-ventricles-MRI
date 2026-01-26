@@ -6,9 +6,10 @@ import numpy as np
 import pyvista as pv
 from model.atria_deepsdf_decoder import Decoder, DeepSDF
 from model.atria_dataloader import SDFDataModule
-# from utils.metrics import chamfer_distance_L2, LDDMM_loss
-# from utils.surface_utils import remesh, make_trimesh_from_pv
+from utils.metrics import chamfer_distance_L2, LDDMM_loss
+from utils.surface_utils import remesh, make_trimesh_from_pv, scale_to_unit_sphere
 from utils.reconstruction_utils import isosurface_from_sdf
+from utils.visual_utils import plot_gt_vs_reconstructed_with_error
 from tqdm import tqdm
 import pandas as pd
 import trimesh
@@ -16,7 +17,7 @@ import pyacvd
 from scipy.spatial import KDTree
 import gc
 
-from config_local import (
+from config import (
     EXPERIMENTS_DIR,
     RESULTS_DIR,
     IMAGES_DIR,
@@ -40,127 +41,124 @@ def get_dataset_patients_names(data: dict):
     return patient_names
 
 
-scale_to_unit = lambda points: (points - np.mean(points, axis = 0)) / np.max( np.linalg.norm(points - np.mean(points, axis = 0), axis=1) )
+# def remesh(mesh, n_points=50000):
+#     clus = pyacvd.Clustering(mesh)
+#     n_subdivs = round(np.log(n_points // mesh.n_points + 1)) + 1
+#     clus.subdivide(n_subdivs)
+#     clus.cluster(n_points)
+#     return clus.create_mesh()
 
 
-def remesh(mesh, n_points=50000):
-    clus = pyacvd.Clustering(mesh)
-    n_subdivs = round(np.log(n_points // mesh.n_points + 1)) + 1
-    clus.subdivide(n_subdivs)
-    clus.cluster(n_points)
-    return clus.create_mesh()
-
-
-def make_trimesh_from_pv(mesh: pv.UnstructuredGrid | pv.PolyData | trimesh.Trimesh ):
-    if not isinstance(mesh, trimesh.Trimesh):
-        surface = mesh.extract_surface()
-        faces = surface.faces.reshape((-1, 4))[:, 1:] 
-        vertices = surface.points
-        return trimesh.Trimesh(vertices=vertices, faces=faces)
-    else:
-        return mesh
+# def make_trimesh_from_pv(mesh: pv.UnstructuredGrid | pv.PolyData | trimesh.Trimesh ):
+#     if not isinstance(mesh, trimesh.Trimesh):
+#         surface = mesh.extract_surface()
+#         faces = surface.faces.reshape((-1, 4))[:, 1:] 
+#         vertices = surface.points
+#         return trimesh.Trimesh(vertices=vertices, faces=faces)
+#     else:
+#         return mesh
     
 
-def chamfer_distance_L2(points1, points2):
-    if len(points1) == 0 or len(points2) == 0:
-        return float("nan")
-    tree = KDTree(points1)
-    dists_1, _ = tree.query(points2)
-    tree = KDTree(points2)
-    dists_2, _ = tree.query(points1)
-    return np.mean(dists_1)  + np.mean(dists_2)
+# def chamfer_distance_L2(points1, points2):
+#     if len(points1) == 0 or len(points2) == 0:
+#         return float("nan")
+#     tree = KDTree(points1)
+#     dists_1, _ = tree.query(points2)
+#     tree = KDTree(points2)
+#     dists_2, _ = tree.query(points1)
+#     return np.mean(dists_1)  + np.mean(dists_2)
 
 
-def varifold_inner(faces1, faces2, gamma = 1.0, block=1024):
-    faces1 = faces1.to("cuda")
-    faces2 = faces2.to("cuda")
+# def varifold_inner(faces1, faces2, gamma = 1.0, block=1024):
+#     faces1 = faces1.to("cuda")
+#     faces2 = faces2.to("cuda")
 
-    c1 = faces1[:, :3]
-    n1 = faces1[:, 3:6]
-    a1 = faces1[:, 6]
+#     c1 = faces1[:, :3]
+#     n1 = faces1[:, 3:6]
+#     a1 = faces1[:, 6]
 
-    c2 = faces2[:, :3]
-    n2 = faces2[:, 3:6]
-    a2 = faces2[:, 6]
+#     c2 = faces2[:, :3]
+#     n2 = faces2[:, 3:6]
+#     a2 = faces2[:, 6]
 
-    total = torch.zeros(1, device="cuda")
+#     total = torch.zeros(1, device="cuda")
 
-    c2_norm2 = (c2 ** 2).sum(dim=1)  # (N2,)
-    n2T = n2.t()                     # (3, N2)
+#     c2_norm2 = (c2 ** 2).sum(dim=1)  # (N2,)
+#     n2T = n2.t()                     # (3, N2)
 
-    for i in tqdm(range(0, c1.shape[0], block)):
-        c1b = c1[i:i+block]
-        n1b = n1[i:i+block]
-        a1b = a1[i:i+block]
+#     for i in tqdm(range(0, c1.shape[0], block)):
+#         c1b = c1[i:i+block]
+#         n1b = n1[i:i+block]
+#         a1b = a1[i:i+block]
 
-        # squared distances (B, N2)
-        d2 = (
-            (c1b ** 2).sum(dim=1)[:, None]
-            + c2_norm2[None, :]
-            - 2 * c1b @ c2.t()
-        )
+#         # squared distances (B, N2)
+#         d2 = (
+#             (c1b ** 2).sum(dim=1)[:, None]
+#             + c2_norm2[None, :]
+#             - 2 * c1b @ c2.t()
+#         )
 
-        K = torch.exp(-gamma * d2)
+#         K = torch.exp(-gamma * d2)
 
-        # normal dot products (B, N2)
-        Ndot = n1b @ n2T
+#         # normal dot products (B, N2)
+#         Ndot = n1b @ n2T
 
-        total += torch.sum(
-            K * Ndot * a1b[:, None] * a2[None, :]
-        )
+#         total += torch.sum(
+#             K * Ndot * a1b[:, None] * a2[None, :]
+#         )
 
-    return total
+#     return total
 
 
-def LDDMM_loss(mesh1: pv.PolyData, mesh2: pv.PolyData, compute_normals = True, remeshing = True, n_points = 50000, gamma = 1.0):
+# def LDDMM_loss(mesh1: pv.PolyData, mesh2: pv.PolyData, compute_normals = True, remeshing = True, n_points = 50000, gamma = 1.0):
 
-    # remeshing to have same resolution
-    if remeshing:
-        # logger.info("Remeshing")
-        mesh1 = remesh(mesh1, n_points)
-        mesh2 = remesh(mesh2, n_points)
+#     # remeshing to have same resolution
+#     if remeshing:
+#         # logger.info("Remeshing")
+#         mesh1 = remesh(mesh1, n_points)
+#         mesh2 = remesh(mesh2, n_points)
 
-    # logger.info("Extracting faces data")
-    data = [None, None]
+#     # logger.info("Extracting faces data")
+#     data = [None, None]
 
-    for i,m in enumerate([mesh1, mesh2]):
+#     for i,m in enumerate([mesh1, mesh2]):
 
-        if compute_normals:
-            m.compute_normals(
-                cell_normals=True,
-                point_normals=False,
-                auto_orient_normals=True,
-                split_vertices=False,
-                inplace=True
-            )
+#         if compute_normals:
+#             m.compute_normals(
+#                 cell_normals=True,
+#                 point_normals=False,
+#                 auto_orient_normals=True,
+#                 split_vertices=False,
+#                 inplace=True
+#             )
 
-        faces = m.faces.reshape((-1, 4))[:, 1:4]
+#         faces = m.faces.reshape((-1, 4))[:, 1:4]
 
-        cell_centers = m.cell_centers().points
+#         cell_centers = m.cell_centers().points
 
-        cell_normals = m.cell_normals
+#         cell_normals = m.cell_normals
 
-        v0 = m.points[faces[:, 0]]
-        v1 = m.points[faces[:, 1]]
-        v2 = m.points[faces[:, 2]]
-        cell_areas = 0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0), axis=1)
+#         v0 = m.points[faces[:, 0]]
+#         v1 = m.points[faces[:, 1]]
+#         v2 = m.points[faces[:, 2]]
+#         cell_areas = 0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0), axis=1)
 
-        data[i] = np.concatenate([cell_centers, cell_normals, cell_areas[:,None]], axis=1)
+#         data[i] = np.concatenate([cell_centers, cell_normals, cell_areas[:,None]], axis=1)
 
-    faces1 = torch.from_numpy( data[0]).to(dtype=torch.float32)
-    faces2 = torch.from_numpy( data[1] ).to(dtype=torch.float32 )
+#     faces1 = torch.from_numpy( data[0]).to(dtype=torch.float32)
+#     faces2 = torch.from_numpy( data[1] ).to(dtype=torch.float32 )
 
-    # print("Number of faces mesh 1: ", faces1.shape )
-    # print("Number of faces mesh 2: ", faces2.shape )
+#     # print("Number of faces mesh 1: ", faces1.shape )
+#     # print("Number of faces mesh 2: ", faces2.shape )
 
-    # logger.info("Computing LDDMM loss")
-    K11 = varifold_inner(faces1, faces1, gamma)
-    K22 = varifold_inner(faces2, faces2, gamma)
-    K12 = varifold_inner(faces1, faces2, gamma)
+#     # logger.info("Computing LDDMM loss")
+#     K11 = varifold_inner(faces1, faces1, gamma)
+#     K22 = varifold_inner(faces2, faces2, gamma)
+#     K12 = varifold_inner(faces1, faces2, gamma)
 
-    dL = K11 + K22 - 2*K12
+#     dL = K11 + K22 - 2*K12
 
-    return dL.cpu().detach().numpy()[0]
+#     return dL.cpu().detach().numpy()[0]
 
 
 def compute_chd_dists(mesh_orig, mesh_organ):
@@ -185,8 +183,12 @@ def compute_chd_dists(mesh_orig, mesh_organ):
 def run(
         experiment_name,
         version,
-        override_with_test_dataset = None,
+        override_with_dataset = None,
+        all_train_shapes = False,
         reconstruct_from = "all",
+        num_epochs_fit_latent = 250,
+        latent_reg_factor = 2e-3,
+        lr_fit_latent = 5e-3,
         save_metrics = True,
         save_latent_codes = True,
         return_metrics_results = False
@@ -202,8 +204,8 @@ def run(
     specs = json.load( open(hparams_file) )
     
     # manual test dataset
-    if override_with_test_dataset is not None:
-        specs["TestSplit"] = override_with_test_dataset
+    if override_with_dataset is not None:
+        specs["TestSplit"] = override_with_dataset
 
     logger.info(f"Loaded specs from version: {version_dir.name}")
 
@@ -262,7 +264,6 @@ def run(
 
         LDDMM_losses[patient_name] = {}
 
-        # TODO: just pick points from only LA or RA to see the reconstruction power then ...
         xyz_gt = data["coords"]
         sdf_gt = data["sdf"]
         
@@ -277,9 +278,7 @@ def run(
         if enforce_minmax:
             sdf_gt = torch.clamp(sdf_gt, min = -clamp_distance, max = clamp_distance)
 
-        print(f"/ ===== PATIENT: {patient_name} ===== /")
-
-        # latent = fit_latent_to_single_shape(xyz_gt, sdf_gt, model, decoder)
+        print(f"##### ===== PATIENT: {patient_name} ===== #####")
 
         # region fit latent      
         sdf_gt = sdf_gt.cuda()
@@ -288,7 +287,7 @@ def run(
         if decoder.use_positional_encoding:
             xyz = model.positional_encoding(xyz)
 
-        # starting point for optimization (same I use initializing latent codes in training)
+        # starting point for optimization (same I use initializing latent codes in training): zero
         # I could also save initial vectors when training and start with empirical mean and covariance,
         # sampling a latent using MultivariateNormal and rsample()
         latent_size = decoder.latent_size
@@ -298,11 +297,11 @@ def run(
         
         loss_l1 = torch.nn.L1Loss(reduction="sum")
 
-        code_reg_lambda = 2e-5
+        code_reg_lambda = latent_reg_factor
 
-        num_epochs = 100
+        num_epochs = num_epochs_fit_latent
 
-        optimizer = torch.optim.Adam(params=[latent], lr=1e-2)
+        optimizer = torch.optim.Adam(params=[latent], lr=lr_fit_latent)
         
         num_samp_per_scene = sdf_gt.shape[0]
 
@@ -347,11 +346,9 @@ def run(
 
         latent.requires_grad = False
 
-        latent_codes[patient_name] = latent.cpu().numpy().ravel()  # save fitted latent code, keep latent on gpu for reconstruction
-
         if save_latent_codes:
-            logger.info("Saving fitted latents")
-            np.savez(LATENTS_DIR / f"{version}-latents_{len(latent_codes.keys())}_patients_codereg={code_reg_lambda:.6f}_epochs={num_epochs}.npz", **latent_codes)
+            latent_codes[patient_name] = latent.cpu().numpy().ravel()  # keep fitted latent code, keep latent on gpu for reconstruction
+
 
         if save_metrics or return_metrics_results: # if not, don't even bother processing the mesh
             # ==================================================== #
@@ -408,13 +405,6 @@ def run(
                 
             sdf_pred = np.concatenate(sdf_preds, axis=0)
             
-            # del decoder, model, optimizer
-            # del xyz, latent, batch_vecs, input_
-            
-            # gc.collect()
-            # torch.cuda.empty_cache()
-            # torch.cuda.synchronize()
-
             # ==================================================== #
             # region process model prediction
             # ==================================================== #
@@ -439,13 +429,15 @@ def run(
                         return
                     
                     patient_dir = PATIENT_MESHES_DIR / patient_name
-                    mesh_file = next( patient_dir.rglob(f"{organ}-processed.vtp"), None)
+                    mesh_file = next( patient_dir.rglob(f"{organ}-processed.vtp"), None) # !!! these are assumed to be standardized, unit scale already.
                     mesh_gt = pv.read(mesh_file)
-                    mesh_gt.points *= specs.get("scale_spatial_inputs_by", 100 ) #  scale to decoder range !
 
-                    # TODO: bring these meshes back to either ORIGINAL scale, OR STANDARDIZED, UNIT SCALE before computing metrics !!!
-                    
                     # ======= COMPUTE METRICS ======= #
+                    # bring meshes back to either ORIGINAL scale, OR STANDARDIZED, UNIT SCALE before computing metrics !!!
+                    # to be consistent and not accumulate errors:
+                    # the training and fitting points are sampled from these meshes, then multiplied as input to the network optionally --> remove decoder scale from the reconstructed mesh
+                    mesh_reconstructed.points /= decoder_input_scale # bring reconstructed at the original scale TODO: does this numerically move vertices a bit so meshes are no more really watertight?
+                    
                     mesh_gt = remesh(mesh_gt)
                     mesh_reconstructed = remesh(mesh_reconstructed)
 
@@ -455,8 +447,14 @@ def run(
                     logger.info(f"Computing LDDMM")
                     LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False)
 
+    if save_latent_codes:
+        logger.info("Saving fitted latents")
+        np.savez(LATENTS_DIR / f"{version}-latents_{len(latent_codes.keys())}_patients_codereg={code_reg_lambda:.6f}_epochs={num_epochs}.npz", **latent_codes)
+
     if save_metrics:
         logger.info("Saving metrics data to csv")
+
+        opt = "trainshapes" if all_train_shapes else "testshapes"
 
         # chamfer
         rows = []
@@ -470,7 +468,7 @@ def run(
                     "value": metric,
                 })
         df = pd.DataFrame(rows)
-        df.to_csv(RESULTS_DIR / "metrics" / f"{version}-chamfer.csv", index=False)
+        df.to_parquet(RESULTS_DIR / "metrics" / f"{version}-chamfer-{opt}.parquet", index=False)
 
         # LDDMM
         rows = []
@@ -484,15 +482,117 @@ def run(
                     "value": metric,
                 })
         df = pd.DataFrame(rows)
-        df.to_csv(RESULTS_DIR / "metrics" / f"{version}-LDDMM.csv", index=False)
+        df.to_parquet(RESULTS_DIR / "metrics" / f"{version}-LDDMM-{opt}.parquet", index=False)
 
     if return_metrics_results:
         return {"chamfer" : chamfer_dists, "LDDMM": LDDMM_losses}
-
+    
     return
 
+   
+       
 
+
+if __name__ == "__main__":
+    
+    import argparse
+
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("--experiment_name", type=str, default = "deepsdfatria_training_local")
+    # parser.add_argument("--version", type=str, default = "version_0")
+    # parser.add_argument("--mode", type=str, default = "process_test_dataset")
+    # args = parser.parse_args()
+
+    experiment_name = "deepsdfatria_training_local"
+
+    versions = ["version_0"]
+
+    test_dataset = "train/data_fnames_train-10patientsonly.json" #"test/data_fnames-AF001-LEU_NORM_F004-AF009_P2R-LEU_NORM_0032.json"
+
+    for version in versions:
+
+        run(
+            experiment_name=experiment_name,
+            version=version,
+            override_with_dataset = test_dataset,
+            reconstruct_from = "all",
+            all_train_shapes=True,
+            save_metrics = True,
+            save_latent_codes = False,
+            return_metrics_results = False
+        )
+
+
+
+
+"""
 # def run_multiple(
+#         experiment_name,
+#         versions = [],
+#         test_fnames=None,
+#         save_latent_codes=False, 
+#         save_metrics_for_each=False
+
+#     ):
+
+#     # run test for every version
+#     versions_metrics = {}
+
+#     for v_num in versions:
+
+#         metrics = run(
+#             experiment_name=experiment_name,
+#             version=f"version_{v_num}",
+#             override_with_test_dataset=test_fnames,
+#             reconstruct_from = "all",
+#             save_metrics = save_metrics_for_each,
+#             save_latent_codes = save_latent_codes,
+#             return_metrics_results = True
+#         )
+
+#         versions_metrics[v_num]["chamfer"] = metrics["chamfer"]
+#         versions_metrics[v_num]["LDDMM"] = metrics["LDDMM"]
+
+
+#     # =============== #
+#     # build dataframe
+#     # =============== #
+#     for key, value in versions_metrics.items():
+#         rows = []
+#         for v_num, vals in value.items():
+#             for patient, organs in vals.items():
+#                 row = {"patient": patient, "version": v_num}
+#                 row.update(organs)  # adds all organ:value pairs
+#                 rows.append(row)
+#         df = pd.DataFrame(rows)
+
+#         # print and save top 3 versions per patient
+#         organs = ["epicardium", "la_endo", "ra_endo"]
+#         # Compute mean performance
+#         df["mean_perf"] = df[organs].mean(axis=1)
+#         # Reset index for safety
+#         df_reset = df.reset_index(drop=True)
+#         # Sort by patient and mean performance (lowest first)
+#         df_sorted = df_reset.sort_values(["patient","mean_perf"], ascending=[True,True])
+#         # Keep top 3 versions per patient
+#         df_top3 = df_sorted.groupby("patient").head(3).copy()  # copy to be sure
+#         # Get index of best version per patient among top 3
+#         best_idx = df_top3.groupby("patient")["mean_perf"].idxmin()
+#         table_rows = []
+#         for i, row in df_top3.iterrows():
+#             version_val = str(row["version"])
+#             if i in best_idx.values:  # mark best version
+#                 version_val += " *"
+#             row_vals = [row["patient"], version_val] + [row[o] for o in organs]
+#             table_rows.append(row_vals)
+#         print(tabulate(table_rows, headers=["patient", "version"] + organs, tablefmt="grid"))
+
+#         # Add a column for marked version
+#         df_top3["version_marked"] = df_top3["version"].astype(str)
+#         df_top3.loc[best_idx, "version_marked"] += " *"
+#         # Save to CSV
+#         df_top3.to_csv( RESULTS_DIR / "metrics" / f"{key}-markedtop3.csv", index=False, columns=["patient", "version_marked"] + organs)
+            # def run_multiple(
 #         experiment_name,
 #         versions = [],
 #         test_fnames=None,
@@ -560,36 +660,4 @@ def run(
 #         df_top3.to_csv( RESULTS_DIR / "metrics" / f"{key}-markedtop3.csv", index=False, columns=["patient", "version_marked"] + organs)
             
 
-    
-       
-
-
-if __name__ == "__main__":
-    
-    import argparse
-
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("--experiment_name", type=str, default = "deepsdfatria_training_local")
-    # parser.add_argument("--version", type=str, default = "version_0")
-    # parser.add_argument("--mode", type=str, default = "process_test_dataset")
-    # args = parser.parse_args()
-
-    experiment_name = "deepsdf_atria_training_concurrent"
-
-    # versions = [vers.name for vers in Path(EXPERIMENTS_DIR / experiment_name).iterdir()]
-
-    versions = ["version_114","version_100","version_89"]
-
-    test_dataset = "test/data_fnames-AF001-LEU_NORM_F004-AF009_P2R-LEU_NORM_0032.json"
-
-    for version in versions:
-
-        run(
-            experiment_name=experiment_name,
-            version=version,
-            override_with_test_dataset = test_dataset,
-            reconstruct_from = "all",
-            save_metrics = True,
-            save_latent_codes = False,
-            return_metrics_results = False
-        )
+"""

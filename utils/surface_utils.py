@@ -87,15 +87,13 @@ def make_surface_watertight(surface_mesh: pv.PolyData):
 def scale_to_unit_sphere(points, return_transf_params = False):
 
     centroid = np.mean( points, axis = 0 )
-    points -= centroid
 
-    distances = np.linalg.norm(points, axis=1)
-    points /= np.max(distances)
+    scale = np.max( np.linalg.norm(points - centroid, axis=1) )
 
     if return_transf_params:
-        return points, centroid, np.max(distances)
+        return centroid, scale
     else:
-        return points
+        return ( points - centroid ) / scale
 
 def sample_uniform_points_in_unit_sphere(amount):
     unit_sphere_points = np.random.uniform(-1, 1, size=(amount * 2 + 20, 3))
@@ -257,9 +255,15 @@ def compute_signed_distance_o3d(mesh: pv.PolyData, query_points):
 
 def compute_signed_distance_libigl(mesh: pv.PolyData, query_points):
 
+    # check again meshes are watertight! --> maybe original are, but then scaling them down introduces small numerical error in vertices so that mesh doesnìt result watertight really anymore ...
+    if not check_watertight(mesh):
+        logger.error("Going to compute SDF on a mesh that doesn't result watertight: found boundary edges. This may be small numerical errors introduced by previously scaling the meshes.")
+
     vertices = mesh.points
     faces = mesh.faces.reshape(-1, 4)[:, 1:4]
     elements = faces.astype(np.int32)
+
+    # TODO: automatic inside-outisde orientation, instead of manually flipping sign if it's opposite ...
 
     sq_d, _, _ = igl.point_mesh_squared_distance(
         P = query_points,
@@ -271,7 +275,7 @@ def compute_signed_distance_libigl(mesh: pv.PolyData, query_points):
 
     sdf = np.sqrt(sq_d) * np.sign(w - 0.5)
 
-    return sdf
+    return sdf * -1
 
 if __name__ == "__main__":
 
