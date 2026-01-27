@@ -38,6 +38,7 @@
     "use_lr_scheduler": true,
     "lr_weights_final": 1e-05,
     "lr_latents_final": 5e-05,
-    "checkpoint_every_n_epochs": 10000000,
+    "checkpoint_every_n_epochs": 10000,
+    "resume_training_from_version": "-",
     "reference_patient": "AF069"
 }

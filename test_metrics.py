@@ -391,7 +391,7 @@ if __name__ == "__main__":
 
     versions = ["version_89"]
 
-    test_dataset = "train/data_fnames_train-50000pts-10patientsonly.json" #"test/data_fnames-AF001-LEU_NORM_F004-AF009_P2R-LEU_NORM_0032.json"
+    test_dataset = "train/data_fnames_train-10patientsonly.json" #"test/data_fnames-AF001-LEU_NORM_F004-AF009_P2R-LEU_NORM_0032.json"
 
     for version in versions:
 
