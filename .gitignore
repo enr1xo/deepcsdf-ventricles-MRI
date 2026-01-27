@@ -1,7 +1,31 @@
-results/
+# Ignore all __pycache__ folders
+**/__pycache__/
 
-experiments/
+# Ignore all .ipynb files
+*.ipynb
+# Except some notebook 
+!summarize_performance_metrics.ipynb
 
-data/
+#Ignore all text files
+*.txt
 
-specs_files_concurrent/
+#Ignore specific files
+temp.py
+useful_stuff.py
+
+# Ignore all files inside subfolders, but keep the top-level folder
+# But un-ignore all directories (keep folder structure)
+experiments/**/*
+!experiments/**/
+results/**/*
+!results/**/
+data/**/*
+!data/**/
+
+# Keep folder structure for other folders even if empty
+!*/
+
+# Optional: ignore temporary or unnecessary files
+*.pyc
+*.pyo
+*.swp
