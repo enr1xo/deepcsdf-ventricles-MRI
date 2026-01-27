@@ -3,7 +3,7 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0" # this should be the RTX
 
 import torch
-import lightning as pl
+import pytorch_lightning as pl
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import json
@@ -642,40 +642,4 @@ class SDFBalancedDataModuleGPU(pl.LightningDataModule):
 
 if __name__ == "__main__":
 
-    PROJ_ROOT = Path(__file__).resolve().parents[1]
-    logger.info(f"PROJ_ROOT path is: {PROJ_ROOT}")
-
-    DATA_DIR = PROJ_ROOT / "data"
-
-    PATIENTS_NPY_DATA_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtriaPointsAndSDF") / "single_patients_100000pts_npy"
-
-    print("CUDA available:", torch.cuda.is_available())
-
-    for i in range(torch.cuda.device_count()):
-        print(f"GPU {i}:", torch.cuda.get_device_name(i))
-    
-    specs_file = "specs_files/specs_deepsdfatria.json"
-
-    specs = json.load( open(specs_file) )
-
-    # region SETUP 
-    datamodule = SDFDataModule(
-        specs = specs
-    )
-
-    datamodule.setup("fit")  
-
-    NumScenes = datamodule.num_fit_scenes
-
-    print(f"Loaded {NumScenes} scenes in total.")
-
-
-    # datamodule = SDFBalancedDataModuleGPU(
-    #     specs = specs
-    # )
-
-    # datamodule.setup("fit")  
-
-    # NumScenes = datamodule.num_fit_scenes
-
-    # print(f"Loaded {NumScenes} scenes in total on GPU.")
+    pass

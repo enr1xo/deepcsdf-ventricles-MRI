@@ -1,5 +1,5 @@
 import torch
-import lightning as pl
+import pytorch_lightning as pl
 import json
 import torch.nn as nn
 import torch.nn.functional as F
@@ -123,7 +123,7 @@ class Decoder(nn.Module):
                     x = F.dropout(x, p=self.dropout_prob, training=self.training)
 
         if self.last_tanh:
-            x = self.th(x)
+            x = torch.tanh(x)
 
         return x
 

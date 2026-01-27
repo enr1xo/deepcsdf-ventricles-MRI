@@ -9,13 +9,8 @@ from model.atria_dataloader import SDFDataModule
 from utils.metrics import chamfer_distance_L2, LDDMM_loss
 from utils.surface_utils import remesh, make_trimesh_from_pv, scale_to_unit_sphere
 from utils.reconstruction_utils import isosurface_from_sdf
-from utils.visual_utils import plot_gt_vs_reconstructed_with_error
 from tqdm import tqdm
 import pandas as pd
-import trimesh
-import pyacvd
-from scipy.spatial import KDTree
-import gc
 
 from config import (
     EXPERIMENTS_DIR,
@@ -39,126 +34,6 @@ def get_dataset_patients_names(data: dict):
         patient_names.append(patient_name)
 
     return patient_names
-
-
-# def remesh(mesh, n_points=50000):
-#     clus = pyacvd.Clustering(mesh)
-#     n_subdivs = round(np.log(n_points // mesh.n_points + 1)) + 1
-#     clus.subdivide(n_subdivs)
-#     clus.cluster(n_points)
-#     return clus.create_mesh()
-
-
-# def make_trimesh_from_pv(mesh: pv.UnstructuredGrid | pv.PolyData | trimesh.Trimesh ):
-#     if not isinstance(mesh, trimesh.Trimesh):
-#         surface = mesh.extract_surface()
-#         faces = surface.faces.reshape((-1, 4))[:, 1:] 
-#         vertices = surface.points
-#         return trimesh.Trimesh(vertices=vertices, faces=faces)
-#     else:
-#         return mesh
-    
-
-# def chamfer_distance_L2(points1, points2):
-#     if len(points1) == 0 or len(points2) == 0:
-#         return float("nan")
-#     tree = KDTree(points1)
-#     dists_1, _ = tree.query(points2)
-#     tree = KDTree(points2)
-#     dists_2, _ = tree.query(points1)
-#     return np.mean(dists_1)  + np.mean(dists_2)
-
-
-# def varifold_inner(faces1, faces2, gamma = 1.0, block=1024):
-#     faces1 = faces1.to("cuda")
-#     faces2 = faces2.to("cuda")
-
-#     c1 = faces1[:, :3]
-#     n1 = faces1[:, 3:6]
-#     a1 = faces1[:, 6]
-
-#     c2 = faces2[:, :3]
-#     n2 = faces2[:, 3:6]
-#     a2 = faces2[:, 6]
-
-#     total = torch.zeros(1, device="cuda")
-
-#     c2_norm2 = (c2 ** 2).sum(dim=1)  # (N2,)
-#     n2T = n2.t()                     # (3, N2)
-
-#     for i in tqdm(range(0, c1.shape[0], block)):
-#         c1b = c1[i:i+block]
-#         n1b = n1[i:i+block]
-#         a1b = a1[i:i+block]
-
-#         # squared distances (B, N2)
-#         d2 = (
-#             (c1b ** 2).sum(dim=1)[:, None]
-#             + c2_norm2[None, :]
-#             - 2 * c1b @ c2.t()
-#         )
-
-#         K = torch.exp(-gamma * d2)
-
-#         # normal dot products (B, N2)
-#         Ndot = n1b @ n2T
-
-#         total += torch.sum(
-#             K * Ndot * a1b[:, None] * a2[None, :]
-#         )
-
-#     return total
-
-
-# def LDDMM_loss(mesh1: pv.PolyData, mesh2: pv.PolyData, compute_normals = True, remeshing = True, n_points = 50000, gamma = 1.0):
-
-#     # remeshing to have same resolution
-#     if remeshing:
-#         # logger.info("Remeshing")
-#         mesh1 = remesh(mesh1, n_points)
-#         mesh2 = remesh(mesh2, n_points)
-
-#     # logger.info("Extracting faces data")
-#     data = [None, None]
-
-#     for i,m in enumerate([mesh1, mesh2]):
-
-#         if compute_normals:
-#             m.compute_normals(
-#                 cell_normals=True,
-#                 point_normals=False,
-#                 auto_orient_normals=True,
-#                 split_vertices=False,
-#                 inplace=True
-#             )
-
-#         faces = m.faces.reshape((-1, 4))[:, 1:4]
-
-#         cell_centers = m.cell_centers().points
-
-#         cell_normals = m.cell_normals
-
-#         v0 = m.points[faces[:, 0]]
-#         v1 = m.points[faces[:, 1]]
-#         v2 = m.points[faces[:, 2]]
-#         cell_areas = 0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0), axis=1)
-
-#         data[i] = np.concatenate([cell_centers, cell_normals, cell_areas[:,None]], axis=1)
-
-#     faces1 = torch.from_numpy( data[0]).to(dtype=torch.float32)
-#     faces2 = torch.from_numpy( data[1] ).to(dtype=torch.float32 )
-
-#     # print("Number of faces mesh 1: ", faces1.shape )
-#     # print("Number of faces mesh 2: ", faces2.shape )
-
-#     # logger.info("Computing LDDMM loss")
-#     K11 = varifold_inner(faces1, faces1, gamma)
-#     K22 = varifold_inner(faces2, faces2, gamma)
-#     K12 = varifold_inner(faces1, faces2, gamma)
-
-#     dL = K11 + K22 - 2*K12
-
-#     return dL.cpu().detach().numpy()[0]
 
 
 def compute_chd_dists(mesh_orig, mesh_organ):
@@ -185,6 +60,7 @@ def run(
         version,
         override_with_dataset = None,
         all_train_shapes = False,
+        all_test_shapes = False,
         reconstruct_from = "all",
         num_epochs_fit_latent = 250,
         latent_reg_factor = 2e-3,
@@ -278,7 +154,8 @@ def run(
         if enforce_minmax:
             sdf_gt = torch.clamp(sdf_gt, min = -clamp_distance, max = clamp_distance)
 
-        print(f"##### ===== PATIENT: {patient_name} ===== #####")
+        # print(f"##### ===== PATIENT {patient_name} : {shape_idx}/{len(dataset)} ===== #####")
+        print("\033[48;2;30;30;30;0;38;2;255;200;0m" + f"##### ===== PATIENT {patient_name} : {shape_idx}/{len(dataset)} ===== #####" + "\033[0m")
 
         # region fit latent      
         sdf_gt = sdf_gt.cuda()
@@ -438,14 +315,16 @@ def run(
                     # the training and fitting points are sampled from these meshes, then multiplied as input to the network optionally --> remove decoder scale from the reconstructed mesh
                     mesh_reconstructed.points /= decoder_input_scale # bring reconstructed at the original scale TODO: does this numerically move vertices a bit so meshes are no more really watertight?
                     
-                    mesh_gt = remesh(mesh_gt)
-                    mesh_reconstructed = remesh(mesh_reconstructed)
+                    logger.info("Remeshing")
+                    mesh_gt = remesh(mesh_gt, n_points=10000)
+                    mesh_reconstructed = remesh(mesh_reconstructed, n_points=10000)
 
                     logger.info(f"Computing chamfer")
                     chamfer_dists[patient_name][organ] = compute_chd_dists(mesh_gt, mesh_reconstructed)
 
                     logger.info(f"Computing LDDMM")
                     LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False)
+
 
     if save_latent_codes:
         logger.info("Saving fitted latents")
@@ -454,7 +333,12 @@ def run(
     if save_metrics:
         logger.info("Saving metrics data to csv")
 
-        opt = "trainshapes" if all_train_shapes else "testshapes"
+        if all_train_shapes:
+            opt = "trainshapes" 
+        elif all_test_shapes:
+            opt = "testshapes"
+        else:
+            opt = "mixed"
 
         # chamfer
         rows = []
@@ -503,11 +387,11 @@ if __name__ == "__main__":
     # parser.add_argument("--mode", type=str, default = "process_test_dataset")
     # args = parser.parse_args()
 
-    experiment_name = "deepsdfatria_training_local"
+    experiment_name = "deepsdfatria_training_concurrent"
 
-    versions = ["version_0"]
+    versions = ["version_89"]
 
-    test_dataset = "train/data_fnames_train-10patientsonly.json" #"test/data_fnames-AF001-LEU_NORM_F004-AF009_P2R-LEU_NORM_0032.json"
+    test_dataset = "train/data_fnames_train-50000pts-10patientsonly.json" #"test/data_fnames-AF001-LEU_NORM_F004-AF009_P2R-LEU_NORM_0032.json"
 
     for version in versions:
 
@@ -516,7 +400,7 @@ if __name__ == "__main__":
             version=version,
             override_with_dataset = test_dataset,
             reconstruct_from = "all",
-            all_train_shapes=True,
+            all_train_shapes=False,
             save_metrics = True,
             save_latent_codes = False,
             return_metrics_results = False

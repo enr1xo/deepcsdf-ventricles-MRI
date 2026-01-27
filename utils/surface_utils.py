@@ -5,8 +5,8 @@ from loguru import logger
 import trimesh
 from scipy.spatial import KDTree
 import pyacvd
-import open3d as o3d
-import igl
+# import open3d as o3d
+# import igl
 import gc
 
 
@@ -222,60 +222,60 @@ def sample_surface_for_deepsdf(
 
     return query_points
 
-def compute_signed_distance_o3d(mesh: pv.PolyData, query_points):
+# def compute_signed_distance_o3d(mesh: pv.PolyData, query_points):
 
-    vertices = mesh.points
-    faces_raw = mesh.faces.reshape(-1, 4)
-    faces = faces_raw[:, 1:4]
+#     vertices = mesh.points
+#     faces_raw = mesh.faces.reshape(-1, 4)
+#     faces = faces_raw[:, 1:4]
     
-    # Build triangle mesh tensor
-    mesh = o3d.t.geometry.TriangleMesh(
-        o3d.core.Tensor(vertices, dtype=o3d.core.float32),
-        o3d.core.Tensor(faces, dtype=o3d.core.int32),
-    )
+#     # Build triangle mesh tensor
+#     mesh = o3d.t.geometry.TriangleMesh(
+#         o3d.core.Tensor(vertices, dtype=o3d.core.float32),
+#         o3d.core.Tensor(faces, dtype=o3d.core.int32),
+#     )
 
-    # Scene for distance queries
-    scene = o3d.t.geometry.RaycastingScene()
-    mesh_id = scene.add_triangles(mesh)
+#     # Scene for distance queries
+#     scene = o3d.t.geometry.RaycastingScene()
+#     mesh_id = scene.add_triangles(mesh)
 
-    # Query points to tensor
-    queries = o3d.core.Tensor(query_points, dtype=o3d.core.float32)
+#     # Query points to tensor
+#     queries = o3d.core.Tensor(query_points, dtype=o3d.core.float32)
 
-    # Unsigned distance
-    unsigned = scene.compute_distance(queries).numpy()
+#     # Unsigned distance
+#     unsigned = scene.compute_distance(queries).numpy()
 
-    # Signed distance via winding number
-    occupancy = scene.compute_occupancy(queries).numpy() # implemented via ray casting + parity counting.`
-    # occupancy ∈ [0,1], >0.5 = inside
-    inside = occupancy > 0.5
+#     # Signed distance via winding number
+#     occupancy = scene.compute_occupancy(queries).numpy() # implemented via ray casting + parity counting.`
+#     # occupancy ∈ [0,1], >0.5 = inside
+#     inside = occupancy > 0.5
 
-    sign = np.where(inside, -1.0, 1.0)
+#     sign = np.where(inside, -1.0, 1.0)
 
-    return sign * unsigned
+#     return sign * unsigned
 
-def compute_signed_distance_libigl(mesh: pv.PolyData, query_points):
+# def compute_signed_distance_libigl(mesh: pv.PolyData, query_points):
 
-    # check again meshes are watertight! --> maybe original are, but then scaling them down introduces small numerical error in vertices so that mesh doesnìt result watertight really anymore ...
-    if not check_watertight(mesh):
-        logger.error("Going to compute SDF on a mesh that doesn't result watertight: found boundary edges. This may be small numerical errors introduced by previously scaling the meshes.")
+#     # check again meshes are watertight! --> maybe original are, but then scaling them down introduces small numerical error in vertices so that mesh doesnìt result watertight really anymore ...
+#     if not check_watertight(mesh):
+#         logger.error("Going to compute SDF on a mesh that doesn't result watertight: found boundary edges. This may be small numerical errors introduced by previously scaling the meshes.")
 
-    vertices = mesh.points
-    faces = mesh.faces.reshape(-1, 4)[:, 1:4]
-    elements = faces.astype(np.int32)
+#     vertices = mesh.points
+#     faces = mesh.faces.reshape(-1, 4)[:, 1:4]
+#     elements = faces.astype(np.int32)
 
-    # TODO: automatic inside-outisde orientation, instead of manually flipping sign if it's opposite ...
+#     # TODO: automatic inside-outisde orientation, instead of manually flipping sign if it's opposite ...
 
-    sq_d, _, _ = igl.point_mesh_squared_distance(
-        P = query_points,
-        V = vertices,
-        Ele = elements
-    )
+#     sq_d, _, _ = igl.point_mesh_squared_distance(
+#         P = query_points,
+#         V = vertices,
+#         Ele = elements
+#     )
 
-    w = igl.fast_winding_number(V = vertices, F = elements, Q = query_points.astype(np.float64))
+#     w = igl.fast_winding_number(V = vertices, F = elements, Q = query_points.astype(np.float64))
 
-    sdf = np.sqrt(sq_d) * np.sign(w - 0.5)
+#     sdf = np.sqrt(sq_d) * np.sign(w - 0.5)
 
-    return sdf * -1
+#     return sdf * -1
 
 if __name__ == "__main__":
 
