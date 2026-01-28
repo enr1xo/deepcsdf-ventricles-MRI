@@ -99,12 +99,9 @@ def run(
     if decoder_weights_path.is_file():
         state_dict = torch.load(decoder_weights_path)
         decoder.load_state_dict(state_dict)
-        model = DeepSDF(decoder=decoder, specs = specs).cuda()
     else:
         logger.warning(f"Decoder weights not found for {version}")
         return
-
-    model.set_embedding( num_scenes = 1 ) # will process one shape at a time
 
 
     dataloader = SDFDataModule(specs = specs)
@@ -161,9 +158,6 @@ def run(
         sdf_gt = sdf_gt.cuda()
         xyz = xyz_gt.cuda()
 
-        if decoder.use_positional_encoding:
-            xyz = model.positional_encoding(xyz)
-
         # starting point for optimization (same I use initializing latent codes in training): zero
         # I could also save initial vectors when training and start with empirical mean and covariance,
         # sampling a latent using MultivariateNormal and rsample()
@@ -190,9 +184,7 @@ def run(
 
         for i in tqdm(range(num_epochs)):
             
-            model.eval()
-            
-            model.decoder.eval()
+            decoder.eval()
             
             optimizer.zero_grad()
 
@@ -200,7 +192,7 @@ def run(
             
             input_ = torch.cat([batch_vecs, xyz], dim=1)
 
-            sdf_pred = model.decoder(input_)
+            sdf_pred = decoder(input_)
             if enforce_minmax:
                 sdf_pred = torch.clamp(sdf_pred, min = -clamp_distance, max = clamp_distance)
                 
@@ -238,9 +230,7 @@ def run(
                 
                 logger.info("Computing SDF on grid for reconstruction")
 
-                model.eval()
-                
-                model.decoder.eval()
+                decoder.eval()
 
                 #region SDF ON GRID FOR RECONSTRUCTION
                 x = np.linspace(-box_lim, box_lim, resolution)

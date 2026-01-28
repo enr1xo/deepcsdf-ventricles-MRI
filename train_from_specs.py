@@ -42,64 +42,6 @@ SPECS_FILE = SPECS_FILES_DIR / "specs_deepsdfatria.json" # default if not specif
 
 
 # ============================== #
-# HELPERS
-# ============================== #
-def deep_update(specs_base: dict, override_specs: dict) -> dict:
-    for k, v in override_specs.items():
-        if (
-            k in specs_base
-            and isinstance(specs_base[k], dict)
-            and isinstance(v, dict)
-        ):
-            deep_update(specs_base[k], v)
-        else:
-            specs_base[k] = v
-    return specs_base
-
-
-def flatten_dict_keys(d, parent_key="", sep="."):
-    """
-        Flatten dictionary so all keys are at the same level
-
-        ex. {
-                "Network_specs" : { 
-                    "latent_size" : 64
-                    }
-                "NumEpochs" : 100
-            }
-        
-            becomes
-            
-            {
-                "Network_specs.latent_size" : 64
-                "NumEpochs" : 100
-            }
-                
-    """
-    items = {}
-    for k, v in d.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-        if isinstance(v, dict):
-            items.update(flatten_dict_keys(v, new_key, sep=sep))
-        else:
-            items[new_key] = v
-
-    return items
-
-
-def check_override_specs_validity(override_specs, specs_base):
-    # flatten both structures to easily check even nested keys
-    override_specs = flatten_dict_keys(override_specs)
-    specs_base = flatten_dict_keys(specs_base)
-
-    for key in override_specs.keys():
-        if specs_base.get(key, None) is None:
-            raise ValueError(f"Requested invalid key to override: '{key}', check valid keys in specs file.")
-        
-    return
-
-
-# ============================== #
 # CHECKPOINTING - manual
 # ============================== #
 class SaveDecoderCallback(pl.Callback):
@@ -210,40 +152,16 @@ if __name__ == "__main__":
                         "name in which checkpoints and logs are saved, under version_x folder for each run."
     )
     parser.add_argument("--specs_file_path", "-s", type=str, default = None)
-    parser.add_argument("--train_mode", type=str, default="use_specs_file")
-    parser.add_argument("--override_specs", type=str, default=None)
     parser.add_argument("--show_progress", action="store_true")
     args = parser.parse_args()
 
-    match args.train_mode:
+    if args.specs_file_path is not None:
+        SPECS_FILE = str(args.specs_file_path)
+    
+    if args.experiment_name is not None:
+        EXPERIMENT_NAME = str(args.experiment_name)
 
-        case "use_specs_file":
-            if args.specs_file_path is not None:
-                SPECS_FILE = str(args.specs_file_path)
-            
-            if args.experiment_name is not None:
-                EXPERIMENT_NAME = str(args.experiment_name)
-
-            version = train( specs = json.load(open(SPECS_FILE)), show_progress = args.show_progress )
-
-        case "compose_specs_from_options":
-
-            if args.experiment_name is not None:
-                EXPERIMENT_NAME = str(args.experiment_name)
-
-            if args.specs_file_path is not None:
-                SPECS_FILE = str(args.specs_file_path)
-            
-            # now overwrite specs fields with wanted specs
-            specs = json.load(open(SPECS_FILE))
-            override_specs = json.loads(args.override_specs) # in args arriva dal bash come STRINGA json
-
-            # be sure requested override fields are actually valid:
-            check_override_specs_validity(override_specs, specs)
-
-            specs = deep_update(specs, override_specs)
-
-            version = train( specs = specs, show_progress = args.show_progress )
+    version = train( specs = json.load(open(SPECS_FILE)), show_progress = args.show_progress )
 
     # this is to then be captured from a bash file and retrieve the version that has been trained to send myself an email
     print(f"TRAINING_DONE_VERSION={version}", flush=True)
