@@ -34,21 +34,73 @@ work in progress: make it executable from command like passing options as input,
 
 After setting data and results directory in `config.py` script, the only thing needed to start training is a `.json` file specifying a dictionary holding all training hyperparameters, network architecture, and actual data file path to use.
 
-Data will be loaded in the dataloader from `.json` files containing a list of `.npy` file names, one for each patient/anatomy. The full path will be constructed relative to the PATIENT_NUMPY_DATA_DIR specified in the `config.py` file, so the `.json` just needs to specify each single `.npy` file to use, assumed they are then found under the same directory PATIENT_NUMPY_DATA_DIR.
+#### data files
+Data will be loaded in the dataloader from `.json` files containing a list of `.npy` file names, one for each patient/anatomy. The full path will be constructed relative to the `PATIENT_NUMPY_DATA_DIR` specified in the `config.py` file, so the `.json` just needs to specify each single `.npy` file to use, assumed they are then found under the same directory `PATIENT_NUMPY_DATA_DIR`.
 
+example: `data_fnames.json` contains `["patient1.npy", "patient2.npy"]`, then full paths are assumed to be `PATIENT_NUMPY_DATA_DIR/patient1.npy`, `PATIENT_NUMPY_DATA_DIR/patient2.npy`
 
-Then the script `train.py` can be executed with 
+#### train script
+Then the script `train.py` can be executed combining optional features:
 
-```bash
-python train.py --experiment_name experiment --specs_file_path path/to/specs.json
-```
+- `--experiment_name`, `-e` *(str)*  
+  Experiment identifier. Becomes the directory name under which the corresponding `version_x` folder .. checkpoints and logs are saved  
 
-A folder `experiment` will be created as a directory under the EXPERIMENTS_DIR path specified in `config.py`. The training creates a `.pth` file storing the model weights, records the specs used in a `hparams.json` file, and records the trainer logs in an `events.out` type file readable with tensorboard. Each run with the same experiment name will be saved under `version_x` folders under the same experiment directory.
+- `--specs_file_path`, `-s` *(str)*  
+  Path to the `.json` specs file defining training hyperparameters, network architecture, and data paths.
+
+<!-- - `--train_mode` *(str)*  
+  Training mode selector (default: `use_specs_file`). If passed as `compose_specs_from_options` then overwrites fields in the original specs files with new ones  
+
+- `--override_specs` *(str)*  
+  Path to an alternative specs file. Overrides values defined in the default specs file. It can also just contain the specific fields to override, with the same names as in the original specs. -->
+
+- `--show_progress`  
+  Display training progress.
+
+<!-- A folder `experiment` will be created as a directory under the `EXPERIMENTS_DIR` path specified in `config.py`. The training creates a `.pth` file storing the model weights, records the specs used in a `hparams.json` file, and records the trainer logs in an `events.out` type file readable with tensorboard. Each run with the same experiment name will be saved under `version_x` folders under the same experiment directory.  -->
 
 
 ### Testing and Results
 
 A trained model from a specific experiment and version can be loaded from just the `.pth` file storing the model weights, and the `hparams.json` specification file defining the architecture. 
 
-The script `test.py` can be executed with
+The script `test.py` can be executed with additional flags specify the trained model to use, data, and what to do:
 
+- `--experiment_name`, `-e` *(str)*  and `--version`, `-v` *(str)*
+  Run identifiers, specify which run to load decoder weights and parameters from 
+
+- `--override_with_test_dataset`, , `-od` *(str)*  
+  path to test file, overrides the one specified in specs
+
+- `--mode`, `-m` *(int, {1,2})*  
+  `1`: fit latent codes to reconstruct surfaces, optionally visualize / compute metrics / save  
+  `2`: fit and save latent codes only
+
+
+Then one can specify further options if wanted: 
+- `--save_latent_codes`, `-sc`  
+  Save fitted latent codes
+
+- `--interactive_images`, `-i`  
+  Show interactive reconstruction images
+
+- `--save_images`, `-si`  
+  Save reconstruction images, images can be generated off screen
+
+- `--save_reconstructed_meshes`, `-sm`  
+  Save reconstructed meshes to `.vtp` format
+
+- `--compute_chamfer`, `-chd`  and `--compute_lddmm`, `-lddmm`  
+  Compute chamfer and/or LDDMM metric, results are always saved to `.parquet` files if computed
+
+
+**Example** : reconstruct and save surfaces, then save screenshot of plots off screen and computed chamfer distance values
+```bash
+python test.py \
+  --experiment_name deepsdf_atria_training \
+  --version version_114 \
+  --mode 1 \
+  --save_images \
+  --save_reconstructed_meshes \
+  --compute_chamfer
+```
