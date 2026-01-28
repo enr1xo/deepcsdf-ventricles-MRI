@@ -1,5 +1,5 @@
 import torch
-import pytorch_lightning as pl
+import lightning as pl
 import json
 import torch.nn as nn
 import torch.nn.functional as F

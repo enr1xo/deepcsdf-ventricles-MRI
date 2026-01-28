@@ -3,7 +3,7 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0" # this should be the RTX
 
 import torch
-import pytorch_lightning as pl
+import lightning as pl
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import json

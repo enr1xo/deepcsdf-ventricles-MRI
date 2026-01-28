@@ -1,5 +1,6 @@
 """ Train deepsdf model to learn atrial shapes. Needs a specification file that gives all data, decoder, training parameters and optionally post-processing directories
 """
+import re
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import json
@@ -49,6 +50,48 @@ def deep_update(specs_base: dict, override_specs: dict) -> dict:
     return specs_base
 
 
+def flatten_dict_keys(d, parent_key="", sep="."):
+    """
+        Flatten dictionary so all keys are at the same level
+
+        ex. {
+                "Network_specs" : { 
+                    "latent_size" : 64
+                    }
+                "NumEpochs" : 100
+            }
+        
+            becomes
+            
+            {
+                "Network_specs.latent_size" : 64
+                "NumEpochs" : 100
+            }
+                
+    """
+    items = {}
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.update(flatten_dict_keys(v, new_key, sep=sep))
+        else:
+            items[new_key] = v
+
+    return items
+
+
+def check_override_specs_validity(override_specs, specs_base):
+    # flatten both structures to easily check even nested keys
+    override_specs = flatten_dict_keys(override_specs)
+    specs_base = flatten_dict_keys(specs_base)
+
+    for key in override_specs.keys():
+        if specs_base.get(key, None) is None:
+            raise ValueError(f"Requested invalid key to override: '{key}', check valid keys in specs file.")
+        
+    return
+
+
 # ============================== #
 # CHECKPOINTING - manual
 # ============================== #
@@ -67,7 +110,7 @@ EXPERIMENT_NAME = "deepsdfatria_training_local"
 
 def train(specs: dict, show_progress = False):
 
-    # region SETUP 
+    # region LOAD DATA 
     datamodule = SDFBalancedDataModuleGPU(
         specs = specs
     )
@@ -78,30 +121,7 @@ def train(specs: dict, show_progress = False):
 
     print(f"Loaded {NumScenes} scenes in total.")
 
-    # experiment logger
-    logger_tb = TensorBoardLogger(
-        save_dir = EXPERIMENTS_DIR, # All experiment folders (named by name/version) will be created inside this directory.
-        name = EXPERIMENT_NAME,
-        default_hp_metric=False,
-        log_graph=False
-    )
-
-    # # load checkpoint to resume training if wanted
-    # load_version = specs.get("resume_training_from_version")
-    # saved_ckpt_dir = Path( EXPERIMENTS_DIR /  str(logger_tb.name) / load_version / "checkpoints" )
-    # start_from_epoch = 0
-    # ckpt_file_path = None
-    # if saved_ckpt_dir.exists():
-    #     resume_from = specs.get("resume_from")
-    #     ckpt_files =  list( Path(saved_ckpt_dir).glob("*.ckpt") )
-    #     if ckpt_files:
-    #         if resume_from == "last": # use epoch to take the last one
-    #             ckpt_file_path = max(ckpt_files, key = lambda file: int( re.search(r"epoch_([0-9]+)", file.name ).group(1) ) )
-    #         start_from_epoch = int( re.search(r"epoch_([0-9]+)", ckpt_file_path.name).group(1))
-    #     else:
-    #         logger.warning(f"Found directory for checkpoints for wanted version: {load_version}, but contained no .ckpt files")       
-
-    # MODEL
+    # region MODEL
     decoder = Decoder(**specs["Network_specs"])
 
     print( decoder.description() )
@@ -114,17 +134,37 @@ def train(specs: dict, show_progress = False):
     model.set_embedding( num_scenes = NumScenes )
 
 
-    # # CHECKPOINTS and LOGS SETUP
-    version_dir = Path(logger_tb.log_dir)
-    # checkpoint_dir = version_dir / "checkpoints"    # --> created inside every version_x folder (every run)
+    # region CHECKPOINTS and LOGS 
 
-    # checkpoint_callback = ModelCheckpoint(
-    #     dirpath=checkpoint_dir,
-    #     filename="epoch_{epoch}",
-    #     auto_insert_metric_name=False,
-    #     every_n_epochs= specs.get("checkpoint_every_n_epochs", 1000000),
-    #     save_top_k=-1,
-    # )
+    # experiment logger
+    logger_tb = TensorBoardLogger(
+        save_dir = EXPERIMENTS_DIR, # All experiment folders (named by name/version) will be created inside this directory.
+        name = EXPERIMENT_NAME,
+        default_hp_metric=False,
+        log_graph=False
+    )   
+
+    version_dir = Path(logger_tb.log_dir)
+    checkpoint_dir = version_dir / "checkpoints"    # --> created inside every version_x folder (every run)
+
+    # load checkpoint to resume training if wanted
+    load_version = specs.get("resume_training_from_version","-")
+    saved_ckpt_dir = Path( EXPERIMENTS_DIR /  str(logger_tb.name) / load_version / "checkpoints" )
+    ckpt_file_path = None
+    if saved_ckpt_dir.exists():
+        ckpt_files =  list( Path(saved_ckpt_dir).glob("*.ckpt") )
+        if ckpt_files: # pick last checkpoint by epoch
+            ckpt_file_path = max(ckpt_files, key = lambda file: int( re.search(r"epoch_([0-9]+)", file.name ).group(1) ) ) 
+        else:
+            logger.warning(f"Found directory for checkpoints for wanted version: {load_version}, but contained no .ckpt files")  
+
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=checkpoint_dir,
+        filename="epoch_{epoch}",
+        auto_insert_metric_name=False,
+        every_n_epochs= specs.get("checkpoint_every_n_epochs", 10000),
+        save_top_k=-1,
+    )
 
     # region TRAIN
     NumEpochs = specs.get("NumEpochs", 5)
@@ -136,14 +176,14 @@ def train(specs: dict, show_progress = False):
         precision=PRECISION,  
         enable_model_summary=False,  
         enable_progress_bar=show_progress,
-        log_every_n_steps=1,
+        log_every_n_steps=10,
         logger=logger_tb,
-        enable_checkpointing=False,
-        callbacks = [SaveDecoderCallback()]
+        enable_checkpointing=True,
+        callbacks = [SaveDecoderCallback(), checkpoint_callback]
     )
 
     tic = time()
-    trainer.fit(model, datamodule = datamodule) #, ckpt_path = ckpt_file_path)
+    trainer.fit(model, datamodule = datamodule, ckpt_path = ckpt_file_path)
     toc = time() - tic
 
     logger.info(f"Time elapsed for fit: {toc:.2f} seconds ")
@@ -155,6 +195,7 @@ def train(specs: dict, show_progress = False):
 if __name__ == "__main__":
     
     import argparse
+    from pprint import pprint
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--specs_file_path", type=str, default = None)
@@ -179,20 +220,21 @@ if __name__ == "__main__":
             version = train( specs = json.load(open(SPECS_FILE)), show_progress = args.show_progress )
 
         case "compose_specs_from_options":
+
+            if args.experiment_name is not None:
+                EXPERIMENT_NAME = str(args.experiment_name)
+
             if args.specs_file_path is not None:
                 SPECS_FILE = str(args.specs_file_path)
             
             # now overwrite specs fields with wanted specs
             specs = json.load(open(SPECS_FILE))
             override_specs = json.loads(args.override_specs) # in args arriva dal bash come STRINGA json
+
+            # be sure requested override fields are actually valid:
+            check_override_specs_validity(override_specs, specs)
+
             specs = deep_update(specs, override_specs)
-
-            if args.experiment_name is not None:
-                EXPERIMENT_NAME = str(args.experiment_name)
-
-            from pprint import pprint
-
-            pprint(specs)
 
             version = train( specs = specs, show_progress = args.show_progress )
 
