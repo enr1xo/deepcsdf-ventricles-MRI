@@ -93,6 +93,7 @@ Then one can specify further options if wanted:
 - `--compute_chamfer`, `-chd`  and `--compute_lddmm`, `-lddmm`  
   Compute chamfer and/or LDDMM metric, results are always saved to `.parquet` files if computed
 
+This will process all the anatomies (patients) specified in the test split.
 
 **Example** : reconstruct and save surfaces, then save screenshot of plots off screen and computed chamfer distance values
 ```bash
@@ -104,3 +105,5 @@ python test.py \
   --save_reconstructed_meshes \
   --compute_chamfer
 ```
+
+<!-- Generally, test SDF sampling strategy and regularization could affect the quality of the test reconstructions. For example, sampling aggressively near the surface could provide accurate surface details but might leave under-sampled space unconstrained, and using high L2 regularization coefficient could result in perceptually better but quantitatively worse test reconstructions. -->
