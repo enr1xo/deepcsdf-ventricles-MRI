@@ -25,7 +25,31 @@ data/**/*
 # Keep folder structure for other folders even if empty
 !*/
 
-# Optional: ignore temporary or unnecessary files
+# -----------------------
+# Python artifacts
+# -----------------------
+__pycache__/
 *.pyc
 *.pyo
-*.swp
+*.pyd
+*.py[cod]
+*.egg
+*.egg-info/
+dist/
+build/
+*.so
+
+# -----------------------
+# Data & outputs
+# -----------------------
+*.ckpt
+results/
+cache/
+
+
+# -----------------------
+# Optional: temporary / scratch
+# -----------------------
+tmp/
+temp/
+*.log
