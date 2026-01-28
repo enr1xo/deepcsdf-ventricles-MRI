@@ -3,7 +3,10 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0" # this should be the RTX
 
 import torch
-import lightning as pl
+try:
+    import lightning as pl # pyright: ignore[reportMissingImports]
+except ImportError:
+    import pytorch_lightning as pl
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import json

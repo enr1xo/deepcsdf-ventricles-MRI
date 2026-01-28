@@ -8,11 +8,18 @@ import torch
 import warnings
 from time import time
 from pathlib import Path
-import lightning as pl
+try:
+    import lightning as pl # pyright: ignore[reportMissingImports]
+    from lightning.pytorch.loggers import TensorBoardLogger # pyright: ignore[reportMissingImports]
+    from lightning.pytorch.callbacks import ModelCheckpoint # pyright: ignore[reportMissingImports]
+except ImportError:
+    import pytorch_lightning as pl
+    from pytorch_lightning.pytorch.loggers import TensorBoardLogger # pyright: ignore[reportMissingImports]
+    from pytorch_lightning.pytorch.callbacks import ModelCheckpoint # pyright: ignore[reportMissingImports]
+    
 from model.atria_dataloader import SDFBalancedDataModuleGPU #SDFDataModuleGPU #SDFDataModule #SDFBalancedDataModule
 from model.atria_deepsdf_decoder import Decoder, DeepSDFBalancedGPU #DeepSDFGPU #DeepSDF 
-from lightning.pytorch.loggers import TensorBoardLogger
-from lightning.pytorch.callbacks import ModelCheckpoint
+
 from loguru import logger
 
 # warnings.filterwarnings("ignore")
@@ -198,8 +205,8 @@ if __name__ == "__main__":
     from pprint import pprint
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--specs_file_path", type=str, default = None)
-    parser.add_argument("--experiment_name", type=str, default = None,
+    parser.add_argument("--specs_file_path", "-s", type=str, default = None)
+    parser.add_argument("--experiment_name", "-e", type=str, default = None,
                         help="Default is deepsdf_atria_training, and becomes the directory " \
                         "name in which checkpoints and logs are saved, under version_x folder for each run."
     )
