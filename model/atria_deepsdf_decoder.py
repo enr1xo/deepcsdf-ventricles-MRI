@@ -148,6 +148,7 @@ class Decoder(nn.Module):
         return desc + f
 
 class DeepSDF(pl.LightningModule):
+
     def __init__(self, decoder, specs):
         super().__init__()
 
@@ -157,6 +158,7 @@ class DeepSDF(pl.LightningModule):
         
         self.lr_weights = specs.get("lr_weights", 0.001)
         self.lr_latents = specs.get("lr_latents", 0.0005)
+        self.lr_decay_T_max = specs.get("lr_decay_time_max", 80000)
 
         self.use_lr_scheduler = specs.get("use_lr_scheduler", False)
         if self.use_lr_scheduler:
@@ -243,7 +245,7 @@ class DeepSDF(pl.LightningModule):
                 ]
             )
             if self.use_lr_scheduler:
-                T_max = 100000
+                T_max = self.lr_decay_T_max
 
                 def cosine_lambda(epoch, base_lr, eta_min):
                     return eta_min / base_lr + 0.5 * (1 - eta_min / base_lr) * (1 + math.cos(math.pi * epoch / T_max))
