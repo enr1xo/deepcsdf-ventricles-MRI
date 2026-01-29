@@ -57,7 +57,10 @@ def get_dataset_patients_names(data: dict):
 def run(
         experiment_name,
         version,
-        override_with_test_dataset = None,
+        override_with_dataset = None,
+        which_shapes = "train",
+        subsample_scenes_for_fit = True,
+        num_samp_per_scene_for_fit = 8196,
         hparams_file = None,
         num_epochs_fit_latent = 250,
         latent_reg_factor = 2e-3,
@@ -82,8 +85,8 @@ def run(
     specs = json.load( open(hparams_file) )
     
     # manual test dataset
-    if override_with_test_dataset is not None:
-        specs["TestSplit"] = override_with_test_dataset
+    if override_with_dataset is not None:
+        specs["TestSplit"] = override_with_dataset
 
     logger.info(f"Loaded specs from version: {version_dir.name}")
 
@@ -109,6 +112,13 @@ def run(
     decoder.cuda()
 
     # dataset
+    # optionally subsample total samples PER SCENE to use 
+    # --> the dataloader returns scenes with specs["num_samp_per_scene"] points !!!
+    if subsample_scenes_for_fit:
+        specs["num_samp_per_scene"] = num_samp_per_scene_for_fit
+
+    logger.warning(f"Will use {specs["num_samp_per_scene"]} samples per scene to fit latents")
+
     dataloader = SDFDataModule(specs = specs)
 
     dataloader.setup("test")
@@ -117,7 +127,7 @@ def run(
 
     # retrieve original patient names in current dataset
     data_file = dataset.data_file
-    patient_names = get_dataset_patients_names(json.load(open(data_file)))
+    patient_names = get_dataset_patients_names( json.load(open(data_file)) )
 
     decoder_input_scale = specs.get("scale_spatial_inputs_by", 100)
 
@@ -136,22 +146,24 @@ def run(
 
         patient_name = patient_names[shape_idx] # careful
 
+        chamfer_dists[patient_name] = {}
+
+        haussdorff_dists[patient_name] = {}
+
+        LDDMM_losses[patient_name] = {}
+
         batch = dataset[shape_idx]
 
         data = batch[0]
-
-        chamfer_dists[patient_name] = {}
-
-        LDDMM_losses[patient_name] = {}
 
         xyz_gt = data["coords"]
         sdf_gt = data["sdf"]
         
         if reconstruct_from == "la":
-            logger.warning("Fitting latent code using only points near left atrium")
             near_la = np.where(np.abs(sdf_gt[:,1]) <=  0.005)
             xyz_gt = xyz_gt[near_la]
             sdf_gt = sdf_gt[near_la]
+            logger.warning(f"Fitting latent code using only points near left atrium, keeping  {len(xyz_gt)}")
 
         xyz_gt = xyz_gt.reshape(-1, 3) * decoder_input_scale
         sdf_gt = sdf_gt.reshape(-1, decoder.out_dim)
@@ -364,9 +376,9 @@ def run(
                     if compute_metrics: 
                         # ======= COMPUTE METRICS ======= # 
                         # use meshes STANDARDIZED to unit scale, in the scale they were actually sampled from to create training data
-                        logger.info("Remeshing")
-                        mesh_gt = remesh(mesh_gt, n_points=30000)
-                        mesh_reconstructed = remesh(mesh_reconstructed, n_points=30000)
+                        logger.info("Remeshing and sampling surface")
+                        mesh_gt = remesh(mesh_gt, n_points=50000)
+                        mesh_reconstructed = remesh(mesh_reconstructed, n_points=50000)
 
                         samples_orig = make_trimesh_from_pv(mesh_gt).sample(count=50000)
                         samples_rec = make_trimesh_from_pv(mesh_reconstructed).sample(count=50000)
@@ -383,6 +395,8 @@ def run(
     if compute_metrics:
         logger.info("Saving metrics data to csv")
 
+        exp_name = experiment_name.split("/")[-1]
+
         # chamfer
         rows = []
         for name, organs in chamfer_dists.items():
@@ -395,7 +409,7 @@ def run(
                     "value": metric,
                 })
         df = pd.DataFrame(rows)
-        df.to_parquet(METRICS_DIR / f"{version}-chamfer.parquet", index=False)
+        df.to_parquet(METRICS_DIR / f"{version}-{exp_name}-chamfer-{which_shapes}.parquet", index=False)
 
         # LDDMM
         rows = []
@@ -409,11 +423,13 @@ def run(
                     "value": metric,
                 })
         df = pd.DataFrame(rows)
-        df.to_parquet(METRICS_DIR / f"{version}-LDDMM.parquet", index=False)
+        df.to_parquet(METRICS_DIR / f"{version}-{exp_name}-LDDMM-{which_shapes}.parquet", index=False)
 
     if save_latent_codes:
         logger.info("Saving fitted latents")
         np.savez(LATENTS_DIR / f"latent_codes_{len(latent_codes.keys())}_patients_{version}-codereg={code_reg_lambda:.6f}-epochs={num_epochs}.npz", **latent_codes)
+
+    logger.info("Done.")
 
     return
 
@@ -426,21 +442,21 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--experiment_name", "-e", type=str, default = "deepsdfatria_training_concurrent")
-    parser.add_argument("--version", "-v", type=str, default = "version_114")
-    parser.add_argument("--override_with_test_dataset", "-od", type=str, default=None)
+    parser.add_argument("--experiment_name", "-e", type=str, default = "training_sweeps/LipAndAct")
+    parser.add_argument("--version", "-v", type=str, default = "version_0")
+    parser.add_argument("--override_with_dataset", "-od", type=str, default=None)
     parser.add_argument("--mode", "-m", type=int, default=1, choices=[1, 2])
     parser.add_argument("--save_latent_codes", "-sc", action="store_true")
     parser.add_argument("--interactive_images", "-i", action="store_true")
     parser.add_argument("--save_images", "-si", action="store_true")
     parser.add_argument("--save_reconstructed_meshes", "-sm", action="store_true")
-    parser.add_argument("--compute_chamfer", "-chd", action="store_true")
-    parser.add_argument("--compute_lddmm", "-lddmm", action="store_true")
+    parser.add_argument("--compute_metrics", "-cm", action="store_true")
+    # parser.add_argument("--compute_lddmm", "-lddmm", action="store_true")
     args = parser.parse_args()
 
     exp_name = args.experiment_name
     vers = args.version
-    test_datafnames = args.override_with_test_dataset if args.override_with_test_dataset is not None else "test/data_fnames-AF001-LEU_NORM_F004.json"
+    test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "train/data_fnames_train-20patients.json"
     mode = args.mode 
     num_epochs_fit_latent = 250
     latent_reg_factor = 2e-4
@@ -449,7 +465,7 @@ if __name__ == "__main__":
     kwargs = {
         "experiment_name" : exp_name,
         "version" : vers,
-        "override_with_test_dataset" : test_datafnames,
+        "override_with_dataset" : test_datafnames,
         "num_epochs_fit_latent" : num_epochs_fit_latent,
         "latent_reg_factor" : latent_reg_factor,
         "lr_fit_latent" : lr_fit_latent,
@@ -465,7 +481,7 @@ if __name__ == "__main__":
                 "show_reconstruction_images" : args.interactive_images,
                 "save_reconstruction_images" : args.save_images,
                 "save_reconstructed_mesh" : args.save_reconstructed_meshes,
-                "compute_metrics" : args.compute_chamfer or args.compute_lddmm,
+                "compute_metrics" : args.compute_metrics,
                 "save_latent_codes" : args.save_latent_codes
             }
 
