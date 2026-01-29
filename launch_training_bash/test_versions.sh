@@ -1,12 +1,13 @@
 #!/bin/bash
 
 # ---- Parameters ----
-SPECS_DIR=specs_files_concurrent
-PYTHON_SCRIPT=train.py
-SLEEP_INTERVAL=30       # seconds
-SAFETY_MARGIN_MB=1000   # ~1 GB safety
+VERSION_DIR=experiments/training_sweeps/LipAndAct
+PYTHON_SCRIPT=test.py
+TEST_DATASET="train/data_fnames_train-20patients.json"
+SLEEP_INTERVAL=300       # seconds
+SAFETY_MARGIN_MB=500   # safety
 MEM_REQUIRED_MB=2000    # with 89 scenes with 100000 points each all loaded in GPU,  2^14 points per scene, batches of 16 scenes, model with latent size 128, 512 x 7 layers, all lipschitz, --> memory usage tops out at 5108MiB /  24576MiB 
-MAX_PARALLEL=10 
+MAX_PARALLEL=4 
 LOG_DIR=experiments/logs-temp
 # --------------------
 
@@ -34,10 +35,11 @@ function clean_jobs() {
 
 declare -a JOB_PIDS=()
 
-# Loop over configs
-for cfg in "${SPECS_DIR}"/specs_*.json; do
-    echo "Preparing $cfg"
 
+for dir in "$VERSION_DIR"/*/; do
+    ver=${dir%/}
+    ver="${ver##*/}"
+    
     while true; do
         clean_jobs
         free=$(free_mem_mb)
@@ -47,10 +49,10 @@ for cfg in "${SPECS_DIR}"/specs_*.json; do
 
         # Check if enough memory + below max jobs
         if (( free > MEM_REQUIRED_MB + SAFETY_MARGIN_MB && running < MAX_PARALLEL )); then
-            echo "Launching $cfg"
-            logfile="$LOG_DIR/$(basename "$cfg" .json).log"
+            echo "Launching $ver"
+            logfile="$LOG_DIR/$ver.log"
 
-            python "$PYTHON_SCRIPT" --experiment_name "deepsdfatria_training_concurrent" --specs_file_path "$cfg" &> "$logfile" &
+            python "$PYTHON_SCRIPT" -e "training_sweeps/LipAndAct" -v "$ver" -od "$TEST_DATASET" -cm &> "$logfile" &
 
             JOB_PIDS+=($!)
             sleep 10
@@ -60,27 +62,11 @@ for cfg in "${SPECS_DIR}"/specs_*.json; do
             sleep "$SLEEP_INTERVAL"
         fi
     done
-    
+
 done
+
 
 wait
-echo "All trainings completed at $(date)"
+echo "All testing completed at $(date)"
 
-# send email to myself with list of versions completed
-VERSIONS=()
-for logfile in "$LOG_DIR"/*.log; do
-    version=$(grep "TRAINING_DONE_VERSION=" "$logfile" | cut -d= -f2)
-    [[ -n "$version" ]] && VERSIONS+=("$version")
-done
-
-EMAIL_BODY=$'\n\nVersions:\n'
-for v in "${VERSIONS[@]}"; do
-    EMAIL_BODY+=$" - $v"
-    EMAIL_BODY+=$'\n'
-done
-
-python "send_email.py" --subject "Training concurrently: all jobs done" --body "$EMAIL_BODY"
-
-# echo "Cleaning up log directory..."
-# rm -rf "$LOG_DIR"
-# echo "Log directory removed."
+python "send_email.py" --subject "Testing concurrently: all jobs done"
