@@ -36,20 +36,20 @@ def get_dataset_patients_names(data: dict):
     return patient_names
 
 
-def compute_chd_dists(mesh_orig, mesh_organ):
+# def compute_chd_dists(mesh_orig, mesh_organ):
 
-    samples_orig = make_trimesh_from_pv(mesh_orig).sample(count=50000)
-    samples_rec = make_trimesh_from_pv(mesh_organ).sample(count=50000)
+#     samples_orig = make_trimesh_from_pv(mesh_orig).sample(count=50000)
+#     samples_rec = make_trimesh_from_pv(mesh_organ).sample(count=50000)
 
-    chd = chamfer_distance_L2(samples_orig, samples_rec)
+#     chd = chamfer_distance_L2(samples_orig, samples_rec)
 
-    # scale by some characteristic scale
-    xmin, xmax, ymin, ymax, zmin, zmax = mesh_orig.bounds
-    pmin = np.array([xmin, ymin, zmin])
-    pmax = np.array([xmax, ymax, zmax])
-    s_bbox = np.linalg.norm(pmax - pmin)
+#     # scale by some characteristic scale
+#     xmin, xmax, ymin, ymax, zmin, zmax = mesh_orig.bounds
+#     pmin = np.array([xmin, ymin, zmin])
+#     pmax = np.array([xmax, ymax, zmax])
+#     s_bbox = np.linalg.norm(pmax - pmin)
 
-    return chd / s_bbox
+#     return chd / s_bbox
 
 
 # ======================== #
@@ -86,9 +86,9 @@ def run(
     logger.info(f"Loaded specs from version: {version_dir.name}")
 
     # rebuild trained decoder and model: I do it with specs that contain everything alerady, no need for checkpoints now
-    decoder_params = specs["Network_specs"]
+    decoder_arch_specs = specs["Network_specs"]
 
-    decoder = Decoder(**decoder_params)
+    decoder = Decoder(**decoder_arch_specs)
 
     print("\n")
     print(decoder.description())
@@ -303,14 +303,24 @@ def run(
                     # bring meshes back to either ORIGINAL scale, OR STANDARDIZED, UNIT SCALE before computing metrics !!!
                     # to be consistent and not accumulate errors:
                     # the training and fitting points are sampled from these meshes, then multiplied as input to the network optionally --> remove decoder scale from the reconstructed mesh
-                    mesh_reconstructed.points /= decoder_input_scale # bring reconstructed at the original scale TODO: does this numerically move vertices a bit so meshes are no more really watertight?
+                    mesh_reconstructed.points /= decoder_input_scale
                     
                     logger.info("Remeshing")
-                    mesh_gt = remesh(mesh_gt, n_points=10000)
-                    mesh_reconstructed = remesh(mesh_reconstructed, n_points=10000)
+                    mesh_gt = remesh(mesh_gt, n_points=50000)
+                    mesh_reconstructed = remesh(mesh_reconstructed, n_points=50000)
+
+                    samples_orig = make_trimesh_from_pv(mesh_gt).sample(count=50000)
+                    samples_rec = make_trimesh_from_pv(mesh_reconstructed).sample(count=50000)
 
                     logger.info(f"Computing chamfer")
-                    chamfer_dists[patient_name][organ] = compute_chd_dists(mesh_gt, mesh_reconstructed)
+                    chd = chamfer_distance_L2(samples_orig, samples_rec)
+                    # scale by some characteristic scale
+                    xmin, xmax, ymin, ymax, zmin, zmax = mesh_gt.bounds
+                    pmin = np.array([xmin, ymin, zmin])
+                    pmax = np.array([xmax, ymax, zmax])
+                    s_bbox = np.linalg.norm(pmax - pmin)
+
+                    chamfer_dists[patient_name][organ] = chd / s_bbox 
 
                     logger.info(f"Computing LDDMM")
                     LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False)
@@ -342,7 +352,7 @@ def run(
                     "value": metric,
                 })
         df = pd.DataFrame(rows)
-        df.to_parquet(RESULTS_DIR / "metrics" / f"{version}-chamfer-{opt}.parquet", index=False)
+        df.to_parquet(RESULTS_DIR / "metrics" / f"{version}-{experiment_name}-chamfer-{opt}.parquet", index=False)
 
         # LDDMM
         rows = []
@@ -356,7 +366,7 @@ def run(
                     "value": metric,
                 })
         df = pd.DataFrame(rows)
-        df.to_parquet(RESULTS_DIR / "metrics" / f"{version}-LDDMM-{opt}.parquet", index=False)
+        df.to_parquet(RESULTS_DIR / "metrics" / f"{version}-{experiment_name}-LDDMM-{opt}.parquet", index=False)
 
     if return_metrics_results:
         return {"chamfer" : chamfer_dists, "LDDMM": LDDMM_losses}

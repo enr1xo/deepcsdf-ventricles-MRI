@@ -119,6 +119,32 @@ def LDDMM_loss(mesh1: pv.PolyData, mesh2: pv.PolyData, compute_normals = True, r
     return dL.cpu().detach().numpy()
 
 
+def haussdorff(points1, points2):
+    
+    tree = KDTree(points1)
+    dists_1, _ = tree.query(points2)
+    tree = KDTree(points2)
+    dists_2, _ = tree.query(points1)
+
+    HD = max( max(dists_1), max(dists_2) )
+    
+    return HD
+
+
+def chamfer_and_haussdorff(points1, points2):
+    if len(points1) == 0 or len(points2) == 0:
+        return float("nan")
+    tree = KDTree(points1)
+    dists_1, _ = tree.query(points2)
+    tree = KDTree(points2)
+    dists_2, _ = tree.query(points1)
+
+    chd = np.mean(dists_1)  + np.mean(dists_2)
+    hdd = max( max(dists_1), max(dists_2) )
+
+    return {"chamfer" : chd, "haussdorff" : hdd}
+
+
 if __name__ == "__main__":
 
     pass

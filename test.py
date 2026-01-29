@@ -6,7 +6,7 @@ import numpy as np
 import pyvista as pv
 from model.atria_deepsdf_decoder import Decoder
 from model.atria_dataloader import SDFDataModule
-from utils.metrics import chamfer_distance_L2, LDDMM_loss
+from utils.metrics import chamfer_distance_L2, LDDMM_loss, haussdorff
 from utils.surface_utils import remesh, make_trimesh_from_pv, scale_to_unit_sphere
 from utils.reconstruction_utils import isosurface_from_sdf
 from utils.visual_utils import plot_gt_vs_reconstructed_with_error
@@ -35,20 +35,20 @@ def get_dataset_patients_names(data: dict):
     return patient_names
 
 
-def compute_chd_dists(mesh_orig, mesh_organ):
+# def compute_chd_dists(mesh_orig, mesh_organ):
 
-    samples_orig = make_trimesh_from_pv(mesh_orig).sample(count=50000)
-    samples_rec = make_trimesh_from_pv(mesh_organ).sample(count=50000)
+#     samples_orig = make_trimesh_from_pv(mesh_orig).sample(count=50000)
+#     samples_rec = make_trimesh_from_pv(mesh_organ).sample(count=50000)
 
-    chd = chamfer_distance_L2(samples_orig, samples_rec)
+#     chd = chamfer_distance_L2(samples_orig, samples_rec)
 
-    # scale by some characteristic scale
-    xmin, xmax, ymin, ymax, zmin, zmax = mesh_orig.bounds
-    pmin = np.array([xmin, ymin, zmin])
-    pmax = np.array([xmax, ymax, zmax])
-    s_bbox = np.linalg.norm(pmax - pmin)
+#     # scale by some characteristic scale
+#     xmin, xmax, ymin, ymax, zmin, zmax = mesh_orig.bounds
+#     pmin = np.array([xmin, ymin, zmin])
+#     pmax = np.array([xmax, ymax, zmax])
+#     s_bbox = np.linalg.norm(pmax - pmin)
 
-    return chd / s_bbox
+#     return chd / s_bbox
 
 
 # ======================== #
@@ -127,6 +127,8 @@ def run(
     chamfer_dists = {}
 
     LDDMM_losses = {}
+
+    haussdorff_dists = {}
 
     latent_codes = {}
         
@@ -320,38 +322,29 @@ def run(
                     mesh_file = next( patient_dir.rglob(f"{organ}-processed.vtp"), None) # !!! these are assumed to be standardized, unit scale already.
                     mesh_gt = pv.read(mesh_file)
                     # bring reconstructed at the same scale 
-                    # the training and fitting points are sampled from these meshes, then multiplied as input to the network optionally --> remove decoder scale from the reconstructed mesh
+                    # the training and fitting points are sampled from these meshes, then multiplied as input to the network optionally
+                    #  --> remove decoder scale from the reconstructed mesh
                     mesh_reconstructed.points /= decoder_input_scale 
 
-                    if compute_metrics: 
-                        # ======= COMPUTE METRICS ======= # 
-                        # bring meshes back to either ORIGINAL scale, OR STANDARDIZED, UNIT SCALE before computing metrics !!!
-                        logger.info("Remeshing")
-                        mesh_gt = remesh(mesh_gt, n_points=30000)
-                        mesh_reconstructed = remesh(mesh_reconstructed, n_points=30000)
-
-                        logger.info(f"Computing chamfer")
-                        chamfer_dists[patient_name][organ] = compute_chd_dists(mesh_gt, mesh_reconstructed)
-
-                        logger.info(f"Computing LDDMM")
-                        LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False)
-
                     if show_reconstruction_images or save_reconstruction_images:
-                        
+                        # copy meshes so I don't modify originals, less of a pain to keep track of
+                        mesh_gt_show = mesh_gt.copy()
+                        mesh_reconstructed_show = mesh_reconstructed.copy()
+
                         # TODO: add again rescaling to actual original scale in micrometers
                         scale = 1.0
                         # ==== compute sdf of points on predicted surface to the original surface ==== #               
                         # compute (signed!) distances of ground truth points (on the true surface) from the nearest spot on the predicted mesh surface
                         implicit_distance = vtkImplicitPolyDataDistance()
-                        implicit_distance.SetInput(mesh_gt)
-                        points_pred = mesh_reconstructed.points
+                        implicit_distance.SetInput(mesh_gt_show)
+                        points_pred = mesh_reconstructed_show.points
                         signed_distances = np.array([implicit_distance.EvaluateFunction(p) for p in points_pred])
-                        mesh_reconstructed.point_data['error'] = signed_distances # save as point data in the predicted mesh
+                        mesh_reconstructed_show.point_data['error'] = signed_distances # save as point data in the predicted mesh
 
                         last_cam_pos = None
                         if show_reconstruction_images:
                             plotter = plot_gt_vs_reconstructed_with_error(
-                                mesh_gt, mesh_reconstructed, patient_name, signed_distances, off_screen = False, scale = scale
+                                mesh_gt_show, mesh_reconstructed_show, patient_name, signed_distances, off_screen = False, scale = scale
                                 )
                             plotter.show(interactive=True)
                             last_cam_pos = plotter.camera_position # this used if interactive AND saving images later
@@ -362,11 +355,30 @@ def run(
                             save_fname = patient_name + f"_{organ}_gt_vs_reconstructed_with_error_" + version + ".png"
                             save_fname = IMAGES_DIR / save_fname
                             plotter = plot_gt_vs_reconstructed_with_error(
-                                mesh_gt, mesh_reconstructed, patient_name, signed_distances, off_screen=True, scale = scale #decoder_input_scale
+                                mesh_gt_show, mesh_reconstructed_show, patient_name, signed_distances, off_screen=True, scale = scale #decoder_input_scale
                             )
                             if last_cam_pos is not None: plotter.camera_position = last_cam_pos
                             plotter.screenshot(save_fname, transparent_background=True)
                             pv.close_all()
+
+                    if compute_metrics: 
+                        # ======= COMPUTE METRICS ======= # 
+                        # use meshes STANDARDIZED to unit scale, in the scale they were actually sampled from to create training data
+                        logger.info("Remeshing")
+                        mesh_gt = remesh(mesh_gt, n_points=30000)
+                        mesh_reconstructed = remesh(mesh_reconstructed, n_points=30000)
+
+                        samples_orig = make_trimesh_from_pv(mesh_gt).sample(count=50000)
+                        samples_rec = make_trimesh_from_pv(mesh_reconstructed).sample(count=50000)
+
+                        logger.info(f"Computing chamfer")
+                        chamfer_dists[patient_name][organ] = chamfer_distance_L2(samples_orig, samples_rec)
+
+                        logger.info(f"Computing Haussdorff")
+                        haussdorff_dists[patient_name][organ] = haussdorff(samples_orig, samples_rec)
+
+                        logger.info(f"Computing LDDMM")
+                        LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False)
 
     if compute_metrics:
         logger.info("Saving metrics data to csv")
