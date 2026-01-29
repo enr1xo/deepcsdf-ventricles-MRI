@@ -64,7 +64,7 @@ def create_vtu_from_carpbin(
 
                 print(e.stderr)
     else:
-        logger.warning("File .vtu already present in source directory, skipping creation.")
+        logger.warning("A.vtu file is already present in source directory, skipping creation.")
     
     return
 
