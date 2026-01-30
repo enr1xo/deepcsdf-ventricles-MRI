@@ -17,8 +17,8 @@ except ImportError:
     from pytorch_lightning.pytorch.loggers import TensorBoardLogger # pyright: ignore[reportMissingImports]
     from pytorch_lightning.pytorch.callbacks import ModelCheckpoint # pyright: ignore[reportMissingImports]
     
-from model.atria_dataloader import SDFBalancedDataModuleGPU #SDFDataModuleGPU #SDFDataModule #SDFBalancedDataModule
-from model.atria_deepsdf_decoder import Decoder, DeepSDFBalancedGPU #DeepSDFGPU #DeepSDF 
+from model.deepsdf_dataloader import SDFDataModule
+from model.deepsdf_decoder import Decoder, DeepSDF 
 
 from loguru import logger
 
@@ -118,7 +118,7 @@ EXPERIMENT_NAME = "deepsdfatria_training_local"
 def train(specs: dict, show_progress = False):
 
     # region LOAD DATA 
-    datamodule = SDFBalancedDataModuleGPU(
+    datamodule = SDFDataModule(
         specs = specs
     )
 
@@ -133,13 +133,12 @@ def train(specs: dict, show_progress = False):
 
     print( decoder.description() )
 
-    model = DeepSDFBalancedGPU(
+    model = DeepSDF(
         decoder = decoder,
         specs = specs
     )
 
     model.set_embedding( num_scenes = NumScenes )
-
 
     # region CHECKPOINTS and LOGS 
 
@@ -183,7 +182,7 @@ def train(specs: dict, show_progress = False):
         precision=PRECISION,  
         enable_model_summary=False,  
         enable_progress_bar=show_progress,
-        log_every_n_steps=10,
+        log_every_n_steps=1,
         logger=logger_tb,
         enable_checkpointing=True,
         callbacks = [SaveDecoderCallback(), checkpoint_callback]
@@ -206,7 +205,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--experiment_name", "-e", type=str, default = None,
-                        help="Default is deepsdf_atria, and becomes the directory " \
+                        help="Default is deepsdfatria_training_local, and becomes the directory " \
                         "name in which checkpoints and logs are saved, under version_x folder for each run."
     )
     parser.add_argument("--specs_file_path", "-s", type=str, default = None)
