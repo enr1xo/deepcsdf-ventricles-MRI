@@ -1,0 +1,322 @@
+import torch
+try:
+    import lightning as pl # pyright: ignore[reportMissingImports]
+except ImportError:
+    import pytorch_lightning as pl
+import json
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+from loguru import logger
+from pathlib import Path
+from deel.torchlip.modules.linear import SpectralLinear
+import numpy as np
+
+act_fn = {
+    "ReLU": nn.ReLU(), "Tanh" : nn.Tanh(), 
+    "Softplus": nn.Softplus(), 
+    "SiLU": nn.SiLU(),
+    "GELU" : nn.GELU(), 
+    "GELUApprox": nn.GELU(approximate="tanh")
+}
+
+
+class Decoder(nn.Module):
+
+    def __init__(self, **specs): # was **specs
+        super().__init__()
+
+        self.latent_size = specs.get("latent_size", 64)
+
+        self.out_dim = specs.get("out_dim", 1)
+
+        self.use_positional_encoding = specs.get("positional_encoding", False)
+        
+        self.pos_enc_dim = specs.get("pos_enc_dim", 10)
+
+        self.latent_in = specs.get("latent_in", [-1])
+        
+        self.norm_layers = specs.get("norm_layers", [-1])
+        
+        self.dropout_prob = specs.get("dropout_prob", 0.2)
+        
+        self.dropout = specs.get("dropout_layers", [-1])
+
+        self.activation = specs.get("activation", "ReLU")
+
+        self.batch_norm = specs.get("batch_norm", False)
+
+        self.lipschitz_layers = specs.get("lipschitz_layers", [-1]) # these are SpectralLinear layers, enforced to be lipschitz
+
+        self.regularize_layers = specs.get("regularize_layers", [-1]) # these are layers from which we compute weight matrices to add in the lipschitz penalty in the loss
+
+        self.hidden_dims = specs.get("dims", [])
+        
+        # self.check_decoder_specs_validity()
+            
+        if self.use_positional_encoding:
+            self.dims = [self.latent_size + 3 + 3 * self.pos_enc_dim * 2] + self.hidden_dims + [self.out_dim]
+        else:
+            self.dims = [self.latent_size + 3] + self.hidden_dims + [self.out_dim]
+
+        self.num_layers = len(self.dims)
+
+        # .float() Converts all the parameters and buffers in that layer to double precision instead of default float32
+        for layer in range(0, self.num_layers - 1): 
+            if layer + 1 in self.latent_in:
+                out_dim_ = self.dims[layer + 1] - self.dims[0] # if using positional encoding, this might be 0 if first layer becomes too big --> cannot use very large positional encoding !!!
+            else:
+                out_dim_ = self.dims[layer + 1]
+
+            if layer in self.norm_layers:
+                lin = nn.utils.weight_norm(nn.Linear(self.dims[layer], out_dim_)).float()
+            elif layer in self.lipschitz_layers:
+                lin = SpectralLinear(self.dims[layer], out_dim_).float()
+            else:
+                lin = nn.Linear(self.dims[layer], out_dim_).float()
+
+            setattr(self, f"lin{layer}", lin)
+
+        self.act = act_fn.get(self.activation, "Softplus")
+
+        self.last_tanh = specs.get("last_tanh", False)
+
+        # TODO: check specs and decoder validity
+    
+    def forward(self, input_):
+        x = input_
+
+        for layer in range(0, self.num_layers - 1):
+            lin = getattr(self, "lin" + str(layer))
+            if layer in self.latent_in:
+                x = torch.cat([x, input_], 1) # concatenating whole input? not only latent code?
+            x = lin(x)
+
+            # last layer Tanh
+            if layer < self.num_layers - 2:
+                if self.batch_norm:
+                    bn = getattr(self, "bn" + str(layer))
+                    x = bn(x)
+                x = self.act(x)
+                if layer in self.dropout:
+                    x = F.dropout(x, p=self.dropout_prob, training=self.training)
+
+        if self.last_tanh:
+            x = torch.tanh(x)
+
+        return x
+
+    def description(self):
+        desc = f"Decoder network:"
+
+        f = f" \n {self.num_layers} layers with channels {self.dims} "
+        if self.lipschitz_layers != [-1]:
+            f = f + f"\n Using Lipschitz constrained linear layers in {[i+1 for i in self.lipschitz_layers]}"
+        if self.use_positional_encoding:
+            f = f + f"\n Using positional encoding of dimension {self.pos_enc_dim} on input."
+        if self.latent_in != [-1]:
+            f = f + f"\n Shortcut connection of input to hidden layer {self.latent_in[0]}"
+        f = f + f"\n Using latent dimension {self.latent_size}."
+        f = f + f"\n Activations: {self.activation}"
+        if self.last_tanh:
+            f = f + ", tanh on output."
+        
+        return desc + f
+
+class DeepSDF(pl.LightningModule):
+
+    def __init__(self, decoder, specs):
+        super().__init__()
+
+        self.specs = specs
+        
+        self.decoder: Decoder = decoder
+
+        self.lr_weights = specs.get("lr_weights", 0.001)
+        self.lr_latents = specs.get("lr_latents", 0.0005)
+        self.lr_decay_T_max = specs.get("lr_decay_time_max", 100000)
+
+        self.use_lr_scheduler = specs.get("use_lr_scheduler", False)
+        if self.use_lr_scheduler:
+            self.lr_weights_final = specs.get("lr_weights_final", 0.001)
+            self.lr_latents_final = specs.get("lr_latents_final", 0.0005)
+
+        self.latent_size = decoder.latent_size
+
+        self.lat_vecs = {"trainable": nn.Embedding}
+
+        self.use_loss = specs.get("use_loss", "SmoothL1")
+
+        if self.use_loss == "L1":
+            self.loss_fn = torch.nn.L1Loss(reduction="sum")
+        elif self.use_loss == "MSE":
+            self.loss_fn = torch.nn.MSELoss(reduction="sum")
+        elif self.use_loss == "SmoothL1":
+            self.loss_fn = torch.nn.SmoothL1Loss(reduction="sum") 
+
+        self.code_reg_lambda = specs.get("code_reg_lambda", 1e-2)
+
+        self.use_lipreg_loss = specs.get("use_lipreg_loss", True)
+
+        self.enforce_minmax = specs.get("enforce_minmax", False)
+
+        self.clamp_distance = specs.get("clamp_distance", 0.1)
+
+        self.Cs = specs.get("scale_spatial_inputs_by", 100)
+
+        self.lipschitz_alpha = specs.get("lipschitz_alpha", 2e-6)
+
+        self.log_every_n_epochs = specs.get("log_every_n_epochs", 1)
+
+    def set_embedding(self, num_scenes = None, embedding=None):
+        if num_scenes is None:
+            raise ValueError("Must define number of scenes to create correct number of embeddings.")
+                
+        self.num_scenes = num_scenes
+
+        self.lat_vecs["trainable"] = nn.Embedding(
+            self.num_scenes,
+            self.latent_size,
+            dtype=torch.float32
+        )
+
+        if embedding is not None:
+            self.lat_vecs["trainable"].weight.data = torch.as_tensor(
+                embedding, dtype=torch.float32
+            )
+        else:
+            torch.nn.init.normal_(
+                self.lat_vecs["trainable"].weight.data,
+                0.0,
+                1.0 / math.sqrt(self.latent_size),
+            )
+
+    def configure_optimizers(self):
+        if "trainable" in self.lat_vecs.keys():
+            optimizer = torch.optim.Adam(
+                [
+                    {
+                        "params": self.decoder.parameters(),
+                        "lr": self.lr_weights,
+                        # "lr": self.lr_schedules[0].get_learning_rate(0),
+                    },
+                    {
+                        "params": self.lat_vecs["trainable"].parameters(),
+                        "lr": self.lr_latents #0.0005,  # was 0.0005
+                        # "lr": self.lr_schedules[1].get_learning_rate(0),
+                    },
+                ]
+            )
+            if self.use_lr_scheduler:
+                T_max =  self.lr_decay_T_max
+
+                def cosine_lambda(epoch, base_lr, eta_min):
+                    return eta_min / base_lr + 0.5 * (1 - eta_min / base_lr) * (1 + math.cos(math.pi * epoch / T_max))
+
+                scheduler = torch.optim.lr_scheduler.LambdaLR(
+                    optimizer,
+                    lr_lambda=[
+                        lambda epoch: cosine_lambda(epoch, self.lr_weights, self.lr_weights_final),
+                        lambda epoch: cosine_lambda(epoch, self.lr_latents, self.lr_latents_final)
+                    ]
+                )
+
+                return {
+                    "optimizer": optimizer,
+                    "lr_scheduler": {
+                        "scheduler": scheduler,
+                        "interval": "epoch",
+                        "frequency": 1
+                    }
+                }
+
+        return optimizer
+
+    def on_fit_start(self):
+        # move manually latents on the device to be sure it's on the same device as data when fitting the model
+        self.lat_vecs["trainable"].to(self.device)
+        return super().on_fit_start()
+    
+    def on_train_start(self):
+        # d = flatten_dict_for_logging(self.specs)
+        # self.logger.log_hyperparams(d)
+        # self.logger.log_hyperparams({"hparams_json": json.dumps(self.specs)}) # --> only for mlflow
+        if self.logger is not None: # manually save the specs
+            json_path = Path(self.logger.log_dir) / "hparams.json"
+            with open(json_path, "w") as f:
+                json.dump(self.specs, f, indent=4)
+
+    def training_step(self, batch, batch_idx):
+
+        data = batch[0]
+        indices = batch[1]
+
+        coords = data["coords"].to(self.device)
+        sdf_gt = data["sdf"].to(self.device)
+
+        num_samp_per_scene = data["coords"].shape[1]
+
+        xyz = coords.reshape(-1, 3) * 100
+
+        sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim)
+        if self.enforce_minmax:
+            sdf_gt = torch.clamp(sdf_gt, min = -self.clamp_distance, max=self.clamp_distance)
+
+        num_sdf_samples = sdf_gt.shape[0]
+
+        indices.requires_grad = False
+        xyz.requires_grad = False
+        sdf_gt.requires_grad = False
+
+        indices = indices.unsqueeze(-1).repeat(1, num_samp_per_scene).view(-1)
+
+        batch_vecs = self.lat_vecs["trainable"](indices)
+
+        input_ = torch.cat([batch_vecs, xyz], dim=1)
+
+        # NN optimization
+        prediction = self.decoder(input_)
+        if self.enforce_minmax:
+            prediction = torch.clamp(prediction, min = -self.clamp_distance, max=self.clamp_distance)
+        
+        # REGRESSION LOSS
+        chunk_loss = self.loss_fn(prediction, sdf_gt) / num_sdf_samples
+
+        # REGULARIZATION LOSS
+        reg_loss = self.code_reg_lambda * torch.sum( torch.linalg.norm(batch_vecs, dim=1) ) / num_sdf_samples
+
+        # LIPSCHITZ PENALTY
+        if self.use_lipreg_loss:
+            lipschitz_loss = 1.0
+            for layer in range(self.decoder.num_layers):
+                weight = self.decoder.__getattr__("lin" + str(layer)).weight
+                norm = torch.linalg.matrix_norm(weight, ord=float("inf")) # TODO: bound this so it doesn't explode
+                lipschitz_loss *= F.softplus(norm)
+            lipschitz_loss = self.lipschitz_alpha * lipschitz_loss
+        else:
+            lipschitz_loss = 0.0
+
+        training_loss = chunk_loss + reg_loss + lipschitz_loss
+
+        if self.logger is not None and (self.current_epoch + 1) % self.log_every_n_epochs == 0:
+            self.log_dict(
+                {
+                    "latent_reg_loss": reg_loss,
+                    "prediction_loss": chunk_loss,
+                    "lipschit<_loss": lipschitz_loss,
+                },
+                logger=True
+            )
+
+            self.log_dict({"train_loss": training_loss}, prog_bar=True, on_step=False, on_epoch=True, logger=True)
+
+        return training_loss
+
+
+
+
+
+
+if __name__ == "__main__":
+
+    pass
