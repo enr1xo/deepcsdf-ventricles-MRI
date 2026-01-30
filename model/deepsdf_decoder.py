@@ -298,7 +298,7 @@ class DeepSDF(pl.LightningModule):
 
         # # LIPSCHITZ PENALTY
         lipschitz_loss = 0.0
-        if self.use_lipreg_loss:
+        if self.use_lipreg_loss: # compute product of spectral norms for all layers !
             Ws = torch.stack([getattr(self.decoder, f"lin{i}").weight for i in range(self.decoder.num_layers)])
             # Compute norms for all layers at once
             norms = torch.linalg.matrix_norm(Ws, ord=float('inf'), dim=(1,2))  # shape: (num_layers,)
