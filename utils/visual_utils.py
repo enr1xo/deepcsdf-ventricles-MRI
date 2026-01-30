@@ -162,8 +162,7 @@ def plot_gt_vs_reconstructed_with_error(
         mesh_pred: pv.PolyData | pv.UnstructuredGrid,
         patient_name,
         signed_distances_pred_from_gt = None,
-        off_screen = False,
-        scale = 100
+        off_screen = False
     ):
     """
         .
