@@ -283,20 +283,31 @@ class DeepSDF(pl.LightningModule):
         chunk_loss = self.loss_fn(prediction, sdf_gt) / num_sdf_samples
 
         # REGULARIZATION LOSS
-        reg_loss = self.code_reg_lambda * torch.sum( torch.linalg.norm(batch_vecs, dim=1) ) / num_sdf_samples
+        reg_loss = torch.sum( torch.linalg.norm(batch_vecs, dim=1) ) / num_sdf_samples
 
-        # LIPSCHITZ PENALTY
+        # # LIPSCHITZ PENALTY
+        # if self.use_lipreg_loss:
+        #     lipschitz_loss = 1.0
+        #     for layer in range(self.decoder.num_layers):
+        #         weight = self.decoder.__getattr__("lin" + str(layer)).weight
+        #         norm = torch.linalg.matrix_norm(weight, ord=float("inf")) # TODO: bound this so it doesn't explode
+        #         lipschitz_loss *= F.softplus(norm)
+        #     lipschitz_loss = self.lipschitz_alpha * lipschitz_loss
+        # else:
+        #     lipschitz_loss = 0.0
+
+        # # LIPSCHITZ PENALTY
+        lipschitz_loss = 0.0
         if self.use_lipreg_loss:
-            lipschitz_loss = 1.0
-            for layer in range(self.decoder.num_layers):
-                weight = self.decoder.__getattr__("lin" + str(layer)).weight
-                norm = torch.linalg.matrix_norm(weight, ord=float("inf")) # TODO: bound this so it doesn't explode
-                lipschitz_loss *= F.softplus(norm)
-            lipschitz_loss = self.lipschitz_alpha * lipschitz_loss
-        else:
-            lipschitz_loss = 0.0
+            Ws = torch.stack([getattr(self.decoder, f"lin{i}").weight for i in range(self.decoder.num_layers)])
+            # Compute norms for all layers at once
+            norms = torch.linalg.matrix_norm(Ws, ord=float('inf'), dim=(1,2))  # shape: (num_layers,)
+            softplus_norms = F.softplus(norms)
+            # compute product of spectral norms as sum in log space for stability
+            log_prod = torch.sum(torch.log(softplus_norms + 1e-12))  # add eps for stability
+            lipschitz_loss = torch.exp(log_prod) 
 
-        training_loss = chunk_loss + reg_loss + lipschitz_loss
+        training_loss = chunk_loss + self.code_reg_lambda * reg_loss + self.lipschitz_alpha * lipschitz_loss
 
         if self.logger is not None and (self.current_epoch + 1) % self.log_every_n_epochs == 0:
             self.log_dict(
