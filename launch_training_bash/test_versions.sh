@@ -4,10 +4,10 @@
 VERSION_DIR=experiments/training_sweeps/LipAndAct
 PYTHON_SCRIPT=test.py
 TEST_DATASET="train/data_fnames_train-20patients.json"
-SLEEP_INTERVAL=300       # seconds
+SLEEP_INTERVAL=60       # seconds
 SAFETY_MARGIN_MB=500   # safety
 MEM_REQUIRED_MB=6000    # with 89 scenes with 100000 points each all loaded in GPU,  2^14 points per scene, batches of 16 scenes, model with latent size 128, 512 x 7 layers, all lipschitz, --> memory usage tops out at 5108MiB /  24576MiB 
-MAX_PARALLEL=3 
+MAX_PARALLEL=4 
 LOG_DIR=experiments/logs-temp
 # --------------------
 

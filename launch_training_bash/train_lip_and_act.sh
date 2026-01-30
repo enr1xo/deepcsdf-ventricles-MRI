@@ -5,9 +5,9 @@ EXPERIMENT=training_sweeps/LipAndAct
 SPECS_BASE=specs_files/specs_deepsdfatria-base.json
 PYTHON_SCRIPT=train.py
 SLEEP_INTERVAL=300       # seconds
-SAFETY_MARGIN_MB=500   # safety
-MEM_REQUIRED_MB=2500    # with 89 scenes with 100000 points each all loaded in GPU,  2^14 points per scene, batches of 16 scenes, model with latent size 128, 512 x 7 layers, all lipschitz, --> memory usage tops out at 5108MiB /  24576MiB 
-MAX_PARALLEL=10 
+SAFETY_MARGIN_MB=250   # safety
+MEM_REQUIRED_MB=2000    # with 89 scenes with 100000 points each all loaded in GPU,  2^14 points per scene, batches of 16 scenes, model with latent size 128, 512 x 7 layers, all lipschitz, --> memory usage tops out at 5108MiB /  24576MiB 
+MAX_PARALLEL=12 
 LOG_DIR=experiments/logs-temp
 # --------------------
 
@@ -38,10 +38,11 @@ declare -a JOB_PIDS=()
 
 # ---- Hyperparameters to sweep ----
 LIPSCHITZ_LAYERS=(
-  '[0,1,2,3,4,5,6]'
-  '[2,3,4,5,6]'
-  '[4,5,6]'
-  '[-1]'
+  '[0,1,2,3,4]'
+  '[1,2,3,4]'
+  '[2,3,4]'
+  '[3,4]'
+  '[4]'
 )
 
 ACTS=('Softplus' 'GELU' 'Tanh' 'SiLU')
