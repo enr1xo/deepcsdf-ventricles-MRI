@@ -8,6 +8,7 @@
 
 #Ignore all text files
 *.txt
+!requirements.txt
 
 #Ignore specific files
 temp.py
