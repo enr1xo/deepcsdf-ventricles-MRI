@@ -186,7 +186,7 @@ def run(
         latent = mean_code
         latent.requires_grad = True
         
-        loss = model.loss_fn
+        loss_fn = model.loss_fn
 
         code_reg_lambda = latent_reg_factor
 
@@ -224,7 +224,7 @@ def run(
             # vanilla loss : same loss as in training
             reg_loss = torch.sum( torch.linalg.norm(latent) ) * code_reg_lambda
 
-            chunk_loss = loss(sdf_pred, sdf_gt) / num_samp_per_scene
+            chunk_loss = loss_fn(sdf_pred, sdf_gt) / num_samp_per_scene
 
             loss = chunk_loss + reg_loss
 
@@ -475,7 +475,7 @@ if __name__ == "__main__":
 
     exp_name = args.experiment_name
     vers = args.version
-    test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "train/data_fnames_train-20patients.json"
+    test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "train/AF059-LEU_NORM_F017.json" # "train/data_fnames_train-20patients.json"
     mode = args.mode 
     num_epochs_fit_latent = 250
     latent_reg_factor = 2e-4

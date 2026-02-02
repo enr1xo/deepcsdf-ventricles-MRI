@@ -256,7 +256,7 @@ class DeepSDF(pl.LightningModule):
 
         num_samp_per_scene = data["coords"].shape[1]
 
-        xyz = coords.reshape(-1, 3) * 100
+        xyz = coords.reshape(-1, 3) * self.Cs
 
         sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim)
         if self.enforce_minmax:
@@ -280,10 +280,10 @@ class DeepSDF(pl.LightningModule):
             prediction = torch.clamp(prediction, min = -self.clamp_distance, max=self.clamp_distance)
         
         # REGRESSION LOSS
-        chunk_loss = self.loss_fn(prediction, sdf_gt) / num_sdf_samples
+        chunk_loss = self.loss_fn(prediction, sdf_gt) / (num_sdf_samples * self.decoder.out_dim) # divide by N only --> total error per sample, divide by N * out_dim --> average per scalar, most unit-free choice
 
-        # REGULARIZATION LOSS
-        reg_loss = torch.sum( torch.linalg.norm(batch_vecs, dim=1) ) / num_sdf_samples
+        # REGULARIZATION LOSS  # was: reg_loss = torch.sum( torch.linalg.norm(batch_vecs, dim=1) ) / num_sdf_samples
+        reg_loss = torch.mean(batch_vecs.pow(2).sum(dim=1)) / self.decoder.latent_size # I should maybe normalize by latent size so it becomes independent from it
 
         # # LIPSCHITZ PENALTY
         # if self.use_lipreg_loss:
@@ -305,16 +305,30 @@ class DeepSDF(pl.LightningModule):
             softplus_norms = F.softplus(norms)
             # compute product of spectral norms as sum in log space for stability
             log_prod = torch.sum(torch.log(softplus_norms + 1e-12))  # add eps for stability
-            lipschitz_loss = torch.exp(log_prod) 
+            # lipschitz_loss = torch.exp(log_prod) # normalized by depth:  torch.exp(log_prod / self.decoder.num_layers)
+            # do not exponentiate for stabilty, for training it is unnecessary ( still get the same minimizer)
+            lipschitz_loss = log_prod 
 
         training_loss = chunk_loss + self.code_reg_lambda * reg_loss + self.lipschitz_alpha * lipschitz_loss
 
         if self.logger is not None and (self.current_epoch + 1) % self.log_every_n_epochs == 0:
+
+            xyz_diag = xyz.detach().requires_grad_(True)
+            z_diag   = batch_vecs.detach().requires_grad_(True)
+
+            pred_diag = self.decoder(torch.cat([z_diag, xyz_diag], dim=1))
+
+            gx = torch.autograd.grad(pred_diag.sum(), xyz_diag, retain_graph=True)[0]
+            gz = torch.autograd.grad(pred_diag.sum(), z_diag)[0]
+
+            ratio = gx.norm(dim=1).mean() / ( gz.norm(dim=1).mean() + 1e-12 )
+
             self.log_dict(
                 {
                     "latent_reg_loss": reg_loss,
                     "prediction_loss": chunk_loss,
-                    "lipschit<_loss": lipschitz_loss,
+                    "lipschitz_loss": lipschitz_loss,
+                    "ratio_gx_over_gz" : ratio
                 },
                 logger=True
             )

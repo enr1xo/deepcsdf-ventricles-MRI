@@ -208,7 +208,7 @@ if __name__ == "__main__":
                         help="Default is deepsdfatria_training_local, and becomes the directory " \
                         "name in which checkpoints and logs are saved, under version_x folder for each run."
     )
-    parser.add_argument("--specs_file_path", "-s", type=str, default = None)
+    parser.add_argument("--specs_file_path", "-s", type=str, default = SPECS_FILE)
     parser.add_argument("--train_mode", type=str, default="use_specs_file")
     parser.add_argument("--override_specs", type=str, default=None)
     parser.add_argument("--show_progress", action="store_true")
@@ -217,24 +217,22 @@ if __name__ == "__main__":
     match args.train_mode:
 
         case "use_specs_file":
-            if args.specs_file_path is not None:
-                SPECS_FILE = str(args.specs_file_path)
+            specs_file = str(args.specs_file_path)
             
             if args.experiment_name is not None:
                 EXPERIMENT_NAME = str(args.experiment_name)
 
-            version = train( specs = json.load(open(SPECS_FILE)), show_progress = args.show_progress )
+            version = train( specs = json.load(open(specs_file)), show_progress = args.show_progress )
 
         case "compose_specs_from_options":
 
             if args.experiment_name is not None:
                 EXPERIMENT_NAME = str(args.experiment_name)
 
-            if args.specs_file_path is not None:
-                SPECS_FILE = str(args.specs_file_path)
+            specs_file = str(args.specs_file_path)
             
             # now overwrite specs fields with wanted specs
-            specs = json.load(open(SPECS_FILE))
+            specs = json.load(open(specs_file))
             override_specs = json.loads(args.override_specs) # in args arriva dal bash come STRINGA json
 
             # be sure requested override fields are actually valid:
