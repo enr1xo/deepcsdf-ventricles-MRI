@@ -5,9 +5,9 @@ from loguru import logger
 PROJ_ROOT = Path(__file__).resolve().parents[0]
 logger.info(f"PROJ_ROOT path is: {PROJ_ROOT}")
 
-# PATIENT_MESHES_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtrialGeometries")
+PATIENT_MESHES_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtrialGeometries")
 
-PATIENT_MESHES_DIR = Path("/home/davidenava_linux/DATASETS/AtrialGeometries")
+# PATIENT_MESHES_DIR = Path("/home/davidenava_linux/DATASETS/AtrialGeometries")
 
 ATRIA_TAGS_METADATA = {
 
@@ -46,13 +46,13 @@ ATRIA_TAGS_METADATA = {
 
 DATA_DIR = PROJ_ROOT / "data"
 
-# PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtriaPointsAndSDF")
+PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtriaPointsAndSDF")
 
-# PATIENTS_NPY_DATA_DIR =  PATIENTS_COORDS_AND_SDFS_DIR / "single_patients_100000pts_npy"
+PATIENTS_NPY_DATA_DIR =  PATIENTS_COORDS_AND_SDFS_DIR / "single_patients_100000pts_npy"
 
-PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/davidenava_linux/DATASETS/AtriaPointsAndSDFs")
+# PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/davidenava_linux/DATASETS/AtriaPointsAndSDFs")
 
-PATIENTS_NPY_DATA_DIR =  PATIENTS_COORDS_AND_SDFS_DIR / "single_patients_50000pts_npy"
+# PATIENTS_NPY_DATA_DIR =  PATIENTS_COORDS_AND_SDFS_DIR / "single_patients_50000pts_npy"
 
 SPECS_FILES_DIR = PROJ_ROOT / "specs_files"
 
@@ -71,3 +71,5 @@ IMAGES_DIR = RESULTS_DIR / "images"
 RECONSTRUCTED_MESHES_DIR = RESULTS_DIR / "reconstructed"
 
 LATENTS_DIR = RESULTS_DIR / "fitted_latents"
+
+METRICS_DIR = RESULTS_DIR / "metrics"
