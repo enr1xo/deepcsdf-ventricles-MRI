@@ -264,6 +264,9 @@ def compute_signed_distance_libigl(mesh: pv.PolyData, query_points):
     elements = faces.astype(np.int32)
 
     # TODO: automatic inside-outisde orientation, instead of manually flipping sign if it's opposite ...
+    # mesh.compute_normals(
+    #     auto_orient_normals=True
+    # )
 
     sq_d, _, _ = igl.point_mesh_squared_distance(
         P = query_points,
@@ -276,6 +279,8 @@ def compute_signed_distance_libigl(mesh: pv.PolyData, query_points):
     sdf = np.sqrt(sq_d) * np.sign(w - 0.5)
 
     return sdf * -1
+
+
 
 if __name__ == "__main__":
 

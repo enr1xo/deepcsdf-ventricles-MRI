@@ -7,6 +7,12 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import torch
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+
+
+
 def chamfer_distance_L2(points1, points2):
     if len(points1) == 0 or len(points2) == 0:
         return float("nan")
@@ -28,8 +34,8 @@ def chamfer_distance_L2_squared(points1, points2):
 
 
 def varifold_inner(faces1, faces2, gamma = 1.0, block=2048):
-    faces1 = faces1.to("cuda")
-    faces2 = faces2.to("cuda")
+    faces1 = faces1.to(DEVICE)
+    faces2 = faces2.to(DEVICE)
 
     c1 = faces1[:, :3]
     n1 = faces1[:, 3:6]
@@ -39,7 +45,7 @@ def varifold_inner(faces1, faces2, gamma = 1.0, block=2048):
     n2 = faces2[:, 3:6]
     a2 = faces2[:, 6]
 
-    total = torch.zeros(1, device="cuda")
+    total = torch.zeros(1, device=DEVICE)
 
     c2_norm2 = (c2 ** 2).sum(dim=1)  # (N2,)
     n2T = n2.t()                     # (3, N2)

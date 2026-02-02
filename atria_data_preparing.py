@@ -43,7 +43,7 @@ def create_vtu_from_carpbin(
     command = [
         "meshtool",
         "convert",
-        f"-imsh", None,
+        f"-imsh", None, 
         f"-ifmt", input_format,
         f"-omsh", None,
         f"-ofmt", "vtu"
@@ -64,7 +64,7 @@ def create_vtu_from_carpbin(
 
                 print(e.stderr)
     else:
-        logger.warning("A.vtu file is already present in source directory, skipping creation.")
+        logger.warning("A .vtu file is already present in source directory, skipping creation.")
     
     return
 
@@ -81,26 +81,6 @@ def split_cell_data_tags( mesh_tags, tags_metadata = ATRIA_TAGS_METADATA ):
             logger.warning("Available tags metadata dictionary does not contain key {key}.")
 
     return tags_split
-
-def propagate_surface_cell_data_tags(original_surface, target_surface, elemtagskey):
-
-    orig_tags = original_surface.cell_data[elemtagskey]
-    
-    orig_centers = original_surface.cell_centers().points
-    
-    closed_centers = target_surface.cell_centers().points
-    
-    tree = KDTree(orig_centers)
-
-    new_tags = np.empty(target_surface.n_cells, dtype=orig_tags.dtype)
-
-    for i, p in enumerate(closed_centers):
-        _, idx = tree.query(p)
-        new_tags[i] = orig_tags[idx]
-
-    target_surface.cell_data[elemtagskey] = new_tags
-
-    return target_surface
 
 # def make_surface_consistently_oriented(surface_mesh: pv.PolyData):
 
@@ -218,7 +198,7 @@ def extract_raw_atria_surfaces(mesh, tags_metadata = ATRIA_TAGS_METADATA):
 
     return epicardium_surface, RA_endo_surface, LA_endo_surface
 
-def extract_closed_atria_surfaces(mesh, tags_metadata = ATRIA_TAGS_METADATA):
+def extract_closed_atria_surfaces(mesh : pv.UnstructuredGrid | pv.PolyData, tags_metadata = ATRIA_TAGS_METADATA):
     """
         Extracts raw epicardium, left/right endocardium surfaces from the passed volumetric mesh using elements' tags,
         then closes the surfaces, returning watertight meshes.
@@ -733,6 +713,8 @@ def _create_deepsdf_data_npy(
 
         gc.collect()
 
+        break
+
     logger.info(" Done. ")
 
 
@@ -763,31 +745,3 @@ if __name__ == "__main__":
         create_processed_meshes=False,
         store_processed_meshes=False
     )
-
-    # patient = "AF001"
-
-    # data = np.load(PATIENTS_NPY_DATA_DIR / f"{patient}_epi_la_ra_100000_coords_and_sdf.npy") 
-
-    # coords = data[:,:3]
-    # sdfs = data[:,3:]
-
-    # points = pv.PolyData(coords)
-    # points["sdf_epi"] = sdfs[:,0]
-    # points["sdf_la"] = sdfs[:,1]
-    # points["sdf_ra"] = sdfs[:,2]
-
-    # plotter = pv.Plotter()
-    # plotter.add_mesh(points, scalars="sdf_epi", cmap="jet_r", render_points_as_spheres = True)
-    # plotter.show()
-
-    # plotter = pv.Plotter()
-    # plotter.add_mesh(points, scalars="sdf_la", cmap="jet_r", render_points_as_spheres = True)
-    # plotter.show()
-
-    # plotter = pv.Plotter()
-    # plotter.add_mesh(points, scalars="sdf_ra", cmap="jet_r", render_points_as_spheres = True)
-    # plotter.show()
-
-
-        
-

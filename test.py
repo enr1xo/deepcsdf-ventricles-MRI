@@ -23,6 +23,11 @@ from config import (
     PATIENT_MESHES_DIR
 )
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+
+
 
 def get_dataset_patients_names(data: dict):
     patient_names = []
@@ -33,7 +38,6 @@ def get_dataset_patients_names(data: dict):
         patient_names.append(patient_name)
 
     return patient_names
-
 
 # def compute_chd_dists(mesh_orig, mesh_organ):
 
@@ -109,13 +113,13 @@ def run(
         logger.warning(f"Decoder weights not found for {version}")
         return
 
-    decoder.cuda()
+    decoder.to(DEVICE)
 
     model = DeepSDF(decoder=decoder, specs=specs)
 
     # dataset
     # optionally subsample total samples PER SCENE to use 
-    # --> the dataloader returns scenes with specs["num_samp_per_scene"] points !!!
+    # --> the dataloader returns already scenes with specs["num_samp_per_scene"] points !!!
     if subsample_scenes_for_fit:
         specs["num_samp_per_scene"] = num_samp_per_scene_for_fit
 
@@ -148,6 +152,9 @@ def run(
 
         patient_name = patient_names[shape_idx] # careful
 
+        # print(f"##### ===== PATIENT {patient_name} : {shape_idx}/{len(dataset)} ===== #####")
+        print("\033[48;2;30;30;30;0;38;2;255;200;0m" + f"##### ===== PATIENT {patient_name} : {shape_idx+1}/{len(dataset)} ===== #####" + "\033[0m")
+
         chamfer_dists[patient_name] = {}
 
         haussdorff_dists[patient_name] = {}
@@ -168,21 +175,19 @@ def run(
             logger.warning(f"Fitting latent code using only points near left atrium, keeping  {len(xyz_gt)}")
 
         xyz_gt = xyz_gt.reshape(-1, 3) * decoder_input_scale
+
         sdf_gt = sdf_gt.reshape(-1, decoder.out_dim)
         if enforce_minmax:
             sdf_gt = torch.clamp(sdf_gt, min = -clamp_distance, max = clamp_distance)
 
-        # print(f"##### ===== PATIENT {patient_name} : {shape_idx}/{len(dataset)} ===== #####")
-        print("\033[48;2;30;30;30;0;38;2;255;200;0m" + f"##### ===== PATIENT {patient_name} : {shape_idx+1}/{len(dataset)} ===== #####" + "\033[0m")
-     
-        sdf_gt = sdf_gt.cuda()
-        xyz = xyz_gt.cuda()
+        sdf_gt = sdf_gt.to(DEVICE)
+        xyz = xyz_gt.to(DEVICE)
 
         # starting point for optimization (same I use initializing latent codes in training): zero
         # I could also save initial vectors when training and start with empirical mean and covariance,
         # sampling a latent using MultivariateNormal and rsample()
         latent_size = decoder.latent_size
-        mean_code = torch.zeros(latent_size, device="cuda")  
+        mean_code = torch.zeros(latent_size, device=DEVICE)  
         latent = mean_code
         latent.requires_grad = True
         
@@ -271,10 +276,10 @@ def run(
                 for i in range(n_batches + 1):
                     if i < n_batches:
                         print(250000 * i, 250000 * (i + 1))
-                        xyz = torch.from_numpy(xyz_raw[250000 * i : 250000 * (i + 1)]).cuda()
+                        xyz = torch.from_numpy(xyz_raw[250000 * i : 250000 * (i + 1)]).to(DEVICE)
                     else:
                         print(250000 * i, ": ")
-                        xyz = torch.from_numpy(xyz_raw[250000 * i :]).cuda()
+                        xyz = torch.from_numpy(xyz_raw[250000 * i :]).to(DEVICE)
 
                     if decoder.use_positional_encoding:
                         freqs = 2.0 ** torch.arange(decoder.pos_enc_dim)
