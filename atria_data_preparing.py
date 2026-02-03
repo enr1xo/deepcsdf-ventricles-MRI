@@ -12,6 +12,7 @@ from scipy.spatial import KDTree
 import pymeshfix
 from utils.surface_utils import (
     check_watertight,
+    make_surface_watertight,
     scale_to_unit_sphere,
     sample_surface_for_deepsdf,
     compute_signed_distance_libigl
@@ -110,38 +111,6 @@ def split_cell_data_tags( mesh_tags, tags_metadata = ATRIA_TAGS_METADATA ):
 #         surface_mesh.flip_normals()
 
 #     return
-
-def make_surface_watertight(surface_mesh: pv.PolyData):
-    """
-        Closes surface, additionally stores cell_data attribute 'isholepatch' indicating if cells are original or added to close holes.
-    """
-
-    # initial sanity check
-    surface_mesh = surface_mesh.triangulate() # make sure is all triangular mesh
-    surface_mesh = surface_mesh.clean(
-        tolerance=1e-12,     
-        inplace=False,
-    )
-
-    vertices = surface_mesh.points
-    faces = surface_mesh.faces.reshape((-1, 4))[:, 1:4]
-
-    orig_tri_count = faces.shape[0]
-
-    mf = pymeshfix.MeshFix(vertices, faces)
-
-    mf.repair() # this also close holes: faces after repair   = [ new patch faces | original faces ] appends new faces at the beginning !!
-    
-    vertices_repaired, faces_repaired = mf.v, mf.f
-    is_holepatch = np.zeros(faces_repaired.shape[0], dtype=np.int8)
-    is_holepatch[:-orig_tri_count] = 1
-
-    faces_pv = np.hstack([np.full((faces_repaired.shape[0], 1), 3), faces_repaired]).astype(np.int64)
-    faces_repaired = faces_pv.ravel()
-    surface_closed = pv.PolyData(vertices_repaired, faces_repaired)
-    surface_closed.cell_data["isholepatch"] = is_holepatch
-
-    return surface_closed
 
 def extract_raw_atria_surfaces(mesh, tags_metadata = ATRIA_TAGS_METADATA):
 
@@ -724,12 +693,6 @@ if __name__ == "__main__":
     pass
 
     #TODO: example usage
-
-    # _create_processed_surfaces_meshes(
-    #     source_dir  = Path("/home/navarri/AtriaProject/DATASETS/AtrialGeometriesOriginal"),
-    #     save_to_dir = Path("/home/navarri/AtriaProject/DATASETS/AtrialGeometries"),
-    #     reference_patient="AF069"
-    # )
 
     num_epi_samples = 30000
     num_lendo_samples = 35000
