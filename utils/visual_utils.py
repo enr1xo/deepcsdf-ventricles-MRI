@@ -3,9 +3,11 @@ import vtk
 import numpy as np
 import os
 from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE, trustworthiness
 import seaborn as sns
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from vtkmodules.vtkFiltersCore import vtkImplicitPolyDataDistance
 
 
@@ -218,56 +220,130 @@ def map_categories(patient_names, categories = ["AF", "LEU_NORM"]):
     # I just love python
     return [ categories["AF" not in name] for name in patient_names ] 
 
-def plot_pca(latents, patients_names, save_fname):
-    """
-        Args:
-        latents: (N, latent_size)
-        patient_names: (N)
+# def plot_pca(latents, patients_names, save_fname = None):
+#     """
+#         Args:
+#         latents: (N, latent_size)
+#         patient_names: (N)
 
-        Patient_names is assumed to indicize into latents row by row.
-        So each latent is assumed it represents the corresponding patient.
-    """
+#         Patient_names is assumed to indicize into latents row by row.
+#         So each latent is assumed it represents the corresponding patient.
+#     """
     
+#     pca = PCA(n_components=2)
+#     latents_pca = pca.fit_transform(latents)
+    
+#     df = pd.DataFrame({
+#         'PC1': latents_pca[:,0],
+#         'PC2': latents_pca[:,1],
+#         # 'PC3': latents_pca[:,2],
+#         'Category': map_categories(patients_names)
+#     })
+
+#     palette = {
+#         "AF": COLORS_PALETTE["neon_red"],  
+#         "LEU_NORM": COLORS_PALETTE["neon_green"], 
+#     }
+
+#     plt.figure(figsize=(7, 6))
+
+#     # --- Set background colors ---
+#     bckg_col = "#1D1D24DF"
+#     ax = plt.gca()
+#     ax.set_facecolor(bckg_col)       # plot area background
+#     plt.gcf().patch.set_facecolor(bckg_col)  # figure (outer) background
+
+#     sns.scatterplot(
+#         data=df,
+#         x='PC1', y='PC2',
+#         hue='Category',
+#         palette=palette,
+#         s=50,
+#     )
+
+#     # Optional: style tweaks for neon look
+#     ax.tick_params(colors='white')      # white ticks
+#     ax.spines[:].set_color('white')     # white border lines
+#     ax.xaxis.label.set_color('white')   # white axis labels
+#     ax.yaxis.label.set_color('white')
+#     ax.legend(facecolor=bckg_col, edgecolor=bckg_col, labelcolor='white')
+
+#     if save_fname is None:
+#         plt.show()
+#     else:
+#         plt.savefig(save_fname, dpi=300, bbox_inches='tight', facecolor=plt.gcf().get_facecolor())
+#         plt.close()
+
+def plot_PCA(latents, patients_names):
+
+    categories = map_categories(patients_names)
+    map_colors = lambda s:  COLORS_PALETTE["neon_red"] if s == "AF" else  COLORS_PALETTE["neon_green"]
+    y = [map_colors(s) for s in categories]
+
     pca = PCA(n_components=2)
-    latents_pca = pca.fit_transform(latents)
-    
-    df = pd.DataFrame({
-        'PC1': latents_pca[:,0],
-        'PC2': latents_pca[:,1],
-        # 'PC3': latents_pca[:,2],
-        'Category': map_categories(patients_names)
-    })
 
-    palette = {
-        "AF": COLORS_PALETTE["neon_red"],  
-        "LEU_NORM": COLORS_PALETTE["neon_green"], 
-    }
+    # Fit and transform
+    latents_embedded = pca.fit_transform(latents)
 
-    plt.figure(figsize=(7, 6))
+    # Plot
+    plt.scatter(latents_embedded[:,0], latents_embedded[:,1], c=y, s=50)
+    plt.xlabel('PCA 1')
+    plt.ylabel('PCA 2')
+    plt.title('PCA embedding of latent codes')
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='w',
+            label='AF',
+            markerfacecolor=COLORS_PALETTE["neon_red"],
+            markersize=8),
+        Line2D([0], [0], marker='o', color='w',
+            label='NORM',
+            markerfacecolor=COLORS_PALETTE["neon_green"],
+            markersize=8)
+    ]
 
-    # --- Set background colors ---
-    bckg_col = "#1D1D24DF"
-    ax = plt.gca()
-    ax.set_facecolor(bckg_col)       # plot area background
-    plt.gcf().patch.set_facecolor(bckg_col)  # figure (outer) background
+    plt.legend(handles=legend_elements, loc='upper left')
+    plt.show()
+        
+    pass
 
-    sns.scatterplot(
-        data=df,
-        x='PC1', y='PC2',
-        hue='Category',
-        palette=palette,
-        s=50,
-    )
+def plot_tSNE(latents, patients_names, reduce_dim_first = False, learning_rate = 100, max_iter = 1000, perplexity = 15):
 
-    # Optional: style tweaks for neon look
-    ax.tick_params(colors='white')      # white ticks
-    ax.spines[:].set_color('white')     # white border lines
-    ax.xaxis.label.set_color('white')   # white axis labels
-    ax.yaxis.label.set_color('white')
-    ax.legend(facecolor=bckg_col, edgecolor=bckg_col, labelcolor='white')
+    categories = map_categories(patients_names)
+    map_colors = lambda s:  COLORS_PALETTE["neon_red"] if s == "AF" else  COLORS_PALETTE["neon_green"]
+    y = [map_colors(s) for s in categories]
 
-    plt.savefig(save_fname, dpi=300, bbox_inches='tight', facecolor=plt.gcf().get_facecolor())
-    plt.close()
+    # It is highly recommended to use another dimensionality reduction method 
+    # (e.g. PCA for dense data or TruncatedSVD for sparse data) to reduce the number of dimensions to a reasonable amount (e.g. 50)
+    # if the number of features is very high.
+    if reduce_dim_first:
+        pca = PCA(n_components=50)
+        latents = pca.fit_transform(latents)
+
+    tsne = TSNE(n_components=2, perplexity=10, learning_rate=100, max_iter=1000, random_state=42)
+
+    # Fit and transform
+    X_embedded = tsne.fit_transform(latents)
+
+    # Plot
+    plt.scatter(X_embedded[:,0], X_embedded[:,1], c=y, s=50)
+    plt.xlabel('t-SNE 1')
+    plt.ylabel('t-SNE 2')
+    plt.title('t-SNE embedding of latent codes')
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='w',
+            label='AF',
+            markerfacecolor=COLORS_PALETTE["neon_red"],
+            markersize=8),
+        Line2D([0], [0], marker='o', color='w',
+            label='NORM',
+            markerfacecolor=COLORS_PALETTE["neon_green"],
+            markersize=8)
+    ]
+
+    plt.legend(handles=legend_elements, loc='upper left')
+    plt.show()
+        
+    pass
 
 
 
@@ -281,8 +357,37 @@ if __name__ == "__main__":
 
     # visually_check_sdfs_distribution(PATIENTS_NPY_DATA_DIR)
     
-    # PATIENT_MESHES_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtrialGeometries")
+    PATIENT_MESHES_DIR = Path("/home/davidenava_linux/DATASETS/AtrialGeometries")
 
     # visually_check_all_surfaces(PATIENT_MESHES_DIR)
-    
-    pass
+
+    latent_dict = np.load("/home/davidenava_linux/AtriaProject/deepcsdf-atria/results/fitted_latents/latent_codes_89_patients_version_114-codereg=0.000200-epochs=250.npz")
+
+    patients_names = []
+    latent_codes = []
+    for name, code in latent_dict.items():
+        patients_names.append(name)
+        latent_codes.append(code)
+
+    latent_codes = np.array(latent_codes)
+
+    # plot_tSNE(latent_codes, patients_names)
+
+    # # find "best" learning rate
+    # for lr in [50,80,100,150,180]:
+    #     tsne = TSNE(n_components=2, perplexity=15, learning_rate=lr, max_iter=1000, random_state=42)
+
+    #     # Fit and transform
+    #     latents_embedded = tsne.fit_transform(latent_codes)
+
+    #     T = trustworthiness(
+    #         latent_codes,      # original high-D data (n_samples, n_features)
+    #         latents_embedded,      # embedding (n_samples, n_components)
+    #         n_neighbors=10
+    #     )
+
+    #     print(f"lr = {lr} --> T = {T}")
+
+    plot_PCA(latent_codes, patients_names)
+
+    plot_tSNE(latent_codes, patients_names)
