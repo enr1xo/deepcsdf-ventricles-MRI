@@ -4,6 +4,7 @@ import numpy as np
 import os
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE, trustworthiness
+import umap
 import seaborn as sns
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -324,7 +325,6 @@ def plot_tSNE(latents, patients_names, reduce_dim_first = False, learning_rate =
     # Fit and transform
     X_embedded = tsne.fit_transform(latents)
 
-    # Plot
     plt.scatter(X_embedded[:,0], X_embedded[:,1], c=y, s=50)
     plt.xlabel('t-SNE 1')
     plt.ylabel('t-SNE 2')
@@ -344,6 +344,44 @@ def plot_tSNE(latents, patients_names, reduce_dim_first = False, learning_rate =
     plt.show()
         
     pass
+
+def plot_UMAP(latents, patients_names, n_neighbors = 15, min_dist = 0.05):
+
+    categories = map_categories(patients_names)
+    map_colors = lambda s:  COLORS_PALETTE["neon_red"] if s == "AF" else  COLORS_PALETTE["neon_green"]
+    y = [map_colors(s) for s in categories]
+
+    umap_embedder = umap.UMAP(
+        n_neighbors=n_neighbors,  # controls local vs global
+        min_dist=min_dist,    # tightness of clusters
+        n_components=2,  # output dims
+        random_state=42  # reproducibility
+    )
+
+    # Fit & transform data
+    latents_embedded = umap_embedder.fit_transform(latents)  # X = your high-dimensional data
+
+    # Plot
+    plt.scatter(latents_embedded[:,0], latents_embedded[:,1], c=y, s=50)
+    plt.xlabel('UMAP 1')
+    plt.ylabel('UMAP 2')
+    plt.title('UMAP embedding of latent codes')
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='w',
+            label='AF',
+            markerfacecolor=COLORS_PALETTE["neon_red"],
+            markersize=8),
+        Line2D([0], [0], marker='o', color='w',
+            label='NORM',
+            markerfacecolor=COLORS_PALETTE["neon_green"],
+            markersize=8)
+    ]
+
+    plt.legend(handles=legend_elements, loc='upper left')
+    plt.show()
+
+    return
+
 
 
 
@@ -371,8 +409,6 @@ if __name__ == "__main__":
 
     latent_codes = np.array(latent_codes)
 
-    # plot_tSNE(latent_codes, patients_names)
-
     # # find "best" learning rate
     # for lr in [50,80,100,150,180]:
     #     tsne = TSNE(n_components=2, perplexity=15, learning_rate=lr, max_iter=1000, random_state=42)
@@ -388,6 +424,8 @@ if __name__ == "__main__":
 
     #     print(f"lr = {lr} --> T = {T}")
 
-    plot_PCA(latent_codes, patients_names)
+    # plot_PCA(latent_codes, patients_names)
 
-    plot_tSNE(latent_codes, patients_names)
+    # plot_tSNE(latent_codes, patients_names)
+
+    plot_UMAP(latent_codes, patients_names)
