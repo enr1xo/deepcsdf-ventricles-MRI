@@ -2,13 +2,11 @@ from scipy.spatial import KDTree
 import numpy as np
 import pyvista as pv
 from .surface_utils import remesh
-from loguru import logger
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import torch
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
 
 
@@ -22,7 +20,6 @@ def chamfer_distance_L2(points1, points2):
     dists_2, _ = tree.query(points1)
     return np.mean(dists_1)  + np.mean(dists_2)
 
-
 def chamfer_distance_L2_squared(points1, points2):
     if len(points1) == 0 or len(points2) == 0:
         return float("nan")
@@ -31,7 +28,6 @@ def chamfer_distance_L2_squared(points1, points2):
     tree = KDTree(points2)
     dists_2, _ = tree.query(points1)
     return np.mean(dists_1 ** 2)  + np.mean(dists_2 ** 2)
-
 
 def varifold_inner(faces1, faces2, gamma = 1.0, block=2048):
     faces1 = faces1.to(DEVICE)
@@ -72,7 +68,6 @@ def varifold_inner(faces1, faces2, gamma = 1.0, block=2048):
         )
 
     return total
-
 
 def LDDMM_loss(mesh1: pv.PolyData, mesh2: pv.PolyData, compute_normals = True, remeshing = True, n_points = 50000, gamma = 1.0):
 
@@ -124,7 +119,6 @@ def LDDMM_loss(mesh1: pv.PolyData, mesh2: pv.PolyData, compute_normals = True, r
 
     return dL.cpu().detach().numpy()
 
-
 def haussdorff(points1, points2):
     
     tree = KDTree(points1)
@@ -135,7 +129,6 @@ def haussdorff(points1, points2):
     HD = max( max(dists_1), max(dists_2) )
     
     return HD
-
 
 def chamfer_and_haussdorff(points1, points2):
     if len(points1) == 0 or len(points2) == 0:

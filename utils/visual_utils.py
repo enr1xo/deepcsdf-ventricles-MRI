@@ -214,6 +214,7 @@ def plot_gt_vs_reconstructed_with_error(
 
     return plotter
 
+
 # ================================================================ #
 # region latent space visualization
 # ================================================================ #
@@ -399,7 +400,8 @@ if __name__ == "__main__":
 
     # visually_check_all_surfaces(PATIENT_MESHES_DIR)
 
-    latent_dict = np.load("/home/davidenava_linux/AtriaProject/deepcsdf-atria/results/fitted_latents/latent_codes_89_patients_version_114-codereg=0.000200-epochs=250.npz")
+    fname = "/home/davidenava_linux/AtriaProject/deepcsdf-atria/results/fitted_latents/latent_codes_89_patients_version_114-codereg=0.000020-epochs=250.npz"
+    latent_dict = np.load(fname)
 
     patients_names = []
     latent_codes = []
@@ -424,8 +426,8 @@ if __name__ == "__main__":
 
     #     print(f"lr = {lr} --> T = {T}")
 
-    # plot_PCA(latent_codes, patients_names)
+    plot_PCA(latent_codes, patients_names)
 
-    # plot_tSNE(latent_codes, patients_names)
+    plot_tSNE(latent_codes, patients_names)
 
     plot_UMAP(latent_codes, patients_names)

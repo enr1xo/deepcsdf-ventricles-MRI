@@ -57,6 +57,8 @@ class SDFSamples(Dataset):
 
         if Path(self.data_file).suffix == ".json":
             data_tot = self._unpack_sdfdata_json(self.data_file)
+        else:
+            raise ValueError(f"Expected path to .json file listing data, got {self.data_file}")
         
         self.num_scenes = len(data_tot)
 

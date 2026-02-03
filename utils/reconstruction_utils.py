@@ -1,7 +1,6 @@
 import numpy as np
 from skimage import measure
 import pyvista as pv
-import pyacvd
 
 def isosurface_from_sdf(x, y, z, sdf_pred, level, box_lim = 105):
     
