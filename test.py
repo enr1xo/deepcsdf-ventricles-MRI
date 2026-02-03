@@ -28,7 +28,6 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 
-
 def get_dataset_patients_names(data: dict):
     patient_names = []
 
@@ -470,29 +469,32 @@ if __name__ == "__main__":
     parser.add_argument("--version", "-v", type=str, default = "version_0")
     parser.add_argument("--override_with_dataset", "-od", type=str, default=None)
     parser.add_argument("--mode", "-m", type=int, default=1, choices=[1, 2])
+    parser.add_argument("--reconstruct_from", "-r", type=str, default="all", choices=["la","ra","all"])
+    parser.add_argument("--num_epochs", "-N", type=int, default=250)
+    parser.add_argument("--latent_reg_factor", "-lreg", type=float, default=2e-4)
+    parser.add_argument("--lr", type=float, default=0.005)
     parser.add_argument("--save_latent_codes", "-sc", action="store_true")
     parser.add_argument("--interactive_images", "-i", action="store_true")
     parser.add_argument("--save_images", "-si", action="store_true")
     parser.add_argument("--save_reconstructed_meshes", "-sm", action="store_true")
     parser.add_argument("--compute_metrics", "-cm", action="store_true")
-    # parser.add_argument("--compute_lddmm", "-lddmm", action="store_true")
     args = parser.parse_args()
 
     exp_name = args.experiment_name
     vers = args.version
     test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "train/AF059-LEU_NORM_F017.json" # "train/data_fnames_train-20patients.json"
     mode = args.mode 
-    num_epochs_fit_latent = 250
-    latent_reg_factor = 2e-4
-    lr_fit_latent = 5e-3
+    # num_epochs_fit_latent = 250
+    # latent_reg_factor = 2e-4
+    # lr_fit_latent = 5e-3
 
     kwargs = {
         "experiment_name" : exp_name,
         "version" : vers,
         "override_with_dataset" : test_datafnames,
-        "num_epochs_fit_latent" : num_epochs_fit_latent,
-        "latent_reg_factor" : latent_reg_factor,
-        "lr_fit_latent" : lr_fit_latent,
+        "num_epochs_fit_latent" : args.num_epochs,
+        "latent_reg_factor" : args.latent_reg_factor,
+        "lr_fit_latent" : args.lr,
     }
 
     match mode:
@@ -501,7 +503,7 @@ if __name__ == "__main__":
             run_kwargs = {
                 **kwargs,
                 "reconstruct_surface" : True,
-                "reconstruct_from" : "all",
+                "reconstruct_from" : args.reconstruct_from,
                 "show_reconstruction_images" : args.interactive_images,
                 "save_reconstruction_images" : args.save_images,
                 "save_reconstructed_mesh" : args.save_reconstructed_meshes,
@@ -513,6 +515,7 @@ if __name__ == "__main__":
             run_kwargs = {
                 **kwargs,
                 "reconstruct_surface" : False,
+                "reconstruct_from" : args.reconstruct_from,
                 "show_reconstruction_images" : False,
                 "save_reconstruction_images" : False,
                 "save_reconstructed_mesh" : False,
