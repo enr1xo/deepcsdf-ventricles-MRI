@@ -63,7 +63,7 @@ def run(
         override_with_dataset = None,
         which_shapes = "train",
         subsample_scenes_for_fit = True,
-        num_samp_per_scene_for_fit = 8196,
+        num_samp_per_scene_for_fit = 2048,
         hparams_file = None,
         num_epochs_fit_latent = 250,
         latent_reg_factor = 2e-3,
@@ -122,7 +122,7 @@ def run(
     if subsample_scenes_for_fit:
         specs["num_samp_per_scene"] = num_samp_per_scene_for_fit
 
-    logger.warning(f"Will use {specs["num_samp_per_scene"]} samples per scene to fit latents")
+    logger.warning(f"Will use {specs['num_samp_per_scene']} samples per scene to fit latents")
 
     dataloader = SDFDataModule(specs = specs)
 
@@ -344,10 +344,10 @@ def run(
                     #  --> remove decoder scale from the reconstructed mesh
                     mesh_reconstructed.points /= decoder_input_scale 
 
-                    # bring to original range
-                    scale = mesh_gt.field_data["scale-tooriginalrange"]
-                    mesh_gt.points *= scale
-                    mesh_reconstructed.points *= scale
+                    # # bring to original range
+                    # scale = mesh_gt.field_data["scale-tooriginalrange"]
+                    # mesh_gt.points *= scale
+                    # mesh_reconstructed.points *= scale
 
                     if show_reconstruction_images or save_reconstruction_images:
                         # copy meshes so I don't modify originals, less of a pain to keep track of
@@ -449,7 +449,8 @@ def run(
         df.to_parquet(METRICS_DIR / f"{version}-{exp_name}-LDDMM-{which_shapes}.parquet", index=False)
 
     if save_latent_codes:
-        logger.info("Saving fitted latents")
+        fname = f"latent_codes_{len(latent_codes.keys())}_patients_{version}-codereg={code_reg_lambda:.6f}-epochs={num_epochs}.npz"
+        logger.info(f"Saving fitted latents: {fname}")
         np.savez(LATENTS_DIR / f"latent_codes_{len(latent_codes.keys())}_patients_{version}-codereg={code_reg_lambda:.6f}-epochs={num_epochs}.npz", **latent_codes)
 
     logger.info("Done.")
@@ -465,11 +466,12 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--experiment_name", "-e", type=str, default = "training_sweeps/LipAndAct")
-    parser.add_argument("--version", "-v", type=str, default = "version_0")
+    parser.add_argument("--experiment_name", "-e", type=str, default = "deepsdfatria_training_concurrent")
+    parser.add_argument("--version", "-v", type=str, default = "version_114")
     parser.add_argument("--override_with_dataset", "-od", type=str, default=None)
     parser.add_argument("--mode", "-m", type=int, default=1, choices=[1, 2])
     parser.add_argument("--reconstruct_from", "-r", type=str, default="all", choices=["la","ra","all"])
+    # parser.add_argument("--num_samp_per_scene_for_fit", "-nsamp", type=int)
     parser.add_argument("--num_epochs", "-N", type=int, default=250)
     parser.add_argument("--latent_reg_factor", "-lreg", type=float, default=2e-4)
     parser.add_argument("--lr", type=float, default=0.005)
@@ -482,7 +484,7 @@ if __name__ == "__main__":
 
     exp_name = args.experiment_name
     vers = args.version
-    test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "train/AF059-LEU_NORM_F017.json" # "train/data_fnames_train-20patients.json"
+    test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "test/AF001-LEU_NORM_F004.json" # "train/data_fnames_train-20patients.json"
     mode = args.mode 
     # num_epochs_fit_latent = 250
     # latent_reg_factor = 2e-4

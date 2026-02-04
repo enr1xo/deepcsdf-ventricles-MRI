@@ -276,7 +276,7 @@ def map_categories(patient_names, categories = ["AF", "LEU_NORM"]):
 #         plt.savefig(save_fname, dpi=300, bbox_inches='tight', facecolor=plt.gcf().get_facecolor())
 #         plt.close()
 
-def plot_PCA(latents, patients_names):
+def plot_PCA(latents, patients_names, save_fname = None):
 
     categories = map_categories(patients_names)
     map_colors = lambda s:  COLORS_PALETTE["neon_red"] if s == "AF" else  COLORS_PALETTE["neon_green"]
@@ -304,11 +304,16 @@ def plot_PCA(latents, patients_names):
     ]
 
     plt.legend(handles=legend_elements, loc='upper left')
-    plt.show()
-        
-    pass
 
-def plot_tSNE(latents, patients_names, reduce_dim_first = False, learning_rate = 100, max_iter = 1000, perplexity = 15):
+    if save_fname is None:
+        plt.show()
+    else:
+        plt.savefig(save_fname, dpi=300, bbox_inches='tight') 
+        plt.close()        
+
+    return
+
+def plot_tSNE(latents, patients_names, reduce_dim_first = False, learning_rate = 100, max_iter = 1000, perplexity = 15, save_fname = None):
 
     categories = map_categories(patients_names)
     map_colors = lambda s:  COLORS_PALETTE["neon_red"] if s == "AF" else  COLORS_PALETTE["neon_green"]
@@ -342,11 +347,16 @@ def plot_tSNE(latents, patients_names, reduce_dim_first = False, learning_rate =
     ]
 
     plt.legend(handles=legend_elements, loc='upper left')
-    plt.show()
-        
-    pass
 
-def plot_UMAP(latents, patients_names, n_neighbors = 15, min_dist = 0.05):
+    if save_fname is None:
+        plt.show()
+    else:
+        plt.savefig(save_fname, dpi=300, bbox_inches='tight') 
+        plt.close()     
+        
+    return
+
+def plot_UMAP(latents, patients_names, n_neighbors = 15, min_dist = 0.05, save_fname = None):
 
     categories = map_categories(patients_names)
     map_colors = lambda s:  COLORS_PALETTE["neon_red"] if s == "AF" else  COLORS_PALETTE["neon_green"]
@@ -379,7 +389,12 @@ def plot_UMAP(latents, patients_names, n_neighbors = 15, min_dist = 0.05):
     ]
 
     plt.legend(handles=legend_elements, loc='upper left')
-    plt.show()
+
+    if save_fname is None:
+        plt.show()
+    else:
+        plt.savefig(save_fname, dpi=300, bbox_inches='tight') 
+        plt.close()     
 
     return
 
@@ -396,38 +411,76 @@ if __name__ == "__main__":
 
     # visually_check_sdfs_distribution(PATIENTS_NPY_DATA_DIR)
     
-    PATIENT_MESHES_DIR = Path("/home/davidenava_linux/DATASETS/AtrialGeometries")
+    # PATIENT_MESHES_DIR = Path("/home/davidenava_linux/DATASETS/AtrialGeometries")
 
-    # visually_check_all_surfaces(PATIENT_MESHES_DIR)
+    # # visually_check_all_surfaces(PATIENT_MESHES_DIR)
 
-    fname = "/home/davidenava_linux/AtriaProject/deepcsdf-atria/results/fitted_latents/latent_codes_89_patients_version_114-codereg=0.000020-epochs=250.npz"
+    
+    LATENTS_DIR = Path("/home/davidenava_linux/AtriaProject/deepcsdf-atria/results/fitted_latents")
+    # # latents_name = "latent_codes_89_patients_version_114-codereg=0.000200-epochs=250"
+    latents_name = "latent_codes_109_patients_version_89-codereg=0.000002-epochs=250"
+
+    fname = LATENTS_DIR / str(latents_name + ".npz")
     latent_dict = np.load(fname)
 
     patients_names = []
     latent_codes = []
     for name, code in latent_dict.items():
-        patients_names.append(name)
-        latent_codes.append(code)
+        if name not in ["AF001", "AF069", "LEU_NORM_F004"]:
+            patients_names.append(name)
+            latent_codes.append(code)
 
     latent_codes = np.array(latent_codes)
 
-    # # find "best" learning rate
-    # for lr in [50,80,100,150,180]:
-    #     tsne = TSNE(n_components=2, perplexity=15, learning_rate=lr, max_iter=1000, random_state=42)
+    IMAGES_DIR = Path("/home/davidenava_linux/AtriaProject/deepcsdf-atria/results/images")
 
-    #     # Fit and transform
-    #     latents_embedded = tsne.fit_transform(latent_codes)
+    save_fname = IMAGES_DIR / f"PCA-{latents_name}.svg"
+    plot_PCA(latent_codes, patients_names, save_fname)
 
-    #     T = trustworthiness(
-    #         latent_codes,      # original high-D data (n_samples, n_features)
-    #         latents_embedded,      # embedding (n_samples, n_components)
-    #         n_neighbors=10
-    #     )
+    save_fname = IMAGES_DIR / f"tSNE-{latents_name}.svg"
+    plot_tSNE(latent_codes, patients_names, learning_rate=80, save_fname = save_fname)
 
-    #     print(f"lr = {lr} --> T = {T}")
+    save_fname = IMAGES_DIR / f"UMAP-{latents_name}.svg"
+    plot_UMAP(latent_codes, patients_names, save_fname = save_fname)
 
-    plot_PCA(latent_codes, patients_names)
 
-    plot_tSNE(latent_codes, patients_names)
 
-    plot_UMAP(latent_codes, patients_names)
+
+    # # # # find "best" learning rate
+    # # for lr in [50,80,100,150]:
+    # #     tsne = TSNE(n_components=2, perplexity=15, learning_rate=lr, max_iter=1000, random_state=42)
+
+    # #     # Fit and transform
+    # #     latents_embedded = tsne.fit_transform(latent_codes)
+
+    # #     T = trustworthiness(
+    # #         latent_codes,      # original high-D data (n_samples, n_features)
+    # #         latents_embedded,      # embedding (n_samples, n_components)
+    # #         n_neighbors=15
+    # #     )
+
+    # #     print(f"lr = {lr} --> T = {T}")
+
+    # # for min_dist in [0.001, 0.05, 0.1, 0.5]:
+    # #     umap_embedder = umap.UMAP(
+    # #         n_neighbors=15,  # controls local vs global
+    # #         min_dist=min_dist,    # tightness of clusters
+    # #         n_components=2,  # output dims
+    # #         random_state=42  # reproducibility
+    # #     )
+
+    # #     # Fit & transform data
+    # #     latents_embedded = umap_embedder.fit_transform(latent_codes)  # X = your high-dimensional data
+
+    # #     T = trustworthiness(
+    # #         latent_codes,      # original high-D data (n_samples, n_features)
+    # #         latents_embedded,      # embedding (n_samples, n_components)
+    # #         n_neighbors=15
+    # #     )
+
+    # #     print(f"min_dist = {min_dist} --> T = {T}")
+
+
+
+
+
