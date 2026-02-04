@@ -26,56 +26,42 @@ from config import (
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-
-
+# ======================== #
+# Helpers
+# ======================== #
 def get_dataset_patients_names(data: dict):
     patient_names = []
 
-    # file names are <patient_name>-<suffix>.npy where suffix isn't supposed to have any - in it
+    # file names are <patient_name>-<suffix>.npy
     for fullfname in data:
         patient_name = fullfname.split("-")[0]
         patient_names.append(patient_name)
 
     return patient_names
 
-# def compute_chd_dists(mesh_orig, mesh_organ):
-
-#     samples_orig = make_trimesh_from_pv(mesh_orig).sample(count=50000)
-#     samples_rec = make_trimesh_from_pv(mesh_organ).sample(count=50000)
-
-#     chd = chamfer_distance_L2(samples_orig, samples_rec)
-
-#     # scale by some characteristic scale
-#     xmin, xmax, ymin, ymax, zmin, zmax = mesh_orig.bounds
-#     pmin = np.array([xmin, ymin, zmin])
-#     pmax = np.array([xmax, ymax, zmax])
-#     s_bbox = np.linalg.norm(pmax - pmin)
-
-#     return chd / s_bbox
-
 
 # ======================== #
 # RUN TESTS
 # ======================== #
 def run(
-        experiment_name,
-        version,
-        override_with_dataset = None,
-        which_shapes = "train",
-        subsample_scenes_for_fit = True,
-        num_samp_per_scene_for_fit = 2048,
-        hparams_file = None,
-        num_epochs_fit_latent = 250,
-        latent_reg_factor = 2e-3,
-        lr_fit_latent = 5e-3,
-        reconstruct_surface = True,
-        reconstruct_from = "all",
-        show_reconstruction_images = True,
-        save_reconstruction_images = False,
-        save_reconstructed_mesh = False,
-        compute_metrics = True,
-        save_latent_codes = True
-    ):
+    experiment_name,
+    version,
+    override_with_dataset = None,
+    which_shapes = "train",
+    subsample_scenes_for_fit = True,
+    num_samp_per_scene_for_fit = 2048,
+    hparams_file = None,
+    num_epochs_fit_latent = 250,
+    latent_reg_factor = 2e-3,
+    lr_fit_latent = 5e-3,
+    reconstruct_surface = True,
+    reconstruct_from = "all",
+    show_reconstruction_images = True,
+    save_reconstruction_images = False,
+    save_reconstructed_mesh = False,
+    compute_metrics = True,
+    save_latent_codes = True
+):
 
     logger.info(f"Experiment: {experiment_name}")
 
@@ -91,7 +77,7 @@ def run(
     if override_with_dataset is not None:
         specs["TestSplit"] = override_with_dataset
 
-    logger.info(f"Loaded specs from version: {version_dir.name}")
+    logger.info(f"Loaded specs from: {version_dir.name}")
 
     # rebuild trained decoder and model: I do it with specs that contain everything alerady, no need for checkpoints now
     decoder_params = specs["Network_specs"]
@@ -109,16 +95,16 @@ def run(
         state_dict = torch.load(decoder_weights_path)
         decoder.load_state_dict(state_dict)
     else:
-        logger.warning(f"Decoder weights not found for {version}")
+        logger.warning(f"Decoder weights .pth file not found in {version_dir}")
         return
 
     decoder.to(DEVICE)
 
-    model = DeepSDF(decoder=decoder, specs=specs)
+    # this I just need to build automatically the same loss function I used in training, could be dropped and built here explicitelys
+    model = DeepSDF(decoder=decoder, specs=specs) 
 
     # dataset
-    # optionally subsample total samples PER SCENE to use 
-    # --> the dataloader returns already scenes with specs["num_samp_per_scene"] points !!!
+    # optionally set num of subsamples to use --> the dataloader will return scenes with specs["num_samp_per_scene"] points !!!
     if subsample_scenes_for_fit:
         specs["num_samp_per_scene"] = num_samp_per_scene_for_fit
 
@@ -192,7 +178,7 @@ def run(
         
         loss_fn = model.loss_fn
 
-        code_reg_lambda = latent_reg_factor
+        code_reg_lambda = latent_reg_factor # TODO: optimize to match noise of input
 
         num_epochs = num_epochs_fit_latent
 
@@ -226,11 +212,10 @@ def run(
             # mahalanobis to train codes distribution
 
             # vanilla loss : same loss as in training
-            reg_loss = torch.sum( torch.linalg.norm(latent) ) * code_reg_lambda
-
+            reg_loss = torch.linalg.norm(latent) ** 2 
             chunk_loss = loss_fn(sdf_pred, sdf_gt) / num_samp_per_scene
 
-            loss = chunk_loss + reg_loss
+            loss = chunk_loss + code_reg_lambda * reg_loss
 
             loss.backward()
 
@@ -239,8 +224,9 @@ def run(
             chunk_losses.append(chunk_loss.cpu().detach().numpy())
             reg_losses.append(reg_loss.cpu().detach().numpy())
             losses.append(loss.cpu().detach().numpy())
-
+    
         latent.requires_grad = False
+
 
         if save_latent_codes:
             latent_codes[patient_name] = latent.cpu().numpy().ravel()  # keep fitted latent code, keep latent on gpu for reconstruction
@@ -312,7 +298,9 @@ def run(
 
                 thresholds = {}
                 
-                for organ in ["epicardium", "la_endo", "ra_endo"]:
+                organs_to_process = ["epicardium", "la_endo", "ra_endo"]
+
+                for i,organ in enumerate(organs_to_process):
 
                     logger.info(f"Processing {organ} surface ")
                         
@@ -324,8 +312,11 @@ def run(
                     try:
                         mesh_reconstructed = isosurface_from_sdf( x, y, z, sdf_pred=sdfs_pred[organ], level = threshold, box_lim = box_lim )
                     except:
-                        logger.warning( f"Version {version}: skipping isosurface extraction: not found for current isovalue")
-                        return
+                        logger.warning( f"Version {version}: skipping {organ} isosurface extraction: not found for current isovalue")
+                        if i == len(organs_to_process)-1:
+                            return
+                        else:
+                            continue
 
                     if save_reconstructed_mesh:
                         logger.info("Saving vtp file")
@@ -484,7 +475,7 @@ if __name__ == "__main__":
 
     exp_name = args.experiment_name
     vers = args.version
-    test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "test/AF001-LEU_NORM_F004.json" # "train/data_fnames_train-20patients.json"
+    test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "test/AF009_P2R-LEU_NORM_F004.json" # "train/data_fnames_train-20patients.json"
     mode = args.mode 
     # num_epochs_fit_latent = 250
     # latent_reg_factor = 2e-4

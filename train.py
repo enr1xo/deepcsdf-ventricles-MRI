@@ -113,7 +113,7 @@ class SaveDecoderCallback(pl.Callback):
 # ============================== #
 # TRAINING
 # ============================== #
-EXPERIMENT_NAME = "deepsdfatria_training_local"
+EXPERIMENT_NAME = "deepsdf_atria_training_local"
 
 def train(specs: dict, show_progress = False):
 
@@ -125,8 +125,6 @@ def train(specs: dict, show_progress = False):
     datamodule.setup("fit")  
 
     NumScenes = datamodule.num_fit_scenes 
-
-    print(f"Loaded {NumScenes} scenes in total.")
 
     # region MODEL
     decoder = Decoder(**specs["Network_specs"])
@@ -205,7 +203,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--experiment_name", "-e", type=str, default = None,
-                        help="Default is deepsdfatria_training_local, and becomes the directory " \
+                        help="Default is deepsdf_atria_training_local, and becomes the directory " \
                         "name in which checkpoints and logs are saved, under version_x folder for each run."
     )
     parser.add_argument("--specs_file_path", "-s", type=str, default = SPECS_FILE)

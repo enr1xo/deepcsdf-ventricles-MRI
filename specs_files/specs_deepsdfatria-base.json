@@ -27,11 +27,11 @@
     "lr_latents": 0.005,
     "num_samp_per_scene": 4096,
     "sampling_scene_method": "random",
-    "balance_pos_neg" : false,
+    "balance_pos_neg" : true,
     "batch_size": 32,
     "scale_spatial_inputs_by": 100,
     "enforce_minmax": true,
-    "clamp_distance": 0.2,
+    "clamp_distance": 0.15,
     "use_loss": "SmoothL1",
     "use_lipreg_loss": false,
     "lipschitz_alpha": 2e-06,
@@ -40,8 +40,7 @@
     "lr_weights_final": 1e-05,
     "lr_latents_final": 5e-05,
     "lr_decay_time_max": 100000,
-    "log_every_n_epochs" : 100,
-    "checkpoint_every_n_epochs": 20001,
-    "resume_training_from_version": "-",
-    "reference_patient": "AF069"
+    "log_every_n_epochs" : 250,
+    "checkpoint_every_n_epochs": 10001,
+    "resume_training_from_version": "-"
 }
