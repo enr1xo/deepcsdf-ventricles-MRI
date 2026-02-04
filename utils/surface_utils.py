@@ -206,26 +206,33 @@ def compute_signed_distance_libigl(mesh: pv.PolyData, query_points):
     if not check_watertight(mesh):
         logger.error("Going to compute SDF on a mesh that doesn't result watertight: found boundary edges. This may be small numerical errors introduced by previously scaling the meshes.")
 
-    vertices = mesh.points
-    faces = mesh.faces.reshape(-1, 4)[:, 1:4]
-    elements = faces.astype(np.int32)
+    # # automatic inside-outisde orientation
+    # # compute_normals can reorder the vertices in the triangles of the mesh so that all face normals are consistently oriented.
+    # # still doesnìt seem to work
+    # mesh.compute_normals(auto_orient_normals=True)
 
-    # TODO: automatic inside-outisde orientation, instead of manually flipping sign if it's opposite ...
-    # mesh.compute_normals(
-    #     auto_orient_normals=True
-    # )
+    vertices = mesh.points
+    faces = mesh.faces.reshape(-1, 4)[:, 1:4].astype(np.int32)
 
     sq_d, _, _ = igl.point_mesh_squared_distance(
         P = query_points,
         V = vertices,
-        Ele = elements
+        Ele = faces
     )
 
-    w = igl.fast_winding_number(V = vertices, F = elements, Q = query_points.astype(np.float64))
+    # assumes the mesh is consistently oriented !!!
+    w = igl.fast_winding_number(V = vertices, F = faces, Q = query_points.astype(np.float64))
 
     sdf = np.sqrt(sq_d) * np.sign(w - 0.5)
 
-    return sdf * -1
+    # heuristic: pick a point I know it's outside, flip sign if needed
+    bbox_max = mesh.bounds[1::2]  # xmax, ymax, zmax
+    outside_point = np.array([bbox_max[0] + 100.0, bbox_max[1] + 100.0, bbox_max[2] + 100.0])[None, :]  # shape (1,3)
+    w_out = igl.fast_winding_number(V = vertices, F = faces, Q = outside_point)[0]
+    if np.sign(w_out - 0.5) < 0:
+        sdf *= -1
+
+    return sdf
 
 
 
