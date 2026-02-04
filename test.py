@@ -48,8 +48,7 @@ def run(
     version,
     override_with_dataset = None,
     which_shapes = "train",
-    subsample_scenes_for_fit = True,
-    num_samp_per_scene_for_fit = 2048,
+    num_samp_per_scene_for_fit = None,
     hparams_file = None,
     num_epochs_fit_latent = 250,
     latent_reg_factor = 2e-3,
@@ -105,7 +104,7 @@ def run(
 
     # dataset
     # optionally set num of subsamples to use --> the dataloader will return scenes with specs["num_samp_per_scene"] points !!!
-    if subsample_scenes_for_fit:
+    if num_samp_per_scene_for_fit is not None:
         specs["num_samp_per_scene"] = num_samp_per_scene_for_fit
 
     logger.warning(f"Will use {specs['num_samp_per_scene']} samples per scene to fit latents")
@@ -133,7 +132,7 @@ def run(
 
     latent_codes = {}
         
-    for shape_idx in range( len(dataset) ):
+    for shape_idx in range( len(dataset) ): # --> the dataloader already returns scenes with specs["num_samp_per_scene"] points each. I call it here only ONE time per shape, so latents are effectively fitted using only these points
 
         patient_name = patient_names[shape_idx] # careful
 
@@ -152,7 +151,7 @@ def run(
 
         xyz_gt = data["coords"]
         sdf_gt = data["sdf"]
-        
+
         if reconstruct_from == "la":
             near_la = np.where(np.abs(sdf_gt[:,1]) <=  0.005)
             xyz_gt = xyz_gt[near_la]
@@ -335,22 +334,21 @@ def run(
                     #  --> remove decoder scale from the reconstructed mesh
                     mesh_reconstructed.points /= decoder_input_scale 
 
-                    # # bring to original range
-                    # scale = mesh_gt.field_data["scale-tooriginalrange"]
-                    # mesh_gt.points *= scale
-                    # mesh_reconstructed.points *= scale
+                    # bring to original range
+                    scale = mesh_gt.field_data["scale-tooriginalrange"]
+                    mesh_gt.points *= scale
+                    mesh_reconstructed.points *= scale
 
                     if show_reconstruction_images or save_reconstruction_images:
                         # copy meshes so I don't modify originals, less of a pain to keep track of
                         mesh_gt_show = mesh_gt.copy()
                         mesh_reconstructed_show = mesh_reconstructed.copy()
 
-                        # ==== compute sdf of points on predicted surface to the original surface ==== #               
-                        # compute (signed!) distances of ground truth points (on the true surface) from the nearest spot on the predicted mesh surface
+                        # ==== compute (signed!) distances of points on the predicted surface from the nearest spot on the original surface ==== #               
                         implicit_distance = vtkImplicitPolyDataDistance()
                         implicit_distance.SetInput(mesh_gt_show)
                         points_pred = mesh_reconstructed_show.points
-                        signed_distances = np.array([implicit_distance.EvaluateFunction(p) for p in points_pred])
+                        signed_distances = np.array([implicit_distance.EvaluateFunction(p) for p in points_pred]) # relies on normal orientation, less accurate maybe than libigl, but I'm using it just for plots ...
                         mesh_reconstructed_show.point_data['error'] = signed_distances # save as point data in the predicted mesh
 
                         last_cam_pos = None
@@ -359,7 +357,7 @@ def run(
                                 mesh_gt_show, mesh_reconstructed_show, patient_name, signed_distances, off_screen = False
                                 )
                             plotter.show(interactive=True)
-                            last_cam_pos = plotter.camera_position # this used if interactive AND saving images later
+                            last_cam_pos = plotter.camera_position
                             plotter.close()
 
                         if save_reconstruction_images:
@@ -462,7 +460,7 @@ if __name__ == "__main__":
     parser.add_argument("--override_with_dataset", "-od", type=str, default=None)
     parser.add_argument("--mode", "-m", type=int, default=1, choices=[1, 2])
     parser.add_argument("--reconstruct_from", "-r", type=str, default="all", choices=["la","ra","all"])
-    # parser.add_argument("--num_samp_per_scene_for_fit", "-nsamp", type=int)
+    parser.add_argument("--num_samp_per_scene_for_fit", "-nsamp", type=int, default=None)
     parser.add_argument("--num_epochs", "-N", type=int, default=250)
     parser.add_argument("--latent_reg_factor", "-lreg", type=float, default=2e-4)
     parser.add_argument("--lr", type=float, default=0.005)
@@ -485,6 +483,7 @@ if __name__ == "__main__":
         "experiment_name" : exp_name,
         "version" : vers,
         "override_with_dataset" : test_datafnames,
+        "num_samp_per_scene_for_fit" : args.num_samp_per_scene_for_fit,
         "num_epochs_fit_latent" : args.num_epochs,
         "latent_reg_factor" : args.latent_reg_factor,
         "lr_fit_latent" : args.lr,
