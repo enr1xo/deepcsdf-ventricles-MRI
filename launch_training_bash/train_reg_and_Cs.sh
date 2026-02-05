@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ---- Parameters ----
-EXPERIMENT=training_sweeps/LipAndAct
+EXPERIMENT=training_sweeps/RegLambdaAndCs
 SPECS_BASE=specs_files/specs_deepsdfatria-base.json
 PYTHON_SCRIPT=train.py
 SLEEP_INTERVAL=120       # seconds
 SAFETY_MARGIN_MB=500   # safety
 MEM_REQUIRED_MB=1500    
-MAX_PARALLEL=16 
+MAX_PARALLEL=20 
 LOG_DIR=experiments/logs-temp
 # --------------------
 
@@ -37,14 +37,11 @@ declare -a JOB_PIDS=()
 
 
 # ---- Hyperparameters to sweep ----
-LIPSCHITZ_LAYERS=(
-  '[-1]'
-)
+CODE_REG_LAMBDAS=(1e-2 1e-3 1e-4 1e-5 1e-6)
+Cs=(1 10 100 1000)
 
-ACTS=('Softplus' 'GELU' 'Tanh' 'SiLU')
-
-for lip in "${LIPSCHITZ_LAYERS[@]}"; do
-    for act in "${ACTS[@]}"; do
+for codereg in "${CODE_REG_LAMBDAS[@]}"; do
+    for C in "${Cs[@]}"; do
         
         # $() --> parentheses open a subshell, and stdout is captured to a variable,
         # cat alone reads from stdin and outputs to stdout
@@ -52,10 +49,8 @@ for lip in "${LIPSCHITZ_LAYERS[@]}"; do
         # so cat <<SOMETHING reads everything from stdin untile the next SOMETHING and sends it to stdout
         override_specs=$(cat <<BIPBOP
 {
-"Network_specs": {
-"lipschitz_layers": $lip,
-"activation" : "$act"
-}
+"code_reg_lambda" : $codereg,
+"scale_spatial_inputs_by" : $C
 }
 BIPBOP
 )
@@ -71,9 +66,9 @@ BIPBOP
 
             if (( free > MEM_REQUIRED_MB + SAFETY_MARGIN_MB && running < MAX_PARALLEL )); then
 
-                echo "Free GPU memory: ${free}MB | Running jobs: ${running} | Launching lip = ${lip} and act = ${act} ..."
+                echo "Free GPU memory: ${free}MB | Running jobs: ${running} | Launching code reg = ${codereg} and scale = ${C} ..."
 
-                logfile="$LOG_DIR/lip${lip}_act${act}.log"
+                logfile="$LOG_DIR/Reg${codereg}_Cs${C}.log"
 
                 # rename the process to show in nvidia-smi:  exec -a "name" python ...
                 python "$PYTHON_SCRIPT" \
@@ -105,7 +100,8 @@ for logfile in "$LOG_DIR"/*.log; do
     [[ -n "$version" ]] && VERSIONS+=("$version")
 done
 
-EMAIL_BODY=$'\n\nVersions:\n'
+EMAIL_BODY="Experiment: $EXPERIMENT"
+EMAIL_BODY+=$'\n\nVersions:\n'
 for v in "${VERSIONS[@]}"; do
     EMAIL_BODY+=$" - $v"
     EMAIL_BODY+=$'\n'
