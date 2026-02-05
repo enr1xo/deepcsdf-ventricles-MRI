@@ -7,7 +7,6 @@ import json
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-from loguru import logger
 from pathlib import Path
 from deel.torchlip.modules.linear import SpectralLinear
 import numpy as np
@@ -23,7 +22,7 @@ act_fn = {
 
 class Decoder(nn.Module):
 
-    def __init__(self, **specs): # was **specs
+    def __init__(self, **specs): # unpacks given keyword args into specs dictionary, so I can use .get() and have default instead of errors if the key isn't there
         super().__init__()
 
         self.latent_size = specs.get("latent_size", 64)
@@ -125,12 +124,12 @@ class Decoder(nn.Module):
 
 class DeepSDF(pl.LightningModule):
 
-    def __init__(self, decoder, specs):
+    def __init__(self, decoder : Decoder, specs : dict):
         super().__init__()
 
         self.specs = specs
         
-        self.decoder: Decoder = decoder
+        self.decoder = decoder
 
         self.lr_weights = specs.get("lr_weights", 0.001)
         self.lr_latents = specs.get("lr_latents", 0.0005)
@@ -145,6 +144,12 @@ class DeepSDF(pl.LightningModule):
 
         self.lat_vecs = {"trainable": nn.Embedding}
 
+        self.code_reg_lambda = specs.get("code_reg_lambda", 1e-4)
+
+        self.anneal_reg_loss = specs.get("anneal_reg_loss", False)
+
+        self.anneal_warmup_epochs = specs.get("code_reg_anneal_warmup_epochs", 1000)
+
         self.use_loss = specs.get("use_loss", "SmoothL1")
 
         if self.use_loss == "L1":
@@ -154,17 +159,15 @@ class DeepSDF(pl.LightningModule):
         elif self.use_loss == "SmoothL1":
             self.loss_fn = torch.nn.SmoothL1Loss(reduction="sum") 
 
-        self.code_reg_lambda = specs.get("code_reg_lambda", 1e-2)
+        self.use_lipreg_loss = specs.get("use_lipreg_loss", False)
 
-        self.use_lipreg_loss = specs.get("use_lipreg_loss", True)
+        self.lipschitz_alpha = specs.get("lipschitz_alpha", 2e-6)
 
         self.enforce_minmax = specs.get("enforce_minmax", False)
 
         self.clamp_distance = specs.get("clamp_distance", 0.1)
 
         self.Cs = specs.get("scale_spatial_inputs_by", 100)
-
-        self.lipschitz_alpha = specs.get("lipschitz_alpha", 2e-6)
 
         self.log_every_n_epochs = specs.get("log_every_n_epochs", 1)
 
@@ -198,26 +201,30 @@ class DeepSDF(pl.LightningModule):
                     {
                         "params": self.decoder.parameters(),
                         "lr": self.lr_weights,
-                        # "lr": self.lr_schedules[0].get_learning_rate(0),
                     },
                     {
                         "params": self.lat_vecs["trainable"].parameters(),
-                        "lr": self.lr_latents #0.0005,  # was 0.0005
-                        # "lr": self.lr_schedules[1].get_learning_rate(0),
+                        "lr": self.lr_latents 
                     },
                 ]
             )
             if self.use_lr_scheduler:
                 T_max =  self.lr_decay_T_max
 
-                def cosine_lambda(epoch, base_lr, eta_min):
-                    return eta_min / base_lr + 0.5 * (1 - eta_min / base_lr) * (1 + math.cos(math.pi * epoch / T_max))
+                # maybe explore OneCycleR schedule: the LR first increases from a low start (lr_start) 
+                # to a maximum (max_lr) over pct_start fraction of total steps 
+                # Then decreases down to a final LR (lr_final) over the remaining steps (careful ! STEPS, not epochs !!)
+
+                # CUSTOM SCHEDULER USING LambdaLR scheduler, fully custom
+                def linear_lambda(epoch, lr_start, lr_final):
+                    return max(lr_final / lr_start, 1.0 - (epoch / T_max) * (1.0 - lr_final / lr_start))
 
                 scheduler = torch.optim.lr_scheduler.LambdaLR(
                     optimizer,
+                    # lr_lambda function does not return the absolute LR, it returns a multiplicative factor for it
                     lr_lambda=[
-                        lambda epoch: cosine_lambda(epoch, self.lr_weights, self.lr_weights_final),
-                        lambda epoch: cosine_lambda(epoch, self.lr_latents, self.lr_latents_final)
+                        lambda epoch: linear_lambda(epoch, self.lr_weights, self.lr_weights_final),
+                        lambda epoch: linear_lambda(epoch, self.lr_latents, self.lr_latents_final)
                     ]
                 )
 
@@ -232,51 +239,6 @@ class DeepSDF(pl.LightningModule):
 
         return optimizer
 
-    # def configure_optimizers_new(self):
-    #     if "trainable" in self.lat_vecs.keys():
-    #         optimizer = torch.optim.Adam(
-    #             [
-    #                 {
-    #                     "params": self.decoder.parameters(),
-    #                     "lr": self.lr_weights,
-    #                 },
-    #                 {
-    #                     "params": self.lat_vecs["trainable"].parameters(),
-    #                     "lr": self.lr_latents 
-    #                 },
-    #             ]
-    #         )
-    #         if self.use_lr_scheduler:
-    #             T_max =  self.lr_decay_T_max
-
-    #             # maybe explore OneCycleR schedule: the LR first increases from a low start (lr_start) 
-    #             # to a maximum (max_lr) over pct_start fraction of total steps 
-    #             # Then decreases down to a final LR (lr_final) over the remaining steps (careful ! STEPS, not epochs !!)
-
-    #             # CUSTOM SCHEDULER USING LambdaLR scheduler, fully custom
-    #             def linear_lambda(epoch, lr_start, lr_final):
-    #                 return max(lr_final / lr_start, 1.0 - (epoch / T_max) * (1.0 - lr_final / lr_start))
-
-    #             scheduler = torch.optim.lr_scheduler.LambdaLR(
-    #                 optimizer,
-    #                 # lr_lambda function does not return the absolute LR, it returns a multiplicative factor for it
-    #                 lr_lambda=[
-    #                     lambda epoch: linear_lambda(epoch, self.lr_weights, self.lr_weights_final),
-    #                     lambda epoch: linear_lambda(epoch, self.lr_latents, self.lr_latents_final)
-    #                 ]
-    #             )
-
-    #             return {
-    #                 "optimizer": optimizer,
-    #                 "lr_scheduler": {
-    #                     "scheduler": scheduler,
-    #                     "interval": "epoch",
-    #                     "frequency": 1
-    #                 }
-    #             }
-
-    #     return optimizer
-    
     def anneal_latent_reg(self):
         if "trainable" in self.lat_vecs.keys():
             # linear annealing for now self.current_epoch, self.anneal_warmup_epochs
@@ -295,6 +257,13 @@ class DeepSDF(pl.LightningModule):
             json_path = Path(self.logger.log_dir) / "hparams.json"
             with open(json_path, "w") as f:
                 json.dump(self.specs, f, indent=4)
+
+    def on_train_end(self):
+        # for now, save as numpy data
+        if self.logger is not None:
+            npy_path = Path(self.logger.log_dir) / "latents.npy"
+            embeddings = self.lat_vecs["trainable"].weight.data.cpu().numpy()
+            np.save(npy_path, embeddings)
 
     def training_step(self, batch, batch_idx):
 
@@ -320,7 +289,7 @@ class DeepSDF(pl.LightningModule):
 
         indices = indices.unsqueeze(-1).repeat(1, num_samp_per_scene).view(-1)
 
-        batch_vecs = self.lat_vecs["trainable"](indices)
+        batch_vecs = self.lat_vecs["trainable"](indices) # repeat latents for input
 
         input_ = torch.cat([batch_vecs, xyz], dim=1)
 
