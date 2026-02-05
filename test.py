@@ -39,6 +39,83 @@ def get_dataset_patients_names(data: dict):
 
     return patient_names
 
+def find_pointcloud_noise(
+        decoder: Decoder,
+        model: DeepSDF,
+        xyz_gt,
+        sdf_gt,
+        num_epochs_fit_latent,
+        lr_fit_latent,
+        max_iter = 10
+    ):
+    """
+    Find noise of input point cloud as in ShapeOfMyHeart, to define regularization strength in reconstruction loss
+    """
+
+    latent_size = decoder.latent_size
+    mean_code = torch.zeros(latent_size, device=DEVICE)  
+    latent = mean_code
+
+    latent.requires_grad = True
+
+    loss_fn = model.loss_fn
+
+    num_epochs = num_epochs_fit_latent
+
+    optimizer = torch.optim.Adam(params=[latent], lr=lr_fit_latent)
+    
+    num_samp_per_scene = sdf_gt.shape[0]
+
+    code_reg_lambda = 2e-05
+
+    epsilons = [0.0]
+
+    # find variance of the noise iteratively
+    for it in range(max_iter):
+
+        mean_code = torch.zeros(latent_size, device=DEVICE)  
+        latent = mean_code
+
+        latent.requires_grad = True
+
+        optimizer = torch.optim.Adam(params=[latent], lr=lr_fit_latent)
+
+        # reconstruct
+        for i in tqdm(range(num_epochs)):
+            
+            decoder.eval()
+            
+            optimizer.zero_grad()
+
+            batch_vecs = latent.expand(num_samp_per_scene, -1)
+            
+            input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
+
+            sdf_pred = decoder(input_)
+            if model.enforce_minmax:
+                sdf_pred = torch.clamp(sdf_pred, min = -model.clamp_distance, max = model.clamp_distance)
+        
+            # vanilla loss : same loss as in training
+            reg_loss = torch.linalg.norm(latent) ** 2 
+            recon_loss = loss_fn(sdf_pred, sdf_gt) 
+            chunk_loss = recon_loss / num_samp_per_scene
+
+            loss = chunk_loss + 100 * epsilon * code_reg_lambda * reg_loss
+
+            loss.backward()
+
+            optimizer.step()
+        
+            if i == num_epochs - 1: # last epoch
+                epsilon = recon_loss / (num_samp_per_scene - 1)
+                epsilons.append(epsilon)
+
+        # stopping criterion   ...
+    
+    for i,ep in enumerate(epsilons):
+        print(f"eps_{i} = ", ep)
+
+    return epsilon
 
 # ======================== #
 # RUN TESTS
@@ -58,7 +135,9 @@ def run(
     show_reconstruction_images = True,
     save_reconstruction_images = False,
     save_reconstructed_mesh = False,
-    compute_metrics = True,
+    compute_chamfer = False,
+    compute_lddmm = False,
+    compute_haussdorff = False,
     save_latent_codes = True
 ):
 
@@ -167,12 +246,14 @@ def run(
         sdf_gt = sdf_gt.to(DEVICE)
         xyz = xyz_gt.to(DEVICE)
 
-        # starting point for optimization (same I use initializing latent codes in training): zero
+        # starting point for optimization: zero
         # I could also save initial vectors when training and start with empirical mean and covariance,
         # sampling a latent using MultivariateNormal and rsample()
+        # TODO: add option to start from somewhere else (from mean of loaded latents, random sample, ...)
         latent_size = decoder.latent_size
         mean_code = torch.zeros(latent_size, device=DEVICE)  
         latent = mean_code
+
         latent.requires_grad = True
         
         loss_fn = model.loss_fn
@@ -371,30 +452,31 @@ def run(
                             plotter.screenshot(save_fname, transparent_background=True)
                             pv.close_all()
 
-                    if compute_metrics: 
+                    if compute_chamfer or compute_haussdorff or compute_lddmm: 
                         # ======= COMPUTE METRICS ======= # 
                         # use meshes in their ORIGINAL micrometers scale
                         logger.info("Remeshing and sampling surface")
                         mesh_gt = remesh(mesh_gt, n_points=50000)
                         mesh_reconstructed = remesh(mesh_reconstructed, n_points=50000)
 
-                        samples_orig = make_trimesh_from_pv(mesh_gt).sample(count=50000)
-                        samples_rec = make_trimesh_from_pv(mesh_reconstructed).sample(count=50000)
+                        if compute_chamfer or compute_haussdorff:
+                            samples_orig = make_trimesh_from_pv(mesh_gt).sample(count=50000)
+                            samples_rec = make_trimesh_from_pv(mesh_reconstructed).sample(count=50000)
 
-                        logger.info(f"Computing chamfer")
-                        chamfer_dists[patient_name][organ] = chamfer_distance_L2(samples_orig, samples_rec)
+                            if compute_chamfer:
+                                logger.info(f"Computing chamfer")
+                                chamfer_dists[patient_name][organ] = chamfer_distance_L2(samples_orig, samples_rec)
+                        
+                            if compute_haussdorff:
+                                logger.info(f"Computing Haussdorff")
+                                haussdorff_dists[patient_name][organ] = haussdorff(samples_orig, samples_rec)
 
-                        logger.info(f"Computing Haussdorff")
-                        haussdorff_dists[patient_name][organ] = haussdorff(samples_orig, samples_rec)
+                        if compute_lddmm:
+                            logger.info(f"Computing LDDMM")
+                            LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False)
 
-                        logger.info(f"Computing LDDMM")
-                        LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False)
-
-    if compute_metrics:
-        logger.info("Saving metrics data to csv")
-
+    if compute_chamfer:
         exp_name = experiment_name.split("/")[-1]
-
         # chamfer
         rows = []
         for name, organs in chamfer_dists.items():
@@ -409,6 +491,7 @@ def run(
         df = pd.DataFrame(rows)
         df.to_parquet(METRICS_DIR / f"{version}-{exp_name}-chamfer-{which_shapes}.parquet", index=False)
 
+    if compute_haussdorff:
         # haussdorff
         rows = []
         for name, organs in chamfer_dists.items():
@@ -423,6 +506,7 @@ def run(
         df = pd.DataFrame(rows)
         df.to_parquet(METRICS_DIR / f"{version}-{exp_name}-haussdorff-{which_shapes}.parquet", index=False)
 
+    if compute_lddmm:
         # LDDMM
         rows = []
         for name, organs in LDDMM_losses.items():
@@ -468,7 +552,9 @@ if __name__ == "__main__":
     parser.add_argument("--interactive_images", "-i", action="store_true")
     parser.add_argument("--save_images", "-si", action="store_true")
     parser.add_argument("--save_reconstructed_meshes", "-sm", action="store_true")
-    parser.add_argument("--compute_metrics", "-cm", action="store_true")
+    parser.add_argument("--compute_chamfer", "-chd", action="store_true")
+    parser.add_argument("--compute_lddmm", "-lddmm", action="store_true")
+    parser.add_argument("--compute_haussdorff", "-hauss", action="store_true")
     args = parser.parse_args()
 
     exp_name = args.experiment_name
@@ -499,7 +585,9 @@ if __name__ == "__main__":
                 "show_reconstruction_images" : args.interactive_images,
                 "save_reconstruction_images" : args.save_images,
                 "save_reconstructed_mesh" : args.save_reconstructed_meshes,
-                "compute_metrics" : args.compute_metrics,
+                "compute_chamfer" : args.compute_chamfer,
+                "compute_lddmm" : args.compute_lddmm,
+                "compute_haussdorff" : args.compute_haussdorff,
                 "save_latent_codes" : args.save_latent_codes
             }
 
@@ -511,7 +599,9 @@ if __name__ == "__main__":
                 "show_reconstruction_images" : False,
                 "save_reconstruction_images" : False,
                 "save_reconstructed_mesh" : False,
-                "compute_metrics" : False,
+                "compute_chamfer" : False,
+                "compute_lddmm" : False,
+                "compute_haussdorff" : False,
                 "save_latent_codes" : True
             }
 
