@@ -38,7 +38,7 @@ def create_train_test_split(
             data.append(str(file))
 
     with open(TRAIN_DATA_DIR / save_train_filename, "w") as f:
-        json.dump(data, f)
+        json.dump(data, f, indent=4)
 
     data = []
     for file in test_names:
@@ -47,7 +47,7 @@ def create_train_test_split(
             data.append(str(file))
 
     with open(TEST_DATA_DIR / save_test_filename, "w") as f:
-        json.dump(data, f)
+        json.dump(data, f, indent=4)
 
     return
 
