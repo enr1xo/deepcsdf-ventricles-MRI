@@ -2,13 +2,13 @@
 
 # ---- Parameters ----
 EXPERIMENT=training_sweeps/LipAndAct
-SPECS_BASE=specs_files/specs_deepsdfatria-base.json
+SPECS_BASE=specs_files/specs_deepsdfatria-base2.json
 PYTHON_SCRIPT=train.py
 SLEEP_INTERVAL=120       # seconds
 SAFETY_MARGIN_MB=500   # safety
 MEM_REQUIRED_MB=1500    
 MAX_PARALLEL=16 
-LOG_DIR=experiments/logs-temp
+LOG_DIR=experiments/logs-train-temp
 # --------------------
 
 mkdir -p "$LOG_DIR"
@@ -38,7 +38,10 @@ declare -a JOB_PIDS=()
 
 # ---- Hyperparameters to sweep ----
 LIPSCHITZ_LAYERS=(
-  '[-1]'
+    '[0,1,2,3,4]'
+    '[2,3,4]'
+    '[3,4]'
+    '[-1]'
 )
 
 ACTS=('Softplus' 'GELU' 'Tanh' 'SiLU')

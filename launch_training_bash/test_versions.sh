@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ---- Parameters ----
-VERSION_DIR=experiments/training_sweeps/RegLambdaAndCs
-EXPERIMENT=training_sweeps/RegLambdaAndCs
+VERSION_DIR=experiments/training_sweeps/RegLambdaAndAnneal
+EXPERIMENT=training_sweeps/RegLambdaAndAnneal
 PYTHON_SCRIPT=test.py
-TEST_DATASET="train/data_fnames_train.json"
+TEST_DATASET="test/data_fnames_test.json"
 SLEEP_INTERVAL=60       # seconds
 SAFETY_MARGIN_MB=500   # safety
-MEM_REQUIRED_MB=1500    
+MEM_REQUIRED_MB=1000    
 MAX_PARALLEL=5 
 LOG_DIR=experiments/logs-test-temp
 # --------------------
@@ -59,8 +59,8 @@ for dir in "$VERSION_DIR"/*/; do
                     -e "$EXPERIMENT" \
                     -v "$ver" \
                     -od "$TEST_DATASET" \
-                    -nsamp 2048 \
-                    -lreg 2e-4 \
+                    -nsamp 4096 \
+                    -lreg 5e-4 \
                     -chd \
                      &> "$logfile" &
 
@@ -68,7 +68,7 @@ for dir in "$VERSION_DIR"/*/; do
                 sleep 10
                 break
             else
-                echo "Waiting for GPU memory..."
+                echo "Waiting for GPU memory or jobs ending  $(date)"
                 sleep "$SLEEP_INTERVAL"
             fi
         done
