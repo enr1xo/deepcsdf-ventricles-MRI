@@ -4,7 +4,7 @@
 # Ignore all .ipynb files
 *.ipynb
 # Except some notebook 
-!summarize_performance_metrics.ipynb
+!summarize_experiment_performance.ipynb
 
 #Ignore all text files
 *.txt
