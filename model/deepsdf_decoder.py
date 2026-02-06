@@ -331,19 +331,19 @@ class DeepSDF(pl.LightningModule):
 
         if self.logger is not None and (self.current_epoch + 1) % self.log_every_n_epochs == 0:
             
-            optimizer = self.optimizers()
-            # optimizer.param_groups is a list of dicts — each dict corresponds to one group defined in torch.optim.Adam([ ... ])
-            current_lrs = [pg['lr'] for pg in optimizer.param_groups]
-            lr_weights, lr_latents = current_lrs
+            # optimizer = self.optimizers()
+            # # optimizer.param_groups is a list of dicts — each dict corresponds to one group defined in torch.optim.Adam([ ... ])
+            # current_lrs = [pg['lr'] for pg in optimizer.param_groups]
+            # lr_weights, lr_latents = current_lrs
 
             self.log_dict(
                 {
-                    "latent_reg_loss": reg_loss.detach().cpu(),
-                    "prediction_loss": chunk_loss.detach().cpu(),
+                    "latents_mean_L2_squared": reg_loss.detach().cpu(),
+                    "regression_loss": chunk_loss.detach().cpu(),
                     "train_loss" : training_loss.detach().cpu(),
                     "code_reg_lambda" : code_reg_lambda,
-                    "lr_weights" : lr_weights,
-                    "lr_latents" : lr_latents
+                    # "lr_weights" : lr_weights,
+                    # "lr_latents" : lr_latents
                 },
                 logger=True,
                 on_step=False,
