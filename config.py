@@ -1,32 +1,56 @@
 from pathlib import Path
-from loguru import logger
+import os
+# from loguru import logger
 
 # Paths
 PROJ_ROOT = Path(__file__).resolve().parents[0]
-logger.info(f"PROJ_ROOT path is: {PROJ_ROOT}")
+# logger.info(f"PROJ_ROOT path is: {PROJ_ROOT}")
+print(PROJ_ROOT)
 
-PATIENT_MESHES_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtrialGeometries")
+# cambiare percorso quando avrò i ventricoli da elena, li avrò in locale
+# anche i tags andranno variati in base a quelli usati per identificare le zone dei ventricoli
+# "C:\Users\e.rizzardi\OneDrive\Desktop\AF_patients"
+# PATIENT_MESHES_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtrialGeometries")
+
+if os.name == "nt":
+    PATIENT_MESHES_DIR = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\AF_patients")
+else:
+    PATIENT_MESHES_DIR = Path("/mnt/c/Users/e.rizzardi/OneDrive/Desktop/AF_patients")
 
 # PATIENT_MESHES_DIR = Path("/home/davidenava_linux/DATASETS/AtrialGeometries")
 
-ATRIA_TAGS_METADATA = {
+VENTRICLE_TAGS_METADATA = {
 
-    "CUSTOM_LABELS": {
-        "99": "RAA_BB", "97": "RA_FO", "96": "RA_INSU_BB", "95": "RA_BB",
-        "94": "PM", "93": "CT_endo", "92": "CS_endo", "91": "RA_sept_endo",
-        "90": "TV_endo", "89": "INT_cav_bundle_endo", "88": "CT_epi", "87": "CS_epi",
-        "86": "SA", "85": "RA_sept_epi", "84": "TV_epi", "83": "INT_cav_bundle_epi",
-        "82": "LA_FO", "81": "LA_INSU_BB", "80": "LAA_BB", "79": "RIPV_endo",
-        "78": "RSPV_endo", "77": "LIPV_endo", "76": "LSPV_endo", "75": "MV_endo",
-        "74": "RIPV_epi", "73": "RSPV_epi", "72": "LIPV_epi", "71": "LSPV_epi",
-        "70": "MV_epi", "48": "RAA_epi", "47": "RAA_endo", "46": "IVC_epi",
-        "45": "IVC_endo", "44": "SVC_epi", "43": "SVC_endo", "42": "RA_wall_epi",
-        "41": "RA_wall_endo", "38": "LAA_epi", "37": "LAA_endo", "32": "LA_wall_epi",
-        "31": "LA_wall_endo"
+    "CUSTOM_LABELS": 
+    # {
+    #     "99": "RAA_BB", "97": "RA_FO", "96": "RA_INSU_BB", "95": "RA_BB",
+    #     "94": "PM", "93": "CT_endo", "92": "CS_endo", "91": "RA_sept_endo",
+    #     "90": "TV_endo", "89": "INT_cav_bundle_endo", "88": "CT_epi", "87": "CS_epi",
+    #     "86": "SA", "85": "RA_sept_epi", "84": "TV_epi", "83": "INT_cav_bundle_epi",
+    #     "82": "LA_FO", "81": "LA_INSU_BB", "80": "LAA_BB", "79": "RIPV_endo",
+    #     "78": "RSPV_endo", "77": "LIPV_endo", "76": "LSPV_endo", "75": "MV_endo",
+    #     "74": "RIPV_epi", "73": "RSPV_epi", "72": "LIPV_epi", "71": "LSPV_epi",
+    #     "70": "MV_epi", "48": "RAA_epi", "47": "RAA_endo", "46": "IVC_epi",
+    #     "45": "IVC_endo", "44": "SVC_epi", "43": "SVC_endo", "42": "RA_wall_epi",
+    #     "41": "RA_wall_endo", "38": "LAA_epi", "37": "LAA_endo", "32": "LA_wall_epi",
+    #     "31": "LA_wall_endo"
+    # },
+    {
+        "224": "RV_bridge", "223": "pulmunary_valve_rim", "222": "tricuspid_valve_rim",
+        "205": "LV_bridge", "204": "aortic_valve:rim", "203": "Mitral_valve_rim", 
+        "8": "papillary_muscles"
     },
 
-    "RA_TAGS": [99, 97, 95, 96, 94, 93, 92, 91, 90, 88, 87, 86, 85, 84, 48, 47, 46, 45, 44, 43, 42, 41],
+    "LV_TAGS": [200, 201],
+    "LV_ENDO_TAGS": [200],
+    "LV_EPI_TAGS": [201],
 
+    "RV_TAGS": [220, 221],
+    "RV_ENDO_TAGS": [202, 220],
+    "RV_EPI_TAGS": [221],
+
+    "RA_TAGS": [99, 97, 95, 96, 94, 93, 92, 91, 90, 88, 87, 86, 85, 84, 48, 47, 46, 45, 44, 43, 42, 41],
+    
     "RA_ENDO_TAGS": [41, 43, 45, 47, 86, 90, 91, 92, 93, 94, 97],
 
     "RA_EPI_TAGS": [42, 44, 46, 48, 84, 85, 86, 87, 88, 95, 99],
@@ -46,7 +70,10 @@ ATRIA_TAGS_METADATA = {
 
 DATA_DIR = PROJ_ROOT / "data"
 
-PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtriaPointsAndSDF")
+if os.name == "nt": 
+    PATIENTS_COORDS_AND_SDFS_DIR = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\AF_patients") #?
+else:
+    PATIENTS_COORDS_AND_SDFS_DIR = Path("/mnt/c/Users/e.rizzardi/OneDrive/Desktop/AF_patients")
 
 PATIENTS_NPY_DATA_DIR =  PATIENTS_COORDS_AND_SDFS_DIR / "single_patients_100000pts_npy"
 
