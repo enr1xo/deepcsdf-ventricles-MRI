@@ -1,0 +1,64 @@
+{
+    "Description": "...",
+    "TrainSplit": "train/data_fnames_train.json",
+    "TestSplit": "test/data_fnames_test.json",
+    "Network_specs": {
+        "latent_size": 64,
+        "out_dim": 3,
+        "dims": [
+            256,
+            256,
+            256,
+            256,
+            256
+        ],
+        "latent_in": [
+            2
+        ],
+        "positional_encoding": false,
+        "pos_enc_dim": 4,
+        "lipschitz_layers": [
+            0,
+            1,
+            2,
+            3,
+            4
+        ],
+        "regularize_layers": [
+            -1
+        ],
+        "activation": "SiLU",
+        "last_tanh": false,
+        "norm_layers": [
+            -1
+        ],
+        "batch_norm": false,
+        "dropout_prob": 0.2,
+        "dropout_layers": [
+            -1
+        ]
+    },
+    "NumEpochs": 5000,
+    "lr_weights": 0.001,
+    "lr_latents": 0.005,
+    "num_samp_per_scene": 4096,
+    "sampling_scene_method": "random",
+    "balance_pos_neg": true,
+    "batch_size": 32,
+    "scale_spatial_inputs_by": 1000,
+    "enforce_minmax": false,
+    "clamp_distance": 0.2,
+    "use_loss": "MSE",
+    "use_lipreg_loss": false,
+    "lipschitz_alpha": 2e-06,
+    "code_reg_lambda": 1e-05,
+    "anneal_reg_loss": false,
+    "code_reg_anneal_warmup_epochs": 0,
+    "use_lr_scheduler": true,
+    "lr_weights_final": 1e-05,
+    "lr_latents_final": 5e-05,
+    "lr_decay_time_max": 95,
+    "log_every_n_epochs": 100,
+    "checkpoint_every_n_epochs": 1000,
+    "resume_training_from_version": "-"
+}
