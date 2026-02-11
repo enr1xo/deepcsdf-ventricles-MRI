@@ -19,7 +19,29 @@ act_fn = {
     "GELUApprox": nn.GELU(approximate="tanh")
 }
 
+# ===== Lipschitz scaled layer, as in learning smooth neural functions via lip reg paper ===== #
+class LipschitzNormLinear(nn.Linear):
+    def __init__(self, in_features, out_features, bias=True, init_c=0.0):
+        super().__init__(in_features, out_features, bias=bias)
 
+        self.c = nn.Parameter(torch.ones(1) * init_c)  # Learnable Lipschitz scaling parameter (scalar per layer)
+
+    def forward(self, x):
+        # Compute row-wise absolute sum of the weight
+        absrowsum = self.weight.abs().sum(dim=1, keepdim=True) + 1e-12
+
+        # Compute row-wise scaling factor
+        scale = torch.clamp(F.softplus(self.c) / absrowsum, max=1.0)
+
+        # Scale the weight row-wise
+        W_scaled = self.weight * scale
+
+        # Linear forward (like nn.Linear)
+        return F.linear(x, W_scaled, self.bias)
+
+    def lipschitz_bound(self): # this is so I can just get it when computing the loss in training
+        return F.softplus(self.c)
+    
 class Decoder(nn.Module):
 
     def __init__(self, **specs): # unpacks given keyword args into specs dictionary, so I can use .get() and have default instead of errors if the key isn't there
@@ -47,6 +69,8 @@ class Decoder(nn.Module):
 
         self.lipschitz_layers = specs.get("lipschitz_layers", [-1]) # these are SpectralLinear layers, enforced to be lipschitz
 
+        self.use_lipschitz_normalized_layers = specs.get("use_lipschitz_normalized_layers", False) # these are weight normalized layers, with learnable lipschitz bounds (...)
+
         self.hidden_dims = specs.get("dims", [])
         
         # self.check_decoder_specs_validity()
@@ -69,6 +93,8 @@ class Decoder(nn.Module):
                 lin = nn.utils.weight_norm(nn.Linear(self.dims[layer], out_dim_)).float()
             elif layer in self.lipschitz_layers:
                 lin = SpectralLinear(self.dims[layer], out_dim_).float()
+            elif self.use_lipschitz_normalized_layers:
+                lin = LipschitzNormLinear( self.dims[layer], out_dim_ ).float()
             else:
                 lin = nn.Linear(self.dims[layer], out_dim_).float()
 
@@ -304,27 +330,21 @@ class DeepSDF(pl.LightningModule):
         latents = self.lat_vecs["trainable"]( torch.unique(indices) )
         reg_loss = torch.mean( torch.linalg.norm(latents, dim=1) ** 2 )
 
-        # if self.normalize_reg_loss: #TODO
-        #     pass
-
         if self.anneal_reg_loss: # self.global_step is the total optimizer steps so far (across all epochs), self.current_epoch is the actual epoch
             code_reg_lambda = self.anneal_latent_reg()
         else:
             code_reg_lambda =  self.code_reg_lambda
 
-        # LIPSCHITZ PENALTY
         lipschitz_loss = 0.0
-        if self.use_lipreg_loss: # compute product of spectral norms for all layers !
-            # compute product of spectral norms as sum in log space for stability
-            # lipschitz_loss = torch.exp(log_prod) # normalized by depth:  torch.exp(log_prod / self.decoder.num_layers)
-            # do not exponentiate for stabilty, for training it is unnecessary ( still get the same minimizer)
+        if self.use_lipreg_loss:
             for i in range(self.decoder.num_layers - 1):
-                W = getattr(self.decoder, f"lin{i}").weight  
-                norm = torch.linalg.matrix_norm(W, ord=float('inf'))  
-                softplus_norm = F.softplus(norm)
-                lipschitz_loss += torch.log(softplus_norm + 1e-12) 
+                layer = getattr(self.decoder, f"lin{i}")
+                softplus_ci = layer.lipschitz_bound()
+                lipschitz_loss += torch.log( softplus_ci ) 
+            lipschitz_loss = torch.exp(lipschitz_loss)
 
         training_loss = chunk_loss + code_reg_lambda * reg_loss + self.lipschitz_alpha * lipschitz_loss
+
 
         if self.logger is not None and (self.current_epoch + 1) % self.log_every_n_epochs == 0:
             

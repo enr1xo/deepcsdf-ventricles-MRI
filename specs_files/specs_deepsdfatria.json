@@ -1,7 +1,7 @@
 {
     "Description" : "...",
 
-    "TrainSplit" : "train/data_fnames_train.json",
+    "TrainSplit" : "test/AF009_P2R-LEU_NORM_F004.json",
 
     "TestSplit" : "test/data_fnames_test.json",
 
@@ -9,11 +9,11 @@
         "latent_size" : 64,
         "out_dim" : 3,
         "dims" : [256,256,256,256,256],
-        "latent_in" : [2],
+        "latent_in" : [3],
         "positional_encoding" : false,
         "pos_enc_dim" : 4,   
-        "lipschitz_layers" : [2,3,4],
-        "regularize_layers" : [-1],
+        "lipschitz_layers" : [-1],
+        "use_lipschitz_normalized_layers" : true,
         "activation" : "SiLU",
         "last_tanh" : false,
         "norm_layers" : [-1],
@@ -25,16 +25,16 @@
     "NumEpochs": 100,
     "lr_weights": 0.001,
     "lr_latents": 0.005,
-    "num_samp_per_scene": 4096,
+    "num_samp_per_scene": 2048,
     "sampling_scene_method": "random",
     "balance_pos_neg" : false,
-    "batch_size": 16,
+    "batch_size": 2,
     "scale_spatial_inputs_by": 100,
     "enforce_minmax": false,
     "clamp_distance": 0.2,
     "use_loss": "SmoothL1",
-    "use_lipreg_loss": false,
-    "lipschitz_alpha": 2e-06,
+    "use_lipreg_loss": true,
+    "lipschitz_alpha": 2e-04,
     "code_reg_lambda": 2e-05,
     "anneal_reg_loss": true,
     "code_reg_anneal_warmup_epochs": 70,
@@ -43,7 +43,7 @@
     "lr_latents_final": 5e-05,
     "lr_decay_time_max": 80,
     "log_every_n_epochs" : 5,
-    "checkpoint_every_n_epochs": 11,
+    "checkpoint_every_n_epochs": 1000,
     "resume_training_from_version": "-",
     "reference_patient": "AF069"
 }
