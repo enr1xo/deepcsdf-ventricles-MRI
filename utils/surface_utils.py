@@ -223,13 +223,13 @@ def compute_signed_distance_libigl(mesh: pv.PolyData, query_points):
     # assumes the mesh is consistently oriented !!! # cazzo
     w = igl.fast_winding_number(V = vertices, F = faces, Q = query_points.astype(np.float64))
 
-    sdf = np.sqrt(sq_d) * np.sign( np.abs(w) - 0.5 )
+    sdf = np.sqrt(sq_d) * np.sign( 0.5 - np.abs(w) )
 
     # heuristic: pick a point I know it's outside, flip sign if needed
     bbox_max = mesh.bounds[1::2]  # xmax, ymax, zmax
     outside_point = np.array([bbox_max[0] + 100.0, bbox_max[1] + 100.0, bbox_max[2] + 100.0])[None, :]  # shape (1,3)
     w_out = igl.fast_winding_number(V = vertices, F = faces, Q = outside_point)[0]
-    if np.sign( np.abs(w_out) - 0.5 ) < 0:
+    if np.sign( 0.5 - np.abs(w_out) ) < 0:
         sdf *= -1
 
     return sdf
