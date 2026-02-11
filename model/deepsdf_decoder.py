@@ -47,8 +47,6 @@ class Decoder(nn.Module):
 
         self.lipschitz_layers = specs.get("lipschitz_layers", [-1]) # these are SpectralLinear layers, enforced to be lipschitz
 
-        self.regularize_layers = specs.get("regularize_layers", [-1]) # these are layers from which we compute weight matrices to add in the lipschitz penalty in the loss
-
         self.hidden_dims = specs.get("dims", [])
         
         # self.check_decoder_specs_validity()
@@ -314,20 +312,19 @@ class DeepSDF(pl.LightningModule):
         else:
             code_reg_lambda =  self.code_reg_lambda
 
-        # # LIPSCHITZ PENALTY
-        # lipschitz_loss = 0.0
-        # if self.use_lipreg_loss: # compute product of spectral norms for all layers !
-        #     Ws = torch.stack([getattr(self.decoder, f"lin{i}").weight for i in range(self.decoder.num_layers)])
-        #     # Compute norms for all layers at once
-        #     norms = torch.linalg.matrix_norm(Ws, ord=float('inf'), dim=(1,2))  # shape: (num_layers,)
-        #     softplus_norms = F.softplus(norms)
-        #     # compute product of spectral norms as sum in log space for stability
-        #     log_prod = torch.sum(torch.log(softplus_norms + 1e-12))  # add eps for stability
-        #     # lipschitz_loss = torch.exp(log_prod) # normalized by depth:  torch.exp(log_prod / self.decoder.num_layers)
-        #     # do not exponentiate for stabilty, for training it is unnecessary ( still get the same minimizer)
-        #     lipschitz_loss = log_prod 
+        # LIPSCHITZ PENALTY
+        lipschitz_loss = 0.0
+        if self.use_lipreg_loss: # compute product of spectral norms for all layers !
+            # compute product of spectral norms as sum in log space for stability
+            # lipschitz_loss = torch.exp(log_prod) # normalized by depth:  torch.exp(log_prod / self.decoder.num_layers)
+            # do not exponentiate for stabilty, for training it is unnecessary ( still get the same minimizer)
+            for i in range(self.decoder.num_layers - 1):
+                W = getattr(self.decoder, f"lin{i}").weight  
+                norm = torch.linalg.matrix_norm(W, ord=float('inf'))  
+                softplus_norm = F.softplus(norm)
+                lipschitz_loss += torch.log(softplus_norm + 1e-12) 
 
-        training_loss = chunk_loss + code_reg_lambda * reg_loss # + self.lipschitz_alpha * lipschitz_loss
+        training_loss = chunk_loss + code_reg_lambda * reg_loss + self.lipschitz_alpha * lipschitz_loss
 
         if self.logger is not None and (self.current_epoch + 1) % self.log_every_n_epochs == 0:
             
@@ -339,6 +336,7 @@ class DeepSDF(pl.LightningModule):
             self.log_dict(
                 {
                     "latents_mean_L2_squared": reg_loss.detach().cpu(),
+                    "lipschitz_penalty": lipschitz_loss.detach().cpu(),
                     "regression_loss": chunk_loss.detach().cpu(),
                     "train_loss" : training_loss.detach().cpu(),
                     "code_reg_lambda" : code_reg_lambda,
