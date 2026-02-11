@@ -18,10 +18,12 @@ model/atria_dataloader-playground.py
 
 # Ignore all files inside subfolders, but keep the top-level folder
 # But un-ignore all directories (keep folder structure)
-experiments/**/*
-!experiments/**/
-results/**/*
-!results/**/
+# experiments/
+# results/
+experiments/
+!experiments/training_sweeps/LipAndAct
+!experiments/training_sweeps/RegLambda
+!experiments/training_sweeps/LipPenaltyOnly
 data/**/*
 !data/**/
 
