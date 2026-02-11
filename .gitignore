@@ -15,6 +15,7 @@ temp.py
 useful_stuff.py
 model/atria_deepsdf_decoder-playground.py
 model/atria_dataloader-playground.py
+config.py 
 
 # Ignore all files inside subfolders, but keep the top-level folder
 # But un-ignore all directories (keep folder structure)
