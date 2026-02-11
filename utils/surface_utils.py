@@ -220,7 +220,8 @@ def compute_signed_distance_libigl(mesh: pv.PolyData, query_points):
         Ele = faces
     )
 
-    # assumes the mesh is consistently oriented !!! # cazzo
+    # assumes the mesh is consistently oriented !!!
+    # 0 --> OUTSIDE 1 --> INSIDE (or -1 if not oriented properly, but tresholding then takes care of this)
     w = igl.fast_winding_number(V = vertices, F = faces, Q = query_points.astype(np.float64))
 
     sdf = np.sqrt(sq_d) * np.sign( 0.5 - np.abs(w) )
