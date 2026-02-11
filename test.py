@@ -13,6 +13,7 @@ from utils.visual_utils import plot_gt_vs_reconstructed_with_error
 from vtk import vtkImplicitPolyDataDistance
 from tqdm import tqdm
 import pandas as pd
+from pprint import pprint
 
 from config import (
     EXPERIMENTS_DIR,
@@ -58,7 +59,7 @@ def find_pointcloud_noise(
 
     latent.requires_grad = True
 
-    loss_fn = model.loss_fn
+    loss_fn = torch.nn.MSELoss(reduction="sum")
 
     num_epochs = num_epochs_fit_latent
 
@@ -68,20 +69,20 @@ def find_pointcloud_noise(
 
     code_reg_lambda = 2e-05
 
-    epsilons = [0.0]
+    epsilon = 0.0
+
+    epsilons = [epsilon]
 
     # find variance of the noise iteratively
     for it in range(max_iter):
 
-        mean_code = torch.zeros(latent_size, device=DEVICE)  
+        mean_code = torch.zeros(latent_size, device=DEVICE, requires_grad=True)
         latent = mean_code
-
-        latent.requires_grad = True
 
         optimizer = torch.optim.Adam(params=[latent], lr=lr_fit_latent)
 
         # reconstruct
-        for i in tqdm(range(num_epochs)):
+        for i in range(num_epochs):
             
             decoder.eval()
             
@@ -107,15 +108,18 @@ def find_pointcloud_noise(
             optimizer.step()
         
             if i == num_epochs - 1: # last epoch
-                epsilon = recon_loss / (num_samp_per_scene - 1)
+                epsilon = recon_loss.detach().item() / (num_samp_per_scene - 1) # detach or on the next epoch it is still attached to the computational graph, instead like this is just a scalar to be reused
                 epsilons.append(epsilon)
 
         # stopping criterion   ...
+        tol = 1e-7 
+        if abs(epsilons[-1] - epsilons[-2]) < tol:
+            break
     
-    for i,ep in enumerate(epsilons):
-        print(f"eps_{i} = ", ep)
+    # for i,ep in enumerate(epsilons):
+    #     print(f"eps_{i} = ", ep)
 
-    return epsilon
+    return epsilons[-1]
 
 # ======================== #
 # RUN TESTS
@@ -124,7 +128,6 @@ def run(
     experiment_name,
     version,
     override_with_dataset = None,
-    which_shapes = "train",
     num_samp_per_scene_for_fit = None,
     hparams_file = None,
     num_epochs_fit_latent = 250,
@@ -143,7 +146,7 @@ def run(
 
     logger.info(f"Experiment: {experiment_name}")
 
-    # get specifics for the wanted run
+    # region specs: get specifics for the wanted run
     version_dir = EXPERIMENTS_DIR / experiment_name / version
 
     if hparams_file is None:
@@ -151,12 +154,13 @@ def run(
 
     specs = json.load( open(hparams_file) )
     
-    # manual test dataset
+    # region manual test dataset
     if override_with_dataset is not None:
         specs["TestSplit"] = override_with_dataset
 
     logger.info(f"Loaded specs from: {version_dir.name}")
 
+    # region decoder
     # rebuild trained decoder and model: I do it with specs that contain everything alerady, no need for checkpoints now
     decoder_params = specs["Network_specs"]
 
@@ -166,7 +170,6 @@ def run(
     print(decoder.description())
     print("\n")
     
-
     # get trained model parameters
     decoder_weights_path = version_dir / "decoder_weights.pth"
     if decoder_weights_path.is_file():
@@ -181,7 +184,7 @@ def run(
     # this I just need to build automatically the same loss function I used in training, could be dropped and built here explicitelys
     model = DeepSDF(decoder=decoder, specs=specs) 
 
-    # dataset
+    # region load dataset
     # optionally set num of subsamples to use --> the dataloader will return scenes with specs["num_samp_per_scene"] points !!!
     if num_samp_per_scene_for_fit is not None:
         specs["num_samp_per_scene"] = num_samp_per_scene_for_fit
@@ -196,6 +199,7 @@ def run(
 
     # retrieve original patient names in current dataset
     data_file = dataset.data_file
+    which_shapes = "test" if "test" in Path(data_file).name else "train"
     patient_names = get_dataset_patients_names( json.load(open(data_file)) )
 
     decoder_input_scale = specs.get("scale_spatial_inputs_by", 100)
@@ -258,7 +262,9 @@ def run(
         
         loss_fn = model.loss_fn
 
-        code_reg_lambda = latent_reg_factor # TODO: optimize to match noise of input
+        beta = 100 * find_pointcloud_noise(decoder, model, xyz, sdf_gt, num_epochs_fit_latent=250, lr_fit_latent=0.005)
+
+        code_reg_lambda = latent_reg_factor 
 
         num_epochs = num_epochs_fit_latent
 
@@ -295,7 +301,7 @@ def run(
             reg_loss = torch.linalg.norm(latent) ** 2 
             chunk_loss = loss_fn(sdf_pred, sdf_gt) / num_samp_per_scene
 
-            loss = chunk_loss + code_reg_lambda * reg_loss
+            loss = chunk_loss + beta * code_reg_lambda * reg_loss
 
             loss.backward()
 
@@ -474,7 +480,7 @@ def run(
                         if compute_lddmm:
                             logger.info(f"Computing LDDMM")
                             LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False)
-
+    
     if compute_chamfer:
         exp_name = experiment_name.split("/")[-1]
         # chamfer
@@ -539,8 +545,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--experiment_name", "-e", type=str, default = "deepsdfatria_training_concurrent")
-    parser.add_argument("--version", "-v", type=str, default = "version_114")
+    parser.add_argument("--experiment_name", "-e", type=str, default = "training_sweeps/LipAndAct")
+    parser.add_argument("--version", "-v", type=str, default = "version_0")
     parser.add_argument("--override_with_dataset", "-od", type=str, default=None)
     parser.add_argument("--mode", "-m", type=int, default=1, choices=[1, 2])
     parser.add_argument("--reconstruct_from", "-r", type=str, default="all", choices=["la","ra","all"])
