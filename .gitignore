@@ -20,10 +20,12 @@ model/atria_dataloader-playground.py
 # But un-ignore all directories (keep folder structure)
 # experiments/
 # results/
-experiments/
-!experiments/training_sweeps/LipAndAct
-!experiments/training_sweeps/RegLambda
-!experiments/training_sweeps/LipPenaltyOnly
+experiments/training_sweeps/RegLambdaAndAnneal
+experiments/training_sweeps/RegLambdaAndCs
+experiments/training_sweeps/LipPenaltyAndAct
+experiments/deepsdf_atria_training_local
+experiments/logs-*
+experiments/trained
 data/**/*
 !data/**/
 
