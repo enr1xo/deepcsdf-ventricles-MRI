@@ -13,30 +13,12 @@
 #Ignore specific files
 temp.py
 useful_stuff.py
-model/atria_deepsdf_decoder-playground.py
-model/atria_dataloader-playground.py
 config.py 
 
-# Ignore all files inside subfolders, but keep the top-level folder
-# But un-ignore all directories (keep folder structure)
-experiments/
-results/
-# experiments/training_sweeps/RegLambdaAndAnneal
-# experiments/training_sweeps/RegLambdaAndCs
-# experiments/training_sweeps/LipPenaltyAndAct
-# experiments/deepsdf_atria_training_local
-# experiments/logs-*
-# experiments/trained
-data/**/*
-!data/**/
 
-# experiments/
+experiments/
 # data/
 # results/
-specs_files_concurrent/**
-
-# Keep folder structure for other folders even if empty
-!*/
 
 # # -----------------------
 # # Python artifacts
