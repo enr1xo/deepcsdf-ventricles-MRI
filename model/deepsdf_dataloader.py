@@ -8,7 +8,6 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import json
 from pathlib import Path
-from loguru import logger
 
 from config import DATA_DIR, PATIENTS_NPY_DATA_DIR
 
@@ -261,7 +260,7 @@ class SDFDataModule(pl.LightningDataModule):
             opt = f"Using balanced pos/neg scenes in training"
         else:
             opt=""
-        logger.info(f"TRAIN DATA LOADED: {len(self.sdf_train)} scenes. num_samp_per_scene = {self.num_samples_per_scene}. " + opt)
+        print(f"TRAIN DATA LOADED: {len(self.sdf_train)} scenes. num_samp_per_scene = {self.num_samples_per_scene}. " + opt)
         return DataLoader(
             self.sdf_train,
             batch_size=self.batch_size,
@@ -271,7 +270,7 @@ class SDFDataModule(pl.LightningDataModule):
         )
 
     def test_dataloader(self):
-        logger.info(f"TEST DATA LOADED: {len(self.sdf_test)} scenes. Default num_samp_per_scene = {self.num_samples_per_scene}.")
+        print(f"TEST DATA LOADED: {len(self.sdf_test)} scenes. Default num_samp_per_scene = {self.num_samples_per_scene}.")
         return DataLoader(
             self.sdf_test,
             batch_size=1, # hard coded for now !!
