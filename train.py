@@ -11,8 +11,8 @@ try:
     from lightning.pytorch.callbacks import ModelCheckpoint # pyright: ignore[reportMissingImports]
 except ImportError:
     import pytorch_lightning as pl
-    from pytorch_lightning.pytorch.loggers import TensorBoardLogger # pyright: ignore[reportMissingImports]
-    from pytorch_lightning.pytorch.callbacks import ModelCheckpoint # pyright: ignore[reportMissingImports]
+    from pytorch_lightning.loggers import TensorBoardLogger # pyright: ignore[reportMissingImports]
+    from pytorch_lightning.callbacks import ModelCheckpoint # pyright: ignore[reportMissingImports]
     
 from model.deepsdf_dataloader import SDFDataModule
 from model.deepsdf_decoder import Decoder, DeepSDF 
