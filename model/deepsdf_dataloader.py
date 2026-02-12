@@ -220,8 +220,6 @@ class SDFDataModule(pl.LightningDataModule):
 
         self.batch_size = self.specs.get("batch_size", 2)
 
-        self.num_samples_per_scene = self.specs.get("num_samp_per_scene", 4096)
-
         self.sampling_method = self.specs.get("sampling_scene_method", "random_seed")
 
         self.num_workers = num_workers 
@@ -242,6 +240,8 @@ class SDFDataModule(pl.LightningDataModule):
 
             self.num_fit_scenes = len(self.sdf_train)
 
+            self.num_samples_per_scene = self.sdf_train.num_samp_per_scene
+
         if stage in ["test", "predict"]:
             #TODO: add loading partial files like h5 option
             sdf_dataset = SDFSamples( 
@@ -254,12 +254,14 @@ class SDFDataModule(pl.LightningDataModule):
 
             self.num_test_scenes = len(self.sdf_test)
 
+            self.num_samples_per_scene = self.sdf_test.num_samp_per_scene
+
     def train_dataloader(self):
         if self.sdf_train.balance_pos_neg:
             opt = f"Using balanced pos/neg scenes in training"
         else:
             opt=""
-        logger.info(f"TRAIN DATA LOADED: {len(self.sdf_train)} scenes." + opt)
+        logger.info(f"TRAIN DATA LOADED: {len(self.sdf_train)} scenes. num_samp_per_scene = {self.num_samples_per_scene}. " + opt)
         return DataLoader(
             self.sdf_train,
             batch_size=self.batch_size,
@@ -269,7 +271,7 @@ class SDFDataModule(pl.LightningDataModule):
         )
 
     def test_dataloader(self):
-        logger.info(f"TEST DATA LOADED: {len(self.sdf_test)} scenes.")
+        logger.info(f"TEST DATA LOADED: {len(self.sdf_test)} scenes. Default num_samp_per_scene = {self.num_samples_per_scene}.")
         return DataLoader(
             self.sdf_test,
             batch_size=1, # hard coded for now !!
