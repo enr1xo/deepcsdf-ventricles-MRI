@@ -17,29 +17,22 @@ except ImportError:
 from model.deepsdf_dataloader import SDFDataModule
 from model.deepsdf_decoder import Decoder, DeepSDF 
 
-from loguru import logger
 
-# warnings.filterwarnings("ignore")
-# logger.remove()
-# logger.add(sys.stdout, level="INFO", filter=lambda record: record["level"].name == "INFO") # info → stdout
-# logger.add(sys.stderr, level="ERROR") # error → stderr
-
-
-# =========== setup for H100 / A100 / L40S GPU =========== #
-torch.set_float32_matmul_precision("high")   # "medium" if instability (NaNs / loss spikes) appear, "high" is ignored by L40S
-PRECISION = "bf16-mixed"
-# next flags ignored by L40S
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
+# # =========== setup for H100 / A100 / L40S GPU =========== #
+# torch.set_float32_matmul_precision("high")   # "medium" if instability (NaNs / loss spikes) appear, "high" is ignored by L40S
+# PRECISION = "bf16-mixed"
+# # next flags ignored by L40S
+# torch.backends.cuda.matmul.allow_tf32 = True
+# torch.backends.cudnn.allow_tf32 = True
 
 # # =========== setup for RTX 3090 GPU =========== #
 # torch.set_float32_matmul_precision("medium") # "medium" if instability (NaNs / loss spikes) appear
 # PRECISION = "16-mixed"
 
+# # =========== setup for GTX 1050 GPU =========== #
+PRECISION = "32"
+
 from config import SPECS_FILES_DIR, EXPERIMENTS_DIR
-
-SPECS_FILE = SPECS_FILES_DIR / "specs_deepsdfatria.json" # default if not specified on execution
-
 
 # ============================== #
 # HELPERS
@@ -113,13 +106,13 @@ class SaveDecoderCallback(pl.Callback):
 # ============================== #
 # TRAINING
 # ============================== #
-EXPERIMENT_NAME = "deepsdf_atria_training_local"
 
-def train(specs: dict, show_progress = False):
+def train(specs: dict, experiment_name, num_workers = 6, show_progress = False):
 
     # region LOAD DATA 
     datamodule = SDFDataModule(
-        specs = specs
+        specs = specs,
+        num_workers=num_workers
     )
 
     datamodule.setup("fit")  
@@ -143,7 +136,7 @@ def train(specs: dict, show_progress = False):
     # experiment logger
     logger_tb = TensorBoardLogger(
         save_dir = EXPERIMENTS_DIR, # All experiment folders (named by name/version) will be created inside this directory.
-        name = EXPERIMENT_NAME,
+        name = experiment_name,
         default_hp_metric=False,
         log_graph=False
     )   
@@ -160,7 +153,7 @@ def train(specs: dict, show_progress = False):
         if ckpt_files: # pick last checkpoint by epoch
             ckpt_file_path = max(ckpt_files, key = lambda file: int( re.search(r"epoch_([0-9]+)", file.name ).group(1) ) ) 
         else:
-            logger.warning(f"Found directory for checkpoints for wanted version: {load_version}, but contained no .ckpt files")  
+            raise ValueError(f"Found directory for checkpoints for wanted version: {load_version}, but contained no .ckpt files")  
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=checkpoint_dir,
@@ -190,7 +183,7 @@ def train(specs: dict, show_progress = False):
     trainer.fit(model, datamodule = datamodule, ckpt_path = ckpt_file_path)
     toc = time() - tic
 
-    logger.info(f"Time elapsed for fit: {toc:.2f} seconds ")
+    print(f"Time elapsed for fit: {toc:.2f} seconds ")
 
     return version_dir.name
 
@@ -203,10 +196,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--experiment_name", "-e", type=str, default = None,
-                        help="Default is deepsdf_atria_training_local, and becomes the directory " \
-                        "name in which checkpoints and logs are saved, under version_x folder for each run."
+                        help="Becomes the directory name in which checkpoints and logs are saved, under version_x folder for each run."
     )
-    parser.add_argument("--specs_file_path", "-s", type=str, default = SPECS_FILE)
+    parser.add_argument("--specs_file_path", "-s", type=str, default = "specs_deepsdfatria.json")
     parser.add_argument("--train_mode", type=str, default="use_specs_file")
     parser.add_argument("--override_specs", type=str, default=None)
     parser.add_argument("--show_progress", action="store_true")
@@ -215,19 +207,19 @@ if __name__ == "__main__":
     match args.train_mode:
 
         case "use_specs_file":
-            specs_file = str(args.specs_file_path)
+            specs_file = SPECS_FILES_DIR / str(args.specs_file_path)
             
             if args.experiment_name is not None:
                 EXPERIMENT_NAME = str(args.experiment_name)
 
-            version = train( specs = json.load(open(specs_file)), show_progress = args.show_progress )
+            version = train( specs = json.load(open(specs_file)), experiment_name = EXPERIMENT_NAME, show_progress = args.show_progress )
 
         case "compose_specs_from_options":
 
             if args.experiment_name is not None:
                 EXPERIMENT_NAME = str(args.experiment_name)
 
-            specs_file = str(args.specs_file_path)
+            specs_file = SPECS_FILES_DIR / str(args.specs_file_path)
             
             # now overwrite specs fields with wanted specs
             specs = json.load(open(specs_file))
@@ -240,7 +232,7 @@ if __name__ == "__main__":
 
             pprint(specs)
 
-            version = train( specs = specs, show_progress = args.show_progress )
+            version = train( specs = specs, experiment_name=EXPERIMENT_NAME, show_progress = args.show_progress )
 
     # this is to then be captured from a bash file and retrieve the version that has been trained to send myself an email
     print(f"TRAINING_DONE_VERSION={version}", flush=True)
