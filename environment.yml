@@ -1,0 +1,21 @@
+name: deepsdfatriavenvpy312
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.12
+  - igl
+  - pip:
+    - torch
+    - pyvista
+    - lightning
+    - trimesh
+    - scikit-image
+    - scikit-learn
+    - umap-learn
+    - pandas
+    - loguru
+    - tensorboard
+    - tensorboardX
+    
+prefix: /home/gpfs/o_navarri/software/miniconda3/envs/deepsdfatriavenvpy312

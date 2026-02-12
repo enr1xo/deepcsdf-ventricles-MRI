@@ -8,7 +8,13 @@ logger.info(f"PROJ_ROOT path is: {PROJ_ROOT}")
 # PATIENT_MESHES_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtrialGeometries")
 
 # Directory where .vtu files of meshes are expected to be found
-PATIENT_MESHES_DIR = Path("/home/davidenava_linux/DATASETS/AtrialGeometries")
+# PATIENT_MESHES_DIR = Path("/home/davidenava_linux/DATASETS/AtrialGeometries")
+
+SERVER_STORAGE_DIR = Path("/home/isilon/users/o_navarri")
+
+SERVER_DATASETS_DIR = SERVER_STORAGE_DIR / "DATASETS"
+
+PATIENT_MESHES_DIR = SERVER_DATASETS_DIR / "AtrialGeometries"
 
 # Just to help extract wanted surfaces by cell tags
 ATRIA_TAGS_METADATA = {
@@ -50,15 +56,17 @@ ATRIA_TAGS_METADATA = {
 
 # PATIENTS_NPY_DATA_DIR =  PATIENTS_COORDS_AND_SDFS_DIR / "single_patients_100000pts_npy"
 
-PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/davidenava_linux/DATASETS/AtriaPointsAndSDFs")
+# PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/davidenava_linux/DATASETS/AtriaPointsAndSDFs")
+
+PATIENTS_COORDS_AND_SDFS_DIR = SERVER_DATASETS_DIR / "AtriaPointsAndSDF"
 
 # Folder where to find single .npy files with coords and sdf for each anatomy
-PATIENTS_NPY_DATA_DIR =  PATIENTS_COORDS_AND_SDFS_DIR / "single_patients_50000pts_npy"
+PATIENTS_NPY_DATA_DIR =  PATIENTS_COORDS_AND_SDFS_DIR / "single_patients_100000pts_npy"
 
 SPECS_FILES_DIR = PROJ_ROOT / "specs_files"
 
 # Directory under which all the experiments and training results are created (from train.py)
-EXPERIMENTS_DIR = PROJ_ROOT / "experiments"
+EXPERIMENTS_DIR = SERVER_STORAGE_DIR / "experiments"
 
 # Directory where .json files for training or testing are stored (see README) 
 DATA_DIR = PROJ_ROOT / "data"
@@ -71,7 +79,7 @@ TEST_DATA_DIR = DATA_DIR / "test"
 MODELS_DIR = PROJ_ROOT / "models"
 
 # Directory under which testing results are saved (from test.py)
-RESULTS_DIR = PROJ_ROOT / "results"
+RESULTS_DIR = SERVER_STORAGE_DIR / "results"
 
 # Images of reconstructed meshes
 IMAGES_DIR = RESULTS_DIR / "images"
