@@ -1,6 +1,4 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0" # this should be the RTX #TODO: do not put this here, maybe export in environment, or config
-
 import torch
 try:
     import lightning as pl # pyright: ignore[reportMissingImports]
