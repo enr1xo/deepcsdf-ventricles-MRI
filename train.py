@@ -107,7 +107,7 @@ class SaveDecoderCallback(pl.Callback):
 # TRAINING
 # ============================== #
 
-def train(specs: dict, experiment_name, num_workers = 6, show_progress = False):
+def train(specs: dict, experiment_name, num_workers = 10, show_progress = False):
 
     # region LOAD DATA 
     datamodule = SDFDataModule(
@@ -201,6 +201,7 @@ if __name__ == "__main__":
     parser.add_argument("--specs_file_path", "-s", type=str, default = "specs_deepsdfatria.json")
     parser.add_argument("--train_mode", type=str, default="use_specs_file")
     parser.add_argument("--override_specs", type=str, default=None)
+    parser.add_argument("--num_workers_dataloader", type=int, default=10)
     parser.add_argument("--show_progress", action="store_true")
     args = parser.parse_args()
 
@@ -212,7 +213,14 @@ if __name__ == "__main__":
             if args.experiment_name is not None:
                 EXPERIMENT_NAME = str(args.experiment_name)
 
-            version = train( specs = json.load(open(specs_file)), experiment_name = EXPERIMENT_NAME, show_progress = args.show_progress )
+            version = train( 
+                specs = json.load(open(specs_file)),
+                experiment_name = EXPERIMENT_NAME,
+                num_workers=args.num_workers_dataloader,
+                show_progress = args.show_progress
+            )
+
+            print("Peak GPU memory (GB):", torch.cuda.max_memory_allocated() / 1024**3)
 
         case "compose_specs_from_options":
 
@@ -230,9 +238,13 @@ if __name__ == "__main__":
 
             specs = deep_update(specs, override_specs)
 
-            pprint(specs)
-
-            version = train( specs = specs, experiment_name=EXPERIMENT_NAME, show_progress = args.show_progress )
+            version = train(
+                specs = specs,
+                experiment_name=EXPERIMENT_NAME,
+                num_workers=args.num_workers_dataloader,
+                show_progress = args.show_progress )
+            
+            print("Peak GPU memory (GB):", torch.cuda.max_memory_allocated() / 1024**3)
 
     # this is to then be captured from a bash file and retrieve the version that has been trained to send myself an email
     print(f"TRAINING_DONE_VERSION={version}", flush=True)
