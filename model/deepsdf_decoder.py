@@ -135,10 +135,12 @@ class Decoder(nn.Module):
         f = f" \n {self.num_layers} layers with channels {self.dims} "
         if self.lipschitz_layers != [-1]:
             f = f + f"\n Using Lipschitz constrained linear layers in {[i+1 for i in self.lipschitz_layers]}"
+        if self.use_lipschitz_normalized_layers:
+            f = f + f"\n Using Lipschitz normalized linear layers"
         if self.use_positional_encoding:
             f = f + f"\n Using positional encoding of dimension {self.pos_enc_dim} on input."
         if self.latent_in != [-1]:
-            f = f + f"\n Shortcut connection of input to hidden layer {self.latent_in[0]}"
+            f = f + f"\n Shortcut connection of input to layer {self.latent_in[0]}"
         f = f + f"\n Using latent dimension {self.latent_size}."
         f = f + f"\n Activations: {self.activation}"
         if self.last_tanh:

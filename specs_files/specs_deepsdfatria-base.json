@@ -9,7 +9,7 @@
         "latent_size" : 64,
         "out_dim" : 3,
         "dims" : [256,256,256,256,256],
-        "latent_in" : [2],
+        "latent_in" : [3],
         "positional_encoding" : false,
         "pos_enc_dim" : 4,   
         "lipschitz_layers" : [0,1,2,3,4],
