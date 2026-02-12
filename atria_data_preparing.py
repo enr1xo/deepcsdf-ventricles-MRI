@@ -658,20 +658,20 @@ def _create_deepsdf_data_npy(
 
         sdfs = np.stack(sdfs, axis=1).astype(np.float32)
 
-        # points = pv.PolyData(query_points)
-        # points["sdf_epi"] = sdfs[:,0]
-        # points["sdf_la"] = sdfs[:,1]
-        # points["sdf_ra"] = sdfs[:,2]
+        points = pv.PolyData(query_points)
+        points["sdf_epi"] = sdfs[:,0]
+        points["sdf_la"] = sdfs[:,1]
+        points["sdf_ra"] = sdfs[:,2]
         
-        # plotter = pv.Plotter()
-        # plotter.add_mesh(points, scalars="sdf_epi", cmap = "jet_r", render_points_as_spheres=True)
-        # plotter.show()
-        # plotter = pv.Plotter()
-        # plotter.add_mesh(points, scalars="sdf_la", cmap = "jet_r", render_points_as_spheres=True)
-        # plotter.show()
-        # plotter = pv.Plotter()
-        # plotter.add_mesh(points, scalars="sdf_ra", cmap = "jet_r", render_points_as_spheres=True)
-        # plotter.show()
+        plotter = pv.Plotter()
+        plotter.add_mesh(points, scalars="sdf_epi", cmap = "jet_r", render_points_as_spheres=True)
+        plotter.show()
+        plotter = pv.Plotter()
+        plotter.add_mesh(points, scalars="sdf_la", cmap = "jet_r", render_points_as_spheres=True)
+        plotter.show()
+        plotter = pv.Plotter()
+        plotter.add_mesh(points, scalars="sdf_ra", cmap = "jet_r", render_points_as_spheres=True)
+        plotter.show()
 
         # ------------------------------------------
         # Save final data

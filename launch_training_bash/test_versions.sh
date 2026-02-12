@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # ---- Parameters ----
-VERSION_DIR=experiments/training_sweeps/RegLambdaAndAnneal
-EXPERIMENT=training_sweeps/RegLambdaAndAnneal
+VERSION_DIR=experiments/training_sweeps/LipAndAct
+EXPERIMENT=training_sweeps/LipAndAct
 PYTHON_SCRIPT=test.py
 TEST_DATASET="test/data_fnames_test.json"
 SLEEP_INTERVAL=60       # seconds
 SAFETY_MARGIN_MB=500   # safety
 MEM_REQUIRED_MB=1000    
-MAX_PARALLEL=5 
+MAX_PARALLEL=15 # If computing LDDMM metric (which uses GPU acceleration), this may  be too many because GPU usage may peak a lot 
 LOG_DIR=experiments/logs-test-temp
 # --------------------
 
@@ -60,8 +60,10 @@ for dir in "$VERSION_DIR"/*/; do
                     -v "$ver" \
                     -od "$TEST_DATASET" \
                     -nsamp 4096 \
-                    -lreg 5e-4 \
+                    -N 300 \
+                    -lreg 1e-4 \
                     -chd \
+                    -hauss \
                      &> "$logfile" &
 
                 JOB_PIDS+=($!)

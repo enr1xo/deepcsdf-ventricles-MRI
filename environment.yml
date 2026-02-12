@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 name: deepsdfatriavenvpy312
+=======
+name: venvdeepsdfatriapy312
+>>>>>>> 5ee8c9f (local changes before sync)
 channels:
   - defaults
   - conda-forge
@@ -14,8 +18,12 @@ dependencies:
     - scikit-learn
     - umap-learn
     - pandas
+<<<<<<< HEAD
     - loguru
     - tensorboard
     - tensorboardX
     
 prefix: /home/gpfs/o_navarri/software/miniconda3/envs/deepsdfatriavenvpy312
+=======
+    - loguru
+>>>>>>> 5ee8c9f (local changes before sync)
