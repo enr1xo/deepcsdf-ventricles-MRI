@@ -2,7 +2,7 @@
 
 #SBATCH --job-name=lip_pen_sweep                                                           # Your Job Name
 #SBATCH --nodes=1                                                                       # Number of Nodes desired e.g 1 node
-#SBATCH --time=00:10:00                                                                 # Walltime: Duration for the Job to run HH:MM:SS
+#SBATCH --time=20:00:00                                                                 # Walltime: Duration for the Job to run HH:MM:SS
 #SBATCH --mail-user=davide.navarri@medunigraz.at                                        # Your Email address assigned for your job
 #SBATCH --mail-type=ALL                                                                 # Receive an email for ALL Job Statuses
 #SBATCH --error=/home/isilon/users/o_navarri/experiments/logs-train-temp/%x_%J.err      # The .error file name captures the stderr of the whole batch script.
@@ -11,7 +11,7 @@
 #SBATCH --cpus-per-gpu=6                                                                # CPU cores per GPU
 #SBATCH --mem=16G                                                                       # default on sx138 is 10GB per CPU core
 #SBATCH --partition=gpu                                                                 # Partition: 'gpu' or 'cpu'
-#SBATCH --nodelist=sx138                                                                # whitelist of nodes to use. it uses any if commented out
+#SBATCH --nodelist=sy209                                                                # whitelist of nodes to use. it uses any if commented out
 
 
 # ------------------- Setup -------------------
@@ -21,6 +21,12 @@ cd "/home/gpfs/o_navarri/projects/deepcsdf-atria" # "$SLURM_SUBMIT_DIR"
 # Conda environment
 source /home/gpfs/o_navarri/software/miniconda3/etc/profile.d/conda.sh
 conda activate deepsdfatriavenvpy312
+
+# Conda version of libstdc++.so.6 is used
+# this  because I got error:
+# Some compiled binary (here pypocketfft.cpython-312-x86_64-linux-gnu.so from scipy)
+# requires a newer version of the C++ standard library (libstdc++.so.6) than what your system currently provides.
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 
 # Cleaner Python logging: Forces Python to flush stdout/stderr immediately, Slurm buffers output aggressively, so logs get cluttered
 export PYTHONUNBUFFERED=1
@@ -37,7 +43,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
 # ------------------- Parameters -------------------
-EXPERIMENT=training_sweeps/LipPenaltyNoSpectral
+EXPERIMENT=LipNormalizedLayersAlpha
 SPECS_BASE=specs_files/specs_deepsdfatria-base.json
 PYTHON_SCRIPT=train.py
 SLEEP_INTERVAL=120
@@ -73,15 +79,16 @@ function clean_jobs() {
 }
 
 # ------------------- Hyperparameter sweep -------------------
-LIP_PENALTY=(1e-1 1e-2 1e-3 1e-4 1e-5 1e-6 1e-7)
+LIP_PENALTY_ALPHA=(1e-1 1e-2 1e-3 1e-4 1e-5 1e-6 1e-7)
 
-for alpha in "${LIP_PENALTY[@]}"; do
+for alpha in "${LIP_PENALTY_ALPHA[@]}"; do
 
         override_specs=$(cat <<BIPBOP
 {
 "Network_specs": {
-"lipschitz_layers": [-1]
-}
+"lipschitz_layers": [-1],
+"use_lipschitz_normalized_layers" : true
+},
 "use_lipreg_loss": true,
 "lipschitz_alpha": $alpha
 }

@@ -1,11 +1,8 @@
 """ Train deepsdf model to learn atrial shapes. Needs a specification file that gives all data, decoder, training parameters and optionally post-processing directories
 """
 import re
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import json
 import torch
-import warnings
 from time import time
 from pathlib import Path
 try:
@@ -28,15 +25,15 @@ from loguru import logger
 # logger.add(sys.stderr, level="ERROR") # error → stderr
 
 
-# # =========== setup for A100 GPU =========== #
-# torch.set_float32_matmul_precision("high")   # "medium" if instability (NaNs / loss spikes) appear
-# PRECISION = "bf16-mixed"
+# =========== setup for A100 GPU =========== #
+torch.set_float32_matmul_precision("high")   # "medium" if instability (NaNs / loss spikes) appear
+PRECISION = "bf16-mixed"
 
 # # =========== setup for RTX 3090 GPU =========== #
-torch.set_float32_matmul_precision("medium") # "medium" if instability (NaNs / loss spikes) appear
-PRECISION = "16-mixed"
+# torch.set_float32_matmul_precision("medium") # "medium" if instability (NaNs / loss spikes) appear
+# PRECISION = "16-mixed"
 
-from config import SPECS_FILES_DIR, DATA_DIR, EXPERIMENTS_DIR
+from config import SPECS_FILES_DIR, EXPERIMENTS_DIR
 
 SPECS_FILE = SPECS_FILES_DIR / "specs_deepsdfatria.json" # default if not specified on execution
 
@@ -57,37 +54,37 @@ def deep_update(specs_base: dict, override_specs: dict) -> dict:
     return specs_base
 
 
-def flatten_dict_keys(d, parent_key="", sep="."):
-    """
-        Flatten dictionary so all keys are at the same level
-
-        ex. {
-                "Network_specs" : { 
-                    "latent_size" : 64
-                    }
-                "NumEpochs" : 100
-            }
-        
-            becomes
-            
-            {
-                "Network_specs.latent_size" : 64
-                "NumEpochs" : 100
-            }
-                
-    """
-    items = {}
-    for k, v in d.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-        if isinstance(v, dict):
-            items.update(flatten_dict_keys(v, new_key, sep=sep))
-        else:
-            items[new_key] = v
-
-    return items
-
-
 def check_override_specs_validity(override_specs, specs_base):
+
+    def flatten_dict_keys(d, parent_key="", sep="."):
+        """
+            Flatten dictionary so all keys are at the same level
+
+            ex. {
+                    "Network_specs" : { 
+                        "latent_size" : 64
+                        }
+                    "NumEpochs" : 100
+                }
+            
+                becomes
+                
+                {
+                    "Network_specs.latent_size" : 64
+                    "NumEpochs" : 100
+                }
+                    
+        """
+        items = {}
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.update(flatten_dict_keys(v, new_key, sep=sep))
+            else:
+                items[new_key] = v
+
+        return items
+
     # flatten both structures to easily check even nested keys
     override_specs = flatten_dict_keys(override_specs)
     specs_base = flatten_dict_keys(specs_base)
@@ -237,6 +234,8 @@ if __name__ == "__main__":
             check_override_specs_validity(override_specs, specs)
 
             specs = deep_update(specs, override_specs)
+
+            pprint(specs)
 
             version = train( specs = specs, show_progress = args.show_progress )
 

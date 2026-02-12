@@ -44,6 +44,5 @@
     "lr_decay_time_max": 80,
     "log_every_n_epochs" : 5,
     "checkpoint_every_n_epochs": 1000,
-    "resume_training_from_version": "-",
-    "reference_patient": "AF069"
+    "resume_training_from_version": "-"
 }
