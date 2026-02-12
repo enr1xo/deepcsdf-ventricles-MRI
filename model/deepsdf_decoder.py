@@ -91,7 +91,7 @@ class Decoder(nn.Module):
 
             if layer in self.norm_layers:
                 lin = nn.utils.weight_norm(nn.Linear(self.dims[layer], out_dim_)).float()
-            elif layer in self.lipschitz_layers:
+            elif layer in self.lipschitz_layers and not self.use_lipschitz_normalized_layers:
                 lin = SpectralLinear(self.dims[layer], out_dim_).float()
             elif self.use_lipschitz_normalized_layers:
                 lin = LipschitzNormLinear( self.dims[layer], out_dim_ ).float()
@@ -105,7 +105,14 @@ class Decoder(nn.Module):
         self.last_tanh = specs.get("last_tanh", False)
 
         # TODO: check specs and decoder validity
-    
+
+        # for i in range(self.decoder.num_layers - 1):
+        #     layer = getattr(self.decoder, f"lin{i}")
+        #     if self.use_lipschitz_normalized_layers:
+        #         assert isinstance(layer, LipschitzNormLinear), "Requested to use lipschitz normalized layers, but they have not been initialized correctly"
+        #     elif i in self.lipschitz_layers:
+        #         assert isinstance(layer, SpectralLinear)
+
     def forward(self, input_):
         x = input_
 
@@ -134,9 +141,9 @@ class Decoder(nn.Module):
 
         f = f" \n {self.num_layers} layers with channels {self.dims} "
         if self.lipschitz_layers != [-1]:
-            f = f + f"\n Using Lipschitz constrained linear layers in {[i+1 for i in self.lipschitz_layers]}"
+            f = f + f"\n Using Lipschitz constrained linear layers in {[i+1 for i in self.lipschitz_layers]}, layers type = SpectralLinear"
         if self.use_lipschitz_normalized_layers:
-            f = f + f"\n Using Lipschitz normalized linear layers"
+            f = f + f"\n Using Lipschitz normalized linear layers: layers type = LipschitzNormLinear"
         if self.use_positional_encoding:
             f = f + f"\n Using positional encoding of dimension {self.pos_enc_dim} on input."
         if self.latent_in != [-1]:
@@ -145,6 +152,10 @@ class Decoder(nn.Module):
         f = f + f"\n Activations: {self.activation}"
         if self.last_tanh:
             f = f + ", tanh on output."
+
+        for layer in range(0, self.num_layers - 1):
+            lin = getattr(self, f"lin{layer}")
+            print(f"\n layer {layer}: {type(lin)}, weights = {lin.weights.shape}")
         
         return desc + f
 
@@ -185,7 +196,7 @@ class DeepSDF(pl.LightningModule):
         elif self.use_loss == "SmoothL1":
             self.loss_fn = torch.nn.SmoothL1Loss(reduction="sum") 
 
-        self.use_lipreg_loss = specs.get("use_lipreg_loss", False)
+        self.use_lipreg_loss = self.decoder.use_lipschitz_normalized_layers
 
         self.lipschitz_alpha = specs.get("lipschitz_alpha", 2e-6)
 
@@ -358,7 +369,7 @@ class DeepSDF(pl.LightningModule):
             self.log_dict(
                 {
                     "latents_mean_L2_squared": reg_loss.detach().cpu(),
-                    "lipschitz_penalty": lipschitz_loss.detach().cpu(),
+                    "lipschitz_penalty": lipschitz_loss.detach().cpu() if self.use_lipreg_loss else torch.tensor(0.0, device="cpu"),
                     "regression_loss": chunk_loss.detach().cpu(),
                     "train_loss" : training_loss.detach().cpu(),
                     "code_reg_lambda" : code_reg_lambda,
