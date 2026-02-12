@@ -105,13 +105,8 @@ class Decoder(nn.Module):
         self.last_tanh = specs.get("last_tanh", False)
 
         # TODO: check specs and decoder validity
-
-        # for i in range(self.decoder.num_layers - 1):
-        #     layer = getattr(self.decoder, f"lin{i}")
-        #     if self.use_lipschitz_normalized_layers:
-        #         assert isinstance(layer, LipschitzNormLinear), "Requested to use lipschitz normalized layers, but they have not been initialized correctly"
-        #     elif i in self.lipschitz_layers:
-        #         assert isinstance(layer, SpectralLinear)
+        # - if lipschitz_layers is not -1 but also use_lipschitz_normalized_layers is True, warn that the latter will override SpectraLinear layers !!
+        # - check dimensions requested can be build with wanted skip connection, + pos enc
 
     def forward(self, input_):
         x = input_
@@ -139,24 +134,31 @@ class Decoder(nn.Module):
     def description(self):
         desc = f"Decoder network:"
 
-        f = f" \n {self.num_layers} layers with channels {self.dims} "
-        if self.lipschitz_layers != [-1]:
-            f = f + f"\n Using Lipschitz constrained linear layers in {[i+1 for i in self.lipschitz_layers]}, layers type = SpectralLinear"
-        if self.use_lipschitz_normalized_layers:
-            f = f + f"\n Using Lipschitz normalized linear layers: layers type = LipschitzNormLinear"
-        if self.use_positional_encoding:
-            f = f + f"\n Using positional encoding of dimension {self.pos_enc_dim} on input."
-        if self.latent_in != [-1]:
-            f = f + f"\n Shortcut connection of input to layer {self.latent_in[0]}"
-        f = f + f"\n Using latent dimension {self.latent_size}."
-        f = f + f"\n Activations: {self.activation}"
-        if self.last_tanh:
-            f = f + ", tanh on output."
+        f = f" \n {self.num_layers} layers with channels {self.dims} :"
 
         for layer in range(0, self.num_layers - 1):
             lin = getattr(self, f"lin{layer}")
-            print(f"\n layer {layer}: {type(lin)}, weights = {lin.weights.shape}")
-        
+            f += f"\n  layer {layer}:  {lin.__class__.__name__}, shape {lin.weight.shape[0], lin.weight.shape[1]}"
+
+        # if self.lipschitz_layers != [-1]:
+        #     f = f + f"\n Using Lipschitz constrained linear layers in {[i+1 for i in self.lipschitz_layers]}"
+
+        # if self.use_lipschitz_normalized_layers:
+        #     f = f + f"\n Using Lipschitz normalized linear layers"
+
+        if self.use_positional_encoding:
+            f = f + f"\n Using positional encoding of dimension {self.pos_enc_dim} on input."
+
+        if self.latent_in != [-1]:
+            f = f + f"\n Shortcut connection of input to layer {self.latent_in[0]}"
+
+        f = f + f"\n Using latent dimension {self.latent_size}."
+
+        f = f + f"\n Activations: {self.activation}"
+
+        if self.last_tanh:
+            f = f + ", tanh on output. \n"
+
         return desc + f
 
 class DeepSDF(pl.LightningModule):
@@ -391,58 +393,25 @@ class DeepSDF(pl.LightningModule):
 
 if __name__ == "__main__":
 
+    specs = {
+        "latent_size" : 64,
+        "out_dim" : 3,
+        "dims" : [256,256,256,256,256],
+        "latent_in" : [3],
+        "positional_encoding" : False,
+        "pos_enc_dim" : 4,   
+        "lipschitz_layers" : [0,1,2],
+        "use_lipschitz_normalized_layers" : False,
+        "activation" : "SiLU",
+        "last_tanh" : False,
+        "norm_layers" : [-1],
+        "batch_norm" : False,
+        "dropout_prob" : 0.2,
+        "dropout_layers" : [-1]       
+    }
+
+    decoder = Decoder(**specs)
+
+    print(decoder.description())
+
     pass
-
-""" --> old setup
-        # # REGULARIZATION LOSS  # was: reg_loss = torch.sum( torch.linalg.norm(batch_vecs, dim=1) ) / num_sdf_samples
-        # reg_loss = torch.sum( torch.linalg.norm(batch_vecs, dim=1) ** 2 ) / num_sdf_samples
-
-        # # if self.normalize_reg_loss:
-        # #     pass
-
-
-        # # # LIPSCHITZ PENALTY
-        # # if self.use_lipreg_loss:
-        # #     lipschitz_loss = 1.0
-        # #     for layer in range(self.decoder.num_layers):
-        # #         weight = self.decoder.__getattr__("lin" + str(layer)).weight
-        # #         norm = torch.linalg.matrix_norm(weight, ord=float("inf")) # TODO: bound this so it doesn't explode
-        # #         lipschitz_loss *= F.softplus(norm)
-        # #     lipschitz_loss = self.lipschitz_alpha * lipschitz_loss
-        # # else:
-        # #     lipschitz_loss = 0.0
-
-        # # # LIPSCHITZ PENALTY
-        # lipschitz_loss = 0.0
-        # if self.use_lipreg_loss: # compute product of spectral norms for all layers !
-        #     Ws = torch.stack([getattr(self.decoder, f"lin{i}").weight for i in range(self.decoder.num_layers)])
-        #     # Compute norms for all layers at once
-        #     norms = torch.linalg.matrix_norm(Ws, ord=float('inf'), dim=(1,2))  # shape: (num_layers,)
-        #     softplus_norms = F.softplus(norms)
-        #     # compute product of spectral norms as sum in log space for stability
-        #     log_prod = torch.sum(torch.log(softplus_norms + 1e-12))  # add eps for stability
-        #     # lipschitz_loss = torch.exp(log_prod) # normalized by depth:  torch.exp(log_prod / self.decoder.num_layers)
-        #     # do not exponentiate for stabilty, for training it is unnecessary ( still get the same minimizer)
-        #     lipschitz_loss = log_prod 
-
-        # training_loss = chunk_loss + self.code_reg_lambda * reg_loss + self.lipschitz_alpha * lipschitz_loss
-
-        # if self.logger is not None and (self.current_epoch + 1) % self.log_every_n_epochs == 0:
-
-        #     self.log_dict(
-        #         {
-        #             "latent_reg_loss": reg_loss,
-        #             "prediction_loss": chunk_loss,
-        #         },
-        #         logger=True
-        #     )
-
-        #     self.log(
-        #         "train_loss",
-        #         training_loss,
-        #         on_step=False,
-        #         on_epoch=True,
-        #         prog_bar=True,
-        #         logger=True
-        #     )
-"""
