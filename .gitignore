@@ -1,50 +1,67 @@
-# Ignore all __pycache__ folders
-**/__pycache__/
-
-# Ignore all .ipynb files
-*.ipynb
-# Except some notebook 
-!summarize_experiment_performance.ipynb
-
-#Ignore all text files
-*.txt
-!requirements.txt
-
-#Ignore specific files
-temp.py
-useful_stuff.py
-config.py 
-
-
-experiments/
-# data/
-# results/
-
-# # -----------------------
-# # Python artifacts
-# # -----------------------
+# ===============================
+# Python
+# ===============================
 __pycache__/
-# *.pyc
-# *.pyo
-# *.pyd
-# *.py[cod]
-# *.egg
-# *.egg-info/
-# dist/
-# build/
-# *.so
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+build/
+dist/
+.eggs/
 
-# -----------------------
-# Data & outputs
-# -----------------------
-*.ckpt
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ===============================
+# Jupyter
+# ===============================
+.ipynb_checkpoints/
+*.ipynb
+!summarize_experiment_performance.ipynb  # keep only this notebook tracked
+
+# ===============================
+# Environment / local config
+# ===============================
+config.py
+environment.yml
+*.env
+.env
+
+# ===============================
+# Data (usually should NOT be versioned)
+# ===============================
+data/
+datasets/
+*.csv
+*.h5
+*.npz
+
+# ===============================
+# Training outputs / experiments
+# ===============================
+experiments/
 results/
+logs/
+runs/
 cache/
+checkpoints/
+*.ckpt
+*.pt
+*.pth
 
-
-# -----------------------
-# Optional: temporary / scratch
-# -----------------------
+# ===============================
+# Temporary / scratch
+# ===============================
 tmp/
 temp/
 *.log
+
+# ===============================
+# OS junk
+# ===============================
+.DS_Store
+Thumbs.db
