@@ -18,19 +18,19 @@ from model.deepsdf_dataloader import SDFDataModule
 from model.deepsdf_decoder import Decoder, DeepSDF 
 
 
-# # =========== setup for H100 / A100 / L40S GPU =========== #
-# torch.set_float32_matmul_precision("high")   # "medium" if instability (NaNs / loss spikes) appear, "high" is ignored by L40S
-# PRECISION = "bf16-mixed"
-# # next flags ignored by L40S
-# torch.backends.cuda.matmul.allow_tf32 = True
-# torch.backends.cudnn.allow_tf32 = True
+# =========== setup for H100 / A100 / L40S GPU =========== #
+torch.set_float32_matmul_precision("high")   # "medium" if instability (NaNs / loss spikes) appear, "high" is ignored by L40S
+PRECISION = "bf16-mixed"
+# next flags ignored by L40S
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 # # =========== setup for RTX 3090 GPU =========== #
 # torch.set_float32_matmul_precision("medium") # "medium" if instability (NaNs / loss spikes) appear
 # PRECISION = "16-mixed"
 
-# # =========== setup for GTX 1050 GPU =========== #
-PRECISION = "32"
+# # # =========== setup for GTX 1050 GPU =========== #
+# PRECISION = "32"
 
 from config import SPECS_FILES_DIR, EXPERIMENTS_DIR
 
@@ -107,7 +107,7 @@ class SaveDecoderCallback(pl.Callback):
 # TRAINING
 # ============================== #
 
-def train(specs: dict, experiment_name, num_workers = 10, show_progress = False):
+def train(specs: dict, experiment_name, num_workers, show_progress = False):
 
     # region LOAD DATA 
     datamodule = SDFDataModule(
@@ -193,6 +193,7 @@ if __name__ == "__main__":
     
     import argparse
     from pprint import pprint
+    import resource
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--experiment_name", "-e", type=str, default = None,
@@ -201,7 +202,7 @@ if __name__ == "__main__":
     parser.add_argument("--specs_file_path", "-s", type=str, default = "specs_deepsdfatria.json")
     parser.add_argument("--train_mode", type=str, default="use_specs_file")
     parser.add_argument("--override_specs", type=str, default=None)
-    parser.add_argument("--num_workers_dataloader", type=int, default=10)
+    parser.add_argument("--num_workers_dataloader", type=int, default=0)
     parser.add_argument("--show_progress", action="store_true")
     args = parser.parse_args()
 
@@ -220,7 +221,9 @@ if __name__ == "__main__":
                 show_progress = args.show_progress
             )
 
-            print("Peak GPU memory (GB):", torch.cuda.max_memory_allocated() / 1024**3)
+            # print("Peak GPU memory (GB):", torch.cuda.max_memory_allocated() / 1024**3)
+
+            # print("Peak RAM used (GB):", resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024**2)
 
         case "compose_specs_from_options":
 
@@ -245,6 +248,8 @@ if __name__ == "__main__":
                 show_progress = args.show_progress )
             
             print("Peak GPU memory (GB):", torch.cuda.max_memory_allocated() / 1024**3)
+
+            print("Peak RAM used (GB):", resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024**2)
 
     # this is to then be captured from a bash file and retrieve the version that has been trained to send myself an email
     print(f"TRAINING_DONE_VERSION={version}", flush=True)

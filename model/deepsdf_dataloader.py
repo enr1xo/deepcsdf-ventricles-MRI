@@ -201,7 +201,7 @@ class SDFDataModule(pl.LightningDataModule):
     def __init__(
         self,
         specs: dict,
-        num_workers = 6,
+        num_workers = 0,
         shuffle=True,
         drop_last=True
     ):
