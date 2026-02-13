@@ -4,6 +4,7 @@ import umap
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
+import json
 
 
 COLORS_PALETTE = {
@@ -179,38 +180,98 @@ def plot_UMAP(latents, patients_names, n_neighbors = 15, min_dist = 0.05, save_f
 
 
 
+# ================================================================ #
+# region helpers
+# ================================================================ #
+def get_dataset_patients_names(data: dict):
+    patient_names = []
+    # file names are <patient_name>-<suffix>.npy
+    for fullfname in data:
+        patient_name = fullfname.split("-")[0]
+        patient_names.append(patient_name)
 
+    return patient_names
 
+def associate_trained_embeddings_with_patients(version_dir):
 
+    latents = np.load( version_dir / "latents.npy" )
+
+    specs = json.load( open(version_dir / "hparams.json") )
+
+    # this is the same file the dataloader uses in SDFSamples dataloader when in "train" mode !!
+    train_fname = DATA_DIR / specs["TrainSplit"]
+
+    patient_names = get_dataset_patients_names( json.load(open(train_fname)) )
+
+    return latents, patient_names
 
 
 if __name__ == "__main__":
 
     from pathlib import Path
 
-    LATENTS_DIR = Path("/home/davidenava_linux/AtriaProject/deepcsdf-atria/results/fitted_latents")
-    # # latents_name = "latent_codes_89_patients_version_114-codereg=0.000200-epochs=250"
-    latents_name = "latent_codes_109_patients_version_89-codereg=0.000002-epochs=250"
+    # LATENTS_DIR = Path("experiments/training_sweeps/RegLambda/version_3")
 
-    fname = LATENTS_DIR / str(latents_name + ".npz")
-    latent_dict = np.load(fname)
+    # # # latents_name = "latent_codes_89_patients_version_114-codereg=0.000200-epochs=250"
+    # # latents_name = "latent_codes_109_patients_version_89-codereg=0.000200-epochs=250"
+    # # fname = LATENTS_DIR / str(latents_name + ".npz")
+    # # latent_dict = np.load(fname)
 
-    patients_names = []
-    latent_codes = []
-    for name, code in latent_dict.items():
-        if name not in ["AF001", "AF069", "LEU_NORM_F004"]:
-            patients_names.append(name)
-            latent_codes.append(code)
+    # patients_names = []
+    # latent_codes = []
+    # for name, code in latent_dict.items():
+    #     if name not in ["AF001", "AF069", "LEU_NORM_F004"]:
+    #         patients_names.append(name)
+    #         latent_codes.append(code)
 
-    latent_codes = np.array(latent_codes)
+    # latent_codes = np.array(latent_codes)
 
-    IMAGES_DIR = Path("/home/davidenava_linux/AtriaProject/deepcsdf-atria/results/images")
+    # IMAGES_DIR = Path("/home/davidenava_linux/AtriaProject/deepcsdf-atria/results/images")
 
-    save_fname = IMAGES_DIR / f"PCA-{latents_name}.svg"
-    plot_PCA(latent_codes, patients_names, save_fname)
+    # # save_fname = IMAGES_DIR / f"PCA-{latents_name}.svg"
+    # plot_PCA(latent_codes, patients_names, None)
 
-    save_fname = IMAGES_DIR / f"tSNE-{latents_name}.svg"
-    plot_tSNE(latent_codes, patients_names, learning_rate=80, save_fname = save_fname)
+    # # save_fname = IMAGES_DIR / f"tSNE-{latents_name}.svg"
+    # plot_tSNE(latent_codes, patients_names, learning_rate=80, save_fname = None)
 
-    save_fname = IMAGES_DIR / f"UMAP-{latents_name}.svg"
-    plot_UMAP(latent_codes, patients_names, save_fname = save_fname)
+    # # save_fname = IMAGES_DIR / f"UMAP-{latents_name}.svg"
+    # plot_UMAP(latent_codes, patients_names, save_fname = None)
+
+    # Add project root to sys.path
+    import sys
+
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+    sys.path.append(str(PROJECT_ROOT))
+
+    # Now you can import config
+    from config import DATA_DIR
+
+    version_dir = Path("experiments/training_sweeps/RegLambda/version_0")
+
+    latents, patient_names = associate_trained_embeddings_with_patients(version_dir)
+
+    colors = map_categories(patient_names)
+
+    for i,latent in enumerate(latents):
+        #if colors[i] == "AF":
+            c = COLORS_PALETTE["coral"] if colors[i] == "AF" else COLORS_PALETTE["electric_blue"]
+            plt.scatter( np.arange(0, latents.shape[-1]), latent, c = c, s=15)
+    plt.show()
+
+    plot_PCA(latents, patient_names)
+
+    T_max = 0.0
+    for perp in [5,10,15,20]:
+        for lr in [50,100,150,200]:
+            tsne = TSNE(n_components=2, perplexity=perp, learning_rate=lr, max_iter=1000, random_state=42)
+            latents_embedded = tsne.fit_transform(latents)
+            T = trustworthiness(latents, latents_embedded)
+            if T > T_max:
+                T_max = T
+                perplexity = perp
+                learning_rate = lr
+
+    plot_tSNE(latents, patient_names, learning_rate=learning_rate, perplexity=perplexity)
+    # plot_UMAP(latents, patient_names)
+
+    
