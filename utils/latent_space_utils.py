@@ -49,6 +49,36 @@ COLORS_PALETTE = {
 }
 
 
+
+# ================================================================ #
+# region helpers
+# ================================================================ #
+def get_dataset_patients_names(data: dict):
+    patient_names = []
+    # file names are <patient_name>-<suffix>.npy
+    for fullfname in data:
+        patient_name = fullfname.split("-")[0]
+        patient_names.append(patient_name)
+
+    return patient_names
+
+def associate_trained_embeddings_with_patients(version_dir):
+
+    latents = np.load( version_dir / "latents.npy" )
+
+    specs = json.load( open(version_dir / "hparams.json") )
+
+    # this is the same file the dataloader uses in SDFSamples dataloader when in "train" mode !!
+    train_fname = DATA_DIR / specs["TrainSplit"]
+
+    patient_names = get_dataset_patients_names( json.load(open(train_fname)) )
+
+    return latents, patient_names
+
+
+
+
+
 # ================================================================ #
 # region latent space visualization
 # ================================================================ #
@@ -90,6 +120,31 @@ def plot_PCA(latents, patients_names, save_fname = None):
     else:
         plt.savefig(save_fname, dpi=300, bbox_inches='tight') 
         plt.close()        
+
+    return
+
+def plot_PCA_explained_variance(latents, save_fname=None):
+
+    pca = PCA()
+    pca.fit(latents)
+    
+    explained_ratio = np.cumsum(pca.explained_variance_ratio_)
+
+    effective_dim = np.argmax(explained_ratio >= 0.95) + 1 
+
+    plt.figure(figsize=(8,5))
+    plt.plot(np.arange(1, len(explained_ratio)+1), explained_ratio, marker='o')
+    plt.axvline(effective_dim, color='r', linestyle='--', label=f'95% variance: {effective_dim} dims')
+    plt.xlabel("Number of principal components")
+    plt.ylabel("Cumulative explained variance")
+    plt.title("PCA: Explained variance vs components")
+    plt.grid(True)
+
+    if save_fname is None:
+        plt.show()
+    else:
+        plt.savefig(save_fname, dpi=300, bbox_inches='tight') 
+        plt.close() 
 
     return
 
@@ -178,37 +233,36 @@ def plot_UMAP(latents, patients_names, n_neighbors = 15, min_dist = 0.05, save_f
 
     return
 
+def mahalanobis(latents):
+    # assuming latents are (N, latent size) !
 
+    mu = np.mean(latents, axis=0)  # shape (64,)
 
-# ================================================================ #
-# region helpers
-# ================================================================ #
-def get_dataset_patients_names(data: dict):
-    patient_names = []
-    # file names are <patient_name>-<suffix>.npy
-    for fullfname in data:
-        patient_name = fullfname.split("-")[0]
-        patient_names.append(patient_name)
+    X_centered = latents - mu      # shape (N, 64)
 
-    return patient_names
+    cov = np.cov(X_centered, rowvar=False)  # shape (64, 64)
 
-def associate_trained_embeddings_with_patients(version_dir):
+    epsilon = 1e-6
+    cov_reg = cov + epsilon * np.eye(cov.shape[0])
 
-    latents = np.load( version_dir / "latents.npy" )
+    inv_cov = np.linalg.inv(cov_reg)
 
-    specs = json.load( open(version_dir / "hparams.json") )
+    mahl = np.sqrt(np.sum((X_centered @ inv_cov) * X_centered, axis=1))  # shape (N,)
 
-    # this is the same file the dataloader uses in SDFSamples dataloader when in "train" mode !!
-    train_fname = DATA_DIR / specs["TrainSplit"]
-
-    patient_names = get_dataset_patients_names( json.load(open(train_fname)) )
-
-    return latents, patient_names
+    return mahl
 
 
 if __name__ == "__main__":
 
     from pathlib import Path
+    # Add project root to sys.path
+    import sys
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+    sys.path.append(str(PROJECT_ROOT))
+
+    # Now can import config
+    from config import DATA_DIR
+
 
     # LATENTS_DIR = Path("experiments/training_sweeps/RegLambda/version_3")
 
@@ -237,41 +291,50 @@ if __name__ == "__main__":
     # # save_fname = IMAGES_DIR / f"UMAP-{latents_name}.svg"
     # plot_UMAP(latent_codes, patients_names, save_fname = None)
 
-    # Add project root to sys.path
-    import sys
 
-    PROJECT_ROOT = Path(__file__).resolve().parent.parent
-    sys.path.append(str(PROJECT_ROOT))
 
-    # Now you can import config
-    from config import DATA_DIR
-
-    version_dir = Path("experiments/training_sweeps/RegLambda/version_0")
+    version_dir = Path("/home/navarri/AtriaProject/deepcsdf-atria/experiments/training_sweeps/RegLambda/version_0")
 
     latents, patient_names = associate_trained_embeddings_with_patients(version_dir)
 
-    colors = map_categories(patient_names)
+    # colors = map_categories(patient_names)
 
-    for i,latent in enumerate(latents):
-        #if colors[i] == "AF":
-            c = COLORS_PALETTE["coral"] if colors[i] == "AF" else COLORS_PALETTE["electric_blue"]
-            plt.scatter( np.arange(0, latents.shape[-1]), latent, c = c, s=15)
-    plt.show()
+    # for i,latent in enumerate(latents):
+    #     #if colors[i] == "AF":
+    #         c = COLORS_PALETTE["coral"] if colors[i] == "AF" else COLORS_PALETTE["electric_blue"]
+    #         plt.scatter( np.arange(0, latents.shape[-1]), latent, c = c, s=15)
+    # plt.show()
 
-    plot_PCA(latents, patient_names)
+    # plot_PCA(latents, patient_names)
 
-    T_max = 0.0
-    for perp in [5,10,15,20]:
-        for lr in [50,100,150,200]:
-            tsne = TSNE(n_components=2, perplexity=perp, learning_rate=lr, max_iter=1000, random_state=42)
-            latents_embedded = tsne.fit_transform(latents)
-            T = trustworthiness(latents, latents_embedded)
-            if T > T_max:
-                T_max = T
-                perplexity = perp
-                learning_rate = lr
+    # T_max = 0.0
+    # for perp in [5,10,15,20]:
+    #     for lr in [50,100,150,200]:
+    #         tsne = TSNE(n_components=2, perplexity=perp, learning_rate=lr, max_iter=1000, random_state=42)
+    #         latents_embedded = tsne.fit_transform(latents)
+    #         T = trustworthiness(latents, latents_embedded)
+    #         if T > T_max:
+    #             T_max = T
+    #             perplexity = perp
+    #             learning_rate = lr
 
-    plot_tSNE(latents, patient_names, learning_rate=learning_rate, perplexity=perplexity)
+    # plot_tSNE(latents, patient_names, learning_rate=learning_rate, perplexity=perplexity)
     # plot_UMAP(latents, patient_names)
 
-    
+    # d2 = mahalanobis(latents) ** 2
+
+    # import scipy.stats as stats
+
+    # plt.hist(d2, bins=30, density=True, alpha=0.6, label='Empirical')
+
+    # x = np.linspace(min(d2), max(d2), 200)
+    # plt.plot(x, stats.chi2.pdf(x, df=64), 'r-', lw=2, label=r'$\chi^2_{64}$')
+    # plt.xlabel(r'Squared Mahalanobis distance $d_M^2$')
+    # plt.ylabel('Density')
+    # plt.legend()
+    # plt.show()
+
+    # stats.probplot(d2, dist="chi2", sparams=(64,), plot=plt)
+    # plt.title("Chi-squared Q-Q plot")
+    # plt.show()
+
