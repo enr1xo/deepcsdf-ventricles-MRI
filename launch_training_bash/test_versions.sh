@@ -1,27 +1,18 @@
 #!/bin/bash
 
+export CUDA_VISIBLE_DEVICES=0
+
 # ---- Parameters ----
-VERSION_DIR=experiments/training_sweeps/LipAndAct
-EXPERIMENT=training_sweeps/LipAndAct
+VERSION_DIR=experiments/BatchSizeEffect
+EXPERIMENT=BatchSizeEffect
 PYTHON_SCRIPT=test.py
-TEST_DATASET="test/data_fnames_test.json"
-SLEEP_INTERVAL=60       # seconds
-SAFETY_MARGIN_MB=500   # safety
-MEM_REQUIRED_MB=1000    
-MAX_PARALLEL=15 # If computing LDDMM metric (which uses GPU acceleration), this may  be too many because GPU usage may peak a lot 
+TEST_DATASET="train/data_fnames_train-20patients.json" #"test/data_fnames_test.json"
+SLEEP_INTERVAL=2       # seconds
+MAX_PARALLEL=1 # If computing LDDMM metric (which uses GPU acceleration), this may  be too many because GPU usage may peak a lot 
 LOG_DIR=experiments/logs-test-temp
 # --------------------
-
 mkdir "$LOG_DIR"
 
-# Function to get free GPU memory in MB
-GPU_ID=1 
-function free_mem_mb() {
-    nvidia-smi \
-      --id=$GPU_ID \
-      --query-gpu=memory.free \
-      --format=csv,noheader,nounits
-}
 
 # Clean job array function
 function clean_jobs() {
@@ -36,45 +27,48 @@ function clean_jobs() {
 
 declare -a JOB_PIDS=()
 
+echo "Experiment: $EXPERIMENT"
 
 for dir in "$VERSION_DIR"/*/; do
     ver=${dir%/}
     ver="${ver##*/}"
 
-            
-        while true; do
-            clean_jobs
-            free=$(free_mem_mb)
-            running="${#JOB_PIDS[@]}"
+    # num=${ver#version_}  # removes "version_" prefix
+    # if (( num <= 2 || (num >= 10 && num <= 15) )); then
+    #     echo "Skipping $ver"
+    #     continue
+    # fi
 
-            echo "Free GPU memory: ${free}MB | Running jobs: ${running}"
+    while true; do
+        clean_jobs
 
-            # Check if enough memory + below max jobs
-            if (( free > MEM_REQUIRED_MB + SAFETY_MARGIN_MB && running < MAX_PARALLEL )); then
-                echo "Launching $ver"
+        running="${#JOB_PIDS[@]}"
 
-                logfile="$LOG_DIR/test_${ver}.log"
+        # Check if enough memory + below max jobs
+        if (( running < MAX_PARALLEL )); then
+            echo "Running $ver"
 
-                python "$PYTHON_SCRIPT" \
-                    -e "$EXPERIMENT" \
-                    -v "$ver" \
-                    -od "$TEST_DATASET" \
-                    -nsamp 4096 \
-                    -N 300 \
-                    -lreg 1e-4 \
-                    -chd \
-                    -hauss \
-                     &> "$logfile" &
+            logfile="$LOG_DIR/test_${ver}.log"
 
-                JOB_PIDS+=($!)
-                sleep 10
-                break
-            else
-                echo "Waiting for GPU memory or jobs ending  $(date)"
-                sleep "$SLEEP_INTERVAL"
-            fi
-        done
+            python "$PYTHON_SCRIPT" \
+                -e "$EXPERIMENT" \
+                -v "$ver" \
+                -od "$TEST_DATASET" \
+                -nsamp 2048 \
+                -N 300 \
+                -lreg 1e-4 \
+                -lddmm \
+                -hauss \
+                -chd \
+                    &> "$logfile" &
 
+            JOB_PIDS+=($!)
+            sleep 2
+            break
+        else
+            sleep "$SLEEP_INTERVAL"
+        fi
+    done
 done
 
 
