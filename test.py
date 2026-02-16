@@ -1,3 +1,5 @@
+# import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0" 
 import json
 from pathlib import Path
 from loguru import logger
@@ -26,6 +28,7 @@ from config import (
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+print("Using GPU:", torch.cuda.get_device_name(DEVICE))
 
 # ======================== #
 # Helpers
@@ -266,7 +269,7 @@ def run(
 
         code_reg_lambda = latent_reg_factor 
 
-        print("Code reg factor : {beta * code_reg_lambda}")
+        print(f"Code reg factor : {beta * code_reg_lambda}")
 
         num_epochs = num_epochs_fit_latent
 
@@ -462,12 +465,21 @@ def run(
 
                     if compute_chamfer or compute_haussdorff or compute_lddmm: 
                         # ======= COMPUTE METRICS ======= # 
-                        # use meshes in their ORIGINAL micrometers scale
-                        logger.info("Remeshing and sampling surface")
-                        mesh_gt = remesh(mesh_gt, n_points=50000)
+
+                        # use meshes in their ORIGINAL micrometers scale, remeshed at the same resolution
+                        logger.info("Remeshing ...")
+
+                        # check if already present in mesh directory and load, so I save a little bit of time instead of remeshing always the original ones
+                        mesh_gt_remeshed_file = next( patient_dir.rglob(f"{organ}-processed-remeshed.vtp"), None)
+                        if mesh_gt_remeshed_file is not None:
+                            mesh_gt = pv.read(mesh_gt_remeshed_file)
+                        else:
+                            mesh_gt = remesh(mesh_gt, n_points=50000) 
+
                         mesh_reconstructed = remesh(mesh_reconstructed, n_points=50000)
 
                         if compute_chamfer or compute_haussdorff:
+                            logger.info("Sampling points ...")
                             samples_orig = make_trimesh_from_pv(mesh_gt).sample(count=50000)
                             samples_rec = make_trimesh_from_pv(mesh_reconstructed).sample(count=50000)
 
@@ -481,7 +493,7 @@ def run(
 
                         if compute_lddmm:
                             logger.info(f"Computing LDDMM")
-                            LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False)
+                            LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False, device = DEVICE)
     
     if compute_chamfer:
         exp_name = experiment_name.split("/")[-1]
@@ -500,6 +512,7 @@ def run(
         df.to_parquet(METRICS_DIR / f"{version}-{exp_name}-chamfer-{which_shapes}.parquet", index=False)
 
     if compute_haussdorff:
+        exp_name = experiment_name.split("/")[-1]
         # haussdorff
         rows = []
         for name, organs in haussdorff_dists.items():
@@ -515,6 +528,7 @@ def run(
         df.to_parquet(METRICS_DIR / f"{version}-{exp_name}-haussdorff-{which_shapes}.parquet", index=False)
 
     if compute_lddmm:
+        exp_name = experiment_name.split("/")[-1]
         # LDDMM
         rows = []
         for name, organs in LDDMM_losses.items():
