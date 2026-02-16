@@ -2,11 +2,11 @@ from scipy.spatial import KDTree
 import numpy as np
 import pyvista as pv
 from .surface_utils import remesh
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import torch
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 
@@ -29,9 +29,9 @@ def chamfer_distance_L2_squared(points1, points2):
     dists_2, _ = tree.query(points1)
     return np.mean(dists_1 ** 2)  + np.mean(dists_2 ** 2)
 
-def varifold_inner(faces1, faces2, gamma = 1.0, block=2048):
-    faces1 = faces1.to(DEVICE)
-    faces2 = faces2.to(DEVICE)
+def varifold_inner(faces1, faces2, gamma = 1.0, block=2048, device = "gpu"):
+    faces1 = faces1.to(device)
+    faces2 = faces2.to(device)
 
     c1 = faces1[:, :3]
     n1 = faces1[:, 3:6]
@@ -41,7 +41,7 @@ def varifold_inner(faces1, faces2, gamma = 1.0, block=2048):
     n2 = faces2[:, 3:6]
     a2 = faces2[:, 6]
 
-    total = torch.zeros(1, device=DEVICE)
+    total = torch.zeros(1, device=device)
 
     c2_norm2 = (c2 ** 2).sum(dim=1)  # (N2,)
     n2T = n2.t()                     # (3, N2)
@@ -69,7 +69,7 @@ def varifold_inner(faces1, faces2, gamma = 1.0, block=2048):
 
     return total
 
-def LDDMM_loss(mesh1: pv.PolyData, mesh2: pv.PolyData, compute_normals = True, remeshing = True, n_points = 50000, gamma = 1.0):
+def LDDMM_loss(mesh1: pv.PolyData, mesh2: pv.PolyData, compute_normals = True, remeshing = True, n_points = 50000, gamma = 1.0, device = "gpu"):
 
     # remeshing to have same resolution
     if remeshing:
@@ -111,9 +111,9 @@ def LDDMM_loss(mesh1: pv.PolyData, mesh2: pv.PolyData, compute_normals = True, r
     # print("Number of faces mesh 2: ", faces2.shape )
 
     # logger.info("Computing LDDMM loss")
-    K11 = varifold_inner(faces1, faces1, gamma)
-    K22 = varifold_inner(faces2, faces2, gamma)
-    K12 = varifold_inner(faces1, faces2, gamma)
+    K11 = varifold_inner(faces1, faces1, gamma, device=device)
+    K22 = varifold_inner(faces2, faces2, gamma, device=device)
+    K12 = varifold_inner(faces1, faces2, gamma, device=device)
 
     dL = K11 + K22 - 2*K12
 
