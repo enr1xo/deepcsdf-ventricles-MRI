@@ -109,7 +109,7 @@ def find_pointcloud_noise(
         
             if i == num_epochs - 1: # last epoch
                 epsilon = recon_loss.detach().item() / (num_samp_per_scene - 1) # detach or on the next epoch it is still attached to the computational graph, instead like this is just a scalar to be reused
-                epsilons.append(epsilon)
+                epsilons.append( np.sqrt(epsilon) )
 
         # stopping criterion   ...
         tol = 1e-7 
@@ -265,6 +265,8 @@ def run(
         beta = 100 * find_pointcloud_noise(decoder, model, xyz, sdf_gt, num_epochs_fit_latent=250, lr_fit_latent=0.005)
 
         code_reg_lambda = latent_reg_factor 
+
+        print("Code reg factor : {beta * code_reg_lambda}")
 
         num_epochs = num_epochs_fit_latent
 
@@ -500,7 +502,7 @@ def run(
     if compute_haussdorff:
         # haussdorff
         rows = []
-        for name, organs in chamfer_dists.items():
+        for name, organs in haussdorff_dists.items():
             for organ, metric in organs.items():
                 rows.append({
                     "version": int(version.split("_")[-1]),
