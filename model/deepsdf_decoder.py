@@ -56,6 +56,8 @@ class Decoder(nn.Module):
         self.pos_enc_dim = specs.get("pos_enc_dim", 10)
 
         self.latent_in = specs.get("latent_in", [-1])
+
+        self.actual_concatenation = specs.get("actual_skip_concatenation", False)
         
         self.norm_layers = specs.get("norm_layers", [-1])
         
@@ -85,6 +87,8 @@ class Decoder(nn.Module):
         # .float() Converts all the parameters and buffers in that layer to double precision instead of default float32
         for layer in range(0, self.num_layers - 1): 
             if layer + 1 in self.latent_in:
+                if self.actual_concatenation:
+                    self.dims[layer + 1] += self.dims[0]
                 out_dim_ = self.dims[layer + 1] - self.dims[0] # if using positional encoding, this might be 0 if first layer becomes too big --> cannot use very large positional encoding !!!
             else:
                 out_dim_ = self.dims[layer + 1]
@@ -398,9 +402,10 @@ if __name__ == "__main__":
         "out_dim" : 3,
         "dims" : [256,256,256,256,256],
         "latent_in" : [3],
+        "actual_skip_concatenation" : True,
         "positional_encoding" : False,
         "pos_enc_dim" : 4,   
-        "lipschitz_layers" : [0,1,2],
+        "lipschitz_layers" : [-1],
         "use_lipschitz_normalized_layers" : False,
         "activation" : "SiLU",
         "last_tanh" : False,
