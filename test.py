@@ -1,5 +1,5 @@
-# import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0" 
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0" 
 import json
 from pathlib import Path
 from loguru import logger
@@ -16,6 +16,7 @@ from vtk import vtkImplicitPolyDataDistance
 from tqdm import tqdm
 import pandas as pd
 from pprint import pprint
+import math
 
 from config import (
     EXPERIMENTS_DIR,
@@ -29,6 +30,7 @@ from config import (
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 print("Using GPU:", torch.cuda.get_device_name(DEVICE))
+
 
 # ======================== #
 # Helpers
@@ -50,6 +52,7 @@ def find_pointcloud_noise(
         sdf_gt,
         num_epochs_fit_latent,
         lr_fit_latent,
+        code_reg_lambda,
         max_iter = 10
     ):
     """
@@ -69,8 +72,6 @@ def find_pointcloud_noise(
     optimizer = torch.optim.Adam(params=[latent], lr=lr_fit_latent)
     
     num_samp_per_scene = sdf_gt.shape[0]
-
-    code_reg_lambda = 2e-05
 
     epsilon = 0.0
 
@@ -111,18 +112,19 @@ def find_pointcloud_noise(
             optimizer.step()
         
             if i == num_epochs - 1: # last epoch
-                epsilon = recon_loss.detach().item() / (num_samp_per_scene - 1) # detach or on the next epoch it is still attached to the computational graph, instead like this is just a scalar to be reused
-                epsilons.append( np.sqrt(epsilon) )
+                epsilon = np.sqrt( recon_loss.detach().item() / (num_samp_per_scene - 1) ) # detach or on the next epoch it is still attached to the computational graph, instead like this is just a scalar to be reused
+                epsilons.append(epsilon)
 
         # stopping criterion   ...
         tol = 1e-7 
-        if abs(epsilons[-1] - epsilons[-2]) < tol:
+        if abs(epsilons[-1]**2 - epsilons[-2]**2) < tol:
             break
     
     # for i,ep in enumerate(epsilons):
     #     print(f"eps_{i} = ", ep)
 
     return epsilons[-1]
+
 
 # ======================== #
 # RUN TESTS
@@ -134,8 +136,9 @@ def run(
     num_samp_per_scene_for_fit = None,
     hparams_file = None,
     num_epochs_fit_latent = 250,
-    latent_reg_factor = 2e-3,
+    latent_reg_factor = None,
     lr_fit_latent = 5e-3,
+    initialize_latent_from_zero=True,
     reconstruct_surface = True,
     reconstruct_from = "all",
     show_reconstruction_images = True,
@@ -156,6 +159,8 @@ def run(
         hparams_file =  version_dir / "hparams.json"
 
     specs = json.load( open(hparams_file) )
+
+    pprint(specs)
     
     # region manual test dataset
     if override_with_dataset is not None:
@@ -210,6 +215,9 @@ def run(
     enforce_minmax = specs.get("enforce_minmax", False)
     clamp_distance = specs.get("clamp_distance", 0.1)
 
+    if latent_reg_factor is None:
+        latent_reg_factor = specs["code_reg_lambda"]
+
     chamfer_dists = {}
 
     LDDMM_losses = {}
@@ -258,16 +266,19 @@ def run(
         # sampling a latent using MultivariateNormal and rsample()
         # TODO: add option to start from somewhere else (from mean of loaded latents, random sample, ...)
         latent_size = decoder.latent_size
-        mean_code = torch.zeros(latent_size, device=DEVICE)  
-        latent = mean_code
 
+        if initialize_latent_from_zero:
+            latent = torch.zeros(latent_size, device=DEVICE)  
+        else:
+            latent = torch.randn(latent_size, device=DEVICE) * ( 1.0 / math.sqrt(latent_size) ) # same std as in training 
+        
         latent.requires_grad = True
         
         loss_fn = model.loss_fn
 
-        beta = 100 * find_pointcloud_noise(decoder, model, xyz, sdf_gt, num_epochs_fit_latent=250, lr_fit_latent=0.005)
-
         code_reg_lambda = latent_reg_factor 
+
+        beta = 100 * find_pointcloud_noise(decoder, model, xyz, sdf_gt, code_reg_lambda=code_reg_lambda, num_epochs_fit_latent=250, lr_fit_latent=0.005)
 
         print(f"Code reg factor : {beta * code_reg_lambda}")
 
@@ -316,7 +327,11 @@ def run(
             reg_losses.append(reg_loss.cpu().detach().numpy())
             losses.append(loss.cpu().detach().numpy())
     
-        latent.requires_grad = False
+        latent.requires_grad = False    
+
+        # import matplotlib.pyplot as plt
+        # plt.plot(np.arange(len(losses)), losses)
+        # plt.show()
 
 
         if save_latent_codes:
@@ -351,10 +366,10 @@ def run(
 
                 for i in range(n_batches + 1):
                     if i < n_batches:
-                        print(250000 * i, 250000 * (i + 1))
+                        # print(250000 * i, 250000 * (i + 1))
                         xyz = torch.from_numpy(xyz_raw[250000 * i : 250000 * (i + 1)]).to(DEVICE)
                     else:
-                        print(250000 * i, ": ")
+                        # print(250000 * i, ": ")
                         xyz = torch.from_numpy(xyz_raw[250000 * i :]).to(DEVICE)
 
                     if decoder.use_positional_encoding:
@@ -426,15 +441,18 @@ def run(
                     #  --> remove decoder scale from the reconstructed mesh
                     mesh_reconstructed.points /= decoder_input_scale 
 
-                    # bring to original range
-                    scale = mesh_gt.field_data["scale-tooriginalrange"]
-                    mesh_gt.points *= scale
-                    mesh_reconstructed.points *= scale
+                    ## !!! NOW BOTH MESHES ARE AT THE UNIT SCALE !!! 
+
 
                     if show_reconstruction_images or save_reconstruction_images:
                         # copy meshes so I don't modify originals, less of a pain to keep track of
                         mesh_gt_show = mesh_gt.copy()
                         mesh_reconstructed_show = mesh_reconstructed.copy()
+
+                        # bring to original range for visualization
+                        scale = mesh_gt.field_data["scale-tooriginalrange"]
+                        mesh_gt_show.points *= scale
+                        mesh_reconstructed_show.points *= scale
 
                         # ==== compute (signed!) distances of points on the predicted surface from the nearest spot on the original surface ==== #               
                         implicit_distance = vtkImplicitPolyDataDistance()
@@ -465,10 +483,7 @@ def run(
 
                     if compute_chamfer or compute_haussdorff or compute_lddmm: 
                         # ======= COMPUTE METRICS ======= # 
-
-                        # use meshes in their ORIGINAL micrometers scale, remeshed at the same resolution
-                        logger.info("Remeshing ...")
-
+                        # use meshes in UNIT scale !!!, remeshed at the same resolution
                         # check if already present in mesh directory and load, so I save a little bit of time instead of remeshing always the original ones
                         mesh_gt_remeshed_file = next( patient_dir.rglob(f"{organ}-processed-remeshed.vtp"), None)
                         if mesh_gt_remeshed_file is not None:
@@ -480,8 +495,8 @@ def run(
 
                         if compute_chamfer or compute_haussdorff:
                             logger.info("Sampling points ...")
-                            samples_orig = make_trimesh_from_pv(mesh_gt).sample(count=50000)
-                            samples_rec = make_trimesh_from_pv(mesh_reconstructed).sample(count=50000)
+                            samples_orig = make_trimesh_from_pv(mesh_gt).sample(count=100000)
+                            samples_rec = make_trimesh_from_pv(mesh_reconstructed).sample(count=100000)
 
                             if compute_chamfer:
                                 logger.info(f"Computing chamfer")
@@ -493,7 +508,10 @@ def run(
 
                         if compute_lddmm:
                             logger.info(f"Computing LDDMM")
-                            LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False, device = DEVICE)
+                            # # pick gamma based on mesh size, so loss doesn't over or underflow IF I compute it on meshes at huge scales like micrometers
+                            # typical_distance = utils.metrics.estimate_typical_distance(mesh1) # both meshes are remeshed to same resolution, so doesn't matter which I use
+                            # gamma = 1.0 / typical_distance**2
+                            LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False, gamma = 1.0, device = DEVICE)
     
     if compute_chamfer:
         exp_name = experiment_name.split("/")[-1]
@@ -509,7 +527,8 @@ def run(
                     "value": metric,
                 })
         df = pd.DataFrame(rows)
-        df.to_parquet(METRICS_DIR / f"{version}-{exp_name}-chamfer-{which_shapes}.parquet", index=False)
+        df.to_csv(METRICS_DIR / f"{exp_name}-{version}-chamfer-{which_shapes}.csv", index=False)
+        logger.info("Saved chamfer distances")
 
     if compute_haussdorff:
         exp_name = experiment_name.split("/")[-1]
@@ -525,7 +544,8 @@ def run(
                     "value": metric,
                 })
         df = pd.DataFrame(rows)
-        df.to_parquet(METRICS_DIR / f"{version}-{exp_name}-haussdorff-{which_shapes}.parquet", index=False)
+        df.to_csv(METRICS_DIR / f"{exp_name}-{version}-haussdorff-{which_shapes}.csv", index=False)
+        logger.info("Saved haussdorff distances")
 
     if compute_lddmm:
         exp_name = experiment_name.split("/")[-1]
@@ -541,12 +561,13 @@ def run(
                     "value": metric,
                 })
         df = pd.DataFrame(rows)
-        df.to_parquet(METRICS_DIR / f"{version}-{exp_name}-LDDMM-{which_shapes}.parquet", index=False)
+        df.to_csv(METRICS_DIR / f"{exp_name}-{version}-LDDMM-{which_shapes}.csv", index=False)
+        logger.info("Saved LDDMM distances")
 
     if save_latent_codes:
-        fname = f"latent_codes_{len(latent_codes.keys())}_patients_{version}-codereg={code_reg_lambda:.6f}-epochs={num_epochs}.npz"
+        fname = f"{exp_name}-{version}-latent_codes_{len(latent_codes.keys())}_{which_shapes}_patients-codereg={code_reg_lambda:.6f}-epochs={num_epochs}.npz"
         logger.info(f"Saving fitted latents: {fname}")
-        np.savez(LATENTS_DIR / f"latent_codes_{len(latent_codes.keys())}_patients_{version}-codereg={code_reg_lambda:.6f}-epochs={num_epochs}.npz", **latent_codes)
+        np.savez(LATENTS_DIR / fname, **latent_codes)
 
     logger.info("Done.")
 
@@ -568,7 +589,7 @@ if __name__ == "__main__":
     parser.add_argument("--reconstruct_from", "-r", type=str, default="all", choices=["la","ra","all"])
     parser.add_argument("--num_samp_per_scene_for_fit", "-nsamp", type=int, default=None)
     parser.add_argument("--num_epochs", "-N", type=int, default=250)
-    parser.add_argument("--latent_reg_factor", "-lreg", type=float, default=2e-4)
+    parser.add_argument("--latent_reg_factor", "-lreg", type=float, default=None)
     parser.add_argument("--lr", type=float, default=0.005)
     parser.add_argument("--save_latent_codes", "-sc", action="store_true")
     parser.add_argument("--interactive_images", "-i", action="store_true")
@@ -578,7 +599,7 @@ if __name__ == "__main__":
     parser.add_argument("--compute_lddmm", "-lddmm", action="store_true")
     parser.add_argument("--compute_haussdorff", "-hauss", action="store_true")
     args = parser.parse_args()
-
+    
     exp_name = args.experiment_name
     vers = args.version
     test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "test/AF009_P2R-LEU_NORM_F004.json" # "train/data_fnames_train-20patients.json"
