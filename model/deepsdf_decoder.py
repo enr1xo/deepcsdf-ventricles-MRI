@@ -19,8 +19,13 @@ act_fn = {
     "GELUApprox": nn.GELU(approximate="tanh")
 }
 
-# ===== Lipschitz scaled layer, as in learning smooth neural functions via lip reg paper ===== #
+
+
+
 class LipschitzNormLinear(nn.Linear):
+    """
+        Lipschitz scaled layer, as in learning smooth neural functions via lip reg paper
+    """
     def __init__(self, in_features, out_features, bias=True, init_c=0.0):
         super().__init__(in_features, out_features, bias=bias)
 
@@ -291,22 +296,6 @@ class DeepSDF(pl.LightningModule):
         # move manually latents on the device to be sure it's on the same device as data when fitting the model
         self.lat_vecs["trainable"].to(self.device)
         return super().on_fit_start()
-    
-    def on_train_start(self):
-        # d = flatten_dict_for_logging(self.specs)
-        # self.logger.log_hyperparams(d)
-        # self.logger.log_hyperparams({"hparams_json": json.dumps(self.specs)}) # --> only for mlflow
-        if self.logger is not None: # manually save the specs
-            json_path = Path(self.logger.log_dir) / "hparams.json"
-            with open(json_path, "w") as f:
-                json.dump(self.specs, f, indent=4)
-
-    def on_train_end(self):
-        # for now, save as numpy data
-        if self.logger is not None:
-            npy_path = Path(self.logger.log_dir) / "latents.npy"
-            embeddings = self.lat_vecs["trainable"].weight.data.cpu().numpy()
-            np.save(npy_path, embeddings)
 
     def training_step(self, batch, batch_idx):
 
@@ -376,9 +365,9 @@ class DeepSDF(pl.LightningModule):
                 {
                     "latents_mean_L2_squared": reg_loss.detach().cpu(),
                     "lipschitz_penalty": lipschitz_loss.detach().cpu() if self.use_lipreg_loss else torch.tensor(0.0, device="cpu"),
-                    "regression_loss": chunk_loss.detach().cpu(),
-                    "train_loss" : training_loss.detach().cpu(),
-                    "code_reg_lambda" : code_reg_lambda,
+                    "prediction_loss": chunk_loss.detach().cpu(),
+                    "training_loss" : training_loss.detach().cpu(),
+                    "code_reg_factor" : code_reg_lambda,
                     # "lr_weights" : lr_weights,
                     # "lr_latents" : lr_latents
                 },
