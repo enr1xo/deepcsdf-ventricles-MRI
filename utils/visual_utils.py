@@ -1,27 +1,13 @@
 import pyvista as pv
 import numpy as np
-from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE, trustworthiness
-import umap
+import json
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from vtkmodules.vtkFiltersCore import vtkImplicitPolyDataDistance
-
-
+from tensorboard.backend.event_processing import event_accumulator # to read from events.out files created during training by Tensorboard logger
+from pathlib import Path
 
 COLORS_PALETTE = {
-    # --- Pastel tones ---
-    "pastel_blue": "#AECBFA",
-    "pastel_green": "#B7E1A1",
-    "pastel_pink": "#F4C2C2",
-    "pastel_orange": "#FFD1A9",
-    "pastel_yellow": "#FFF4A3",
-    "pastel_purple": "#CBA3F4",
-    "pastel_teal": "#A3E4D7",
-    "pastel_red": "#F7A1A1",
-    "pastel_gray": "#D8D8D8",
-    "pastel_brown": "#E3C7A1",
-
     # --- Fluorescent / Neon tones ---
     "neon_green": "#39FF14",      # Matrix green
     "neon_blue": "#04D9FF",       # Cyan-blue glow
@@ -48,6 +34,20 @@ COLORS_PALETTE = {
     "light_lavender": "#D8B7FF",
     "apple_green": "#8DB600",
     "deep_cerulean": "#007BA7",
+
+    # --- Pastel tones ---
+    "pastel_blue": "#AECBFA",
+    "pastel_green": "#B7E1A1",
+    "pastel_pink": "#F4C2C2",
+    "pastel_orange": "#FFD1A9",
+    "pastel_yellow": "#FFF4A3",
+    "pastel_purple": "#CBA3F4",
+    "pastel_teal": "#A3E4D7",
+    "pastel_red": "#F7A1A1",
+    "pastel_gray": "#D8D8D8",
+    "pastel_brown": "#E3C7A1",
+
+
 }
 
 
@@ -125,6 +125,180 @@ def visually_check_all_surfaces(source_dir):
         plotter.close()
 
     return
+
+
+
+
+# ================================================================ #
+# region training visualization
+# ================================================================ #
+def get_legend_label(log_dir):
+    " give meaningful name to legend. This will be a pain to automate"
+    
+    exp_name = str(log_dir).split("/")[-2]
+    version = Path(log_dir).name
+
+    specs = json.load( open( next( Path(log_dir).glob("hparams.json"), None) ) )
+
+    match exp_name:
+
+        case "LipAlphaAndCodeReg":
+            alpha = specs["lipschitz_alpha"]
+            lamb = specs["code_reg_lambda"]
+            label = rf"$\alpha = {alpha:.0e}, \lambda = {lamb:.0e}$"  # .0e} → scientific notation with no decimal places
+
+        case "LipLayersAndCodeReg":
+            lip = specs["Network_specs"]["lipschitz_layers"]
+            lamb = specs["code_reg_lambda"]
+            label = f"Spectral = {lip} " + rf"$\lambda = {lamb:.0e}$" 
+
+        case "SpectralLaysAndAct":
+            lip = specs["Network_specs"]["lipschitz_layers"]
+            act = specs["Network_specs"]["activation"]
+            label = f"Spectral = {lip}, {act}" 
+
+        case "BatchSizeEffectCorrected":
+            steps = [25000, 50000, 100000, 200000]
+            bs = specs["batch_size"]
+            n_steps = specs["NumEpochs"] * np.floor( 89 / bs)
+            n_steps = steps[ np.abs( steps - n_steps).argmin() ]
+            label = f"batch = {bs}, steps = {int(n_steps)}" 
+
+
+        case "LatentSizeAndCodeReg":
+            latent = specs["Network_specs"]["latent_size"]
+            lamb = specs["code_reg_lambda"]
+            label = f"latent = {latent}" + rf"$\lambda = {lamb:.0e}$" 
+
+        case _:
+            label = version
+
+    return label  
+
+def plot_experiment_runs_events(
+    log_dir: str | Path,
+    plot_scalars: list = ["latents_mean_L2_squared", "regression_loss"],
+    linewidth: float = 1.0,
+    cmap_name = "gist_ncar",
+    alpha = 0.6,
+    grid: bool = True,
+    fontsize: int = 14,
+    save_fname=None
+):
+    """
+    Args:
+        `log_dir` : Path to the experiment folder containing all version folders (where events.out.tfevents.* files are)
+        `plot_scalars` : list of scalar names to plot
+        `linewidth` : line width for plot lines
+        `grid` : whether to show grid (major ticks only)
+        `fontsize` : font size for labels and titles
+        `save_fname` : if provided, saves the figure to this file path
+    """
+    #TODO: make legend labels more informative instead of version_x
+
+    log_dir = Path(log_dir)
+    version_dirs = list(log_dir.glob("version_*"))
+    version_dirs.sort(key=lambda p: int(p.name.split("_")[-1]))  # numeric sort
+
+    num_scalars = len(plot_scalars)
+
+    # Layout selection
+    if num_scalars == 1:
+        nrows, ncols = 1
+        figsize = (10,8)
+        raise ValueError("Currently not available for single scalar plot")
+    elif num_scalars == 2:
+        nrows, ncols = 1, 2
+        figsize = (20, 8)
+    elif num_scalars == 3:
+        nrows, ncols = 1, 3
+        figsize = (30, 8)
+    elif num_scalars == 4:
+        nrows, ncols = 2, 2
+        figsize = (20, 16)
+    else:
+        raise ValueError("Too many scalars to plot requested.")
+
+    fig, axs = plt.subplots(nrows, ncols, figsize=figsize)
+    axs = axs.flatten()[:num_scalars]
+
+    cmap = plt.get_cmap(cmap_name)
+
+    colors = [cmap(i / len(version_dirs)) for i in range(len(version_dirs))]
+
+    # Keep track of handles for shared legend
+    legend_handles, legend_labels = [], []
+
+    for idx, logdir in enumerate(version_dirs):
+        ea = event_accumulator.EventAccumulator(str(logdir), size_guidance={'scalars': 0})
+        ea.Reload()
+
+        scalars = set(ea.Tags()['scalars'])
+        missing = set(plot_scalars) - scalars
+        if missing:
+            raise ValueError(f"Some requested scalar metrics not found in event file: {missing}. Available are {scalars}")
+
+        # brief check to only plot meaningful versions
+        skip_version = False
+        for i, tag in enumerate(plot_scalars):
+            events = ea.Scalars(tag)
+            steps = [e.step for e in events]
+            values = [e.value for e in events]
+            if min(values) <= 1e-10:
+                skip_version = True
+
+        if not skip_version:
+            for i, tag in enumerate(plot_scalars):
+                events = ea.Scalars(tag)
+                steps = [e.step for e in events]
+                values = [e.value for e in events]
+
+                if min(values) <= 1e-10:
+                    continue
+
+                line, = axs[i].plot(steps, values, c = colors[idx], alpha = alpha, linewidth=linewidth, label=logdir.name)
+
+                # Collect handles/labels from first subplot only
+                if i == 0:
+                    # Create thicker Line2D for the legend
+                    legend_line = Line2D([0], [0], color=colors[idx], lw=linewidth*2)  # double thickness in legend
+                    legend_handles.append(legend_line)
+                    legend_labels.append( get_legend_label(logdir))
+                    # legend_handles.append(line) # use the plotted line
+                    # legend_labels.append(logdir.name)
+
+                try:
+                    axs[i].set_yscale("log")
+                except:
+                    pass
+
+                # axs[i].set_xlabel("Global training step", fontsize=fontsize)
+                # axs[i].set_ylabel("Value", fontsize=fontsize)
+                axs[i].set_title(tag, fontsize=fontsize)
+                if grid:
+                    axs[i].grid(True, which='major', linestyle='-', alpha=0.5)
+
+
+    fig.subplots_adjust(right=0.78)  # lets you shrink or shift the subplots inside the figure by specifying fractions of the figure
+
+    # Shared legend outside rightmost subplot
+    fig.legend(
+        handles=legend_handles,
+        labels=legend_labels,
+        loc='center left',         # the legend's left edge is at bbox_to_anchor x
+        bbox_to_anchor=(0.8, 0.5),  # bbox_to_anchor coordinates are in figure fraction units (0–1).
+        fontsize=11,
+        #title="Versions",
+        borderaxespad=0
+    )
+
+
+    if save_fname:
+        plt.savefig(save_fname, dpi=300, transparent=True)
+        plt.close()
+        return
+
+    plt.show()
 
 
 # ================================================================ #
