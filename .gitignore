@@ -68,6 +68,11 @@ specs_files/*
 # scripts
 # ===============================
 *.py
+
+!utils/
+!utils/*.py
+!model/
+!model/*.py
 !train.py
 !test.py
 !atria_data_preparing.py
