@@ -11,6 +11,37 @@ from pathlib import Path
 from deel.torchlip.modules.linear import SpectralLinear
 import numpy as np
 
+# # ---- to reconstruct surface for validation ---- #
+# from skimage import measure
+# import pyvista as pv
+
+# def isosurface_from_sdf(x, y, z, sdf_pred, level, box_lim = 105):
+    
+#     D = sdf_pred.reshape((len(x), len(y), len(z)))
+
+#     D = np.transpose(D, (1, 0, 2))
+
+#     # Run marching cubes
+#     verts, faces, normals, values = measure.marching_cubes(
+#         D,
+#         level=level,
+#         spacing=(x[1] - x[0], y[1] - y[0], z[1] - z[0])
+#     )
+
+#     # Adjust vertices
+#     # my volume is in [-105,105] cube but marching cubes assumes a vertex is in (0,0,0), so I need to traslate it back to my real coordinates
+#     verts = verts - box_lim  
+
+#     # Convert faces for PyVista
+#     faces_pv = np.hstack([np.full((faces.shape[0], 1), 3), faces]).astype(np.int32)
+
+#     # Create PyVista mesh
+#     mesh = pv.PolyData(verts, faces_pv)
+
+#     return mesh
+
+
+
 act_fn = {
     "ReLU": nn.ReLU(), "Tanh" : nn.Tanh(), 
     "Softplus": nn.Softplus(), 
@@ -217,7 +248,9 @@ class DeepSDF(pl.LightningModule):
 
         self.Cs = specs.get("scale_spatial_inputs_by", 100)
 
-        self.log_every_n_epochs = specs.get("log_every_n_epochs", 1)
+        self.log_every_n_epochs = specs.get("log_every_n_epochs", 1000)
+
+        self.log_val_every_n_epochs = specs.get("log_val_every_n_epochs", 5000)
 
     def set_embedding(self, num_scenes = None, embedding=None):
         if num_scenes is None:
@@ -380,6 +413,149 @@ class DeepSDF(pl.LightningModule):
         return training_loss
 
 
+    def validation_step(self, batch, batch_idx):
+
+        data = batch[0]
+
+        xyz_gt = data["coords"].to(self.device)
+        sdf_gt = data["sdf"].to(self.device)
+
+        xyz_gt = xyz_gt.reshape(-1, 3) * self.Cs
+
+        sdf_gt = sdf_gt.reshape(-1, decoder.out_dim)
+        if self.enforce_minmax:
+            sdf_gt = torch.clamp(sdf_gt, min = -self.clamp_distance, max=self.clamp_distance)
+
+        num_sdf_samples = sdf_gt.shape[0]
+
+        # starting point for optimization: zero
+        # I could also save initial vectors when training and start with empirical mean and covariance,
+        # sampling a latent using MultivariateNormal and rsample()
+        # TODO: add option to start from somewhere else (from mean of loaded latents, random sample, ...)
+        latent_size = self.latent_size
+
+        latent = torch.zeros(latent_size, device=self.device)
+
+        # latent = torch.randn(latent_size, device=DEVICE) * ( 1.0 / math.sqrt(latent_size) ) # same std as in training 
+        
+        latent.requires_grad = True
+        
+        optimizer = torch.optim.Adam(params=[latent], lr=0.005)
+        
+        # ==================================================== #
+        # region fit latent
+        # ==================================================== #
+        for i in range(250):
+            
+            self.decoder.eval()
+            
+            optimizer.zero_grad()
+
+            batch_vecs = latent.expand(num_sdf_samples, -1)
+            
+            input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
+
+            sdf_pred = self.decoder(input_)
+            if self.enforce_minmax:
+                sdf_pred = torch.clamp(sdf_pred, min = -self.clamp_distance, max=self.clamp_distance)
+                
+            # mahalanobis to train codes distribution
+
+            # vanilla loss : same loss as in training
+            reg_loss = torch.linalg.norm(latent) ** 2 
+
+            chunk_loss = self.loss_fn(sdf_pred, sdf_gt) / (num_sdf_samples *  self.decoder.out_dim)
+
+            loss = chunk_loss + self.code_reg_lambda * reg_loss
+
+            loss.backward()
+
+            optimizer.step()
+
+        batch_vecs = latent.expand(num_sdf_samples, -1)
+        input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
+        sdf_pred = self.decoder(input_)
+        if self.enforce_minmax:
+            sdf_pred = torch.clamp(sdf_pred, min = -self.clamp_distance, max=self.clamp_distance)
+        regression_loss = self.loss_fn(sdf_pred, sdf_gt)
+
+        # # ==================================================== #
+        # # region reconstruct surface from predicted sdf
+        # # ==================================================== #
+        # latent.requires_grad = False    
+        # resolution = 128
+        # box_lim = self.Cs * 1.05
+
+        # with torch.no_grad():
+            
+        #     self.decoder.eval()
+
+        #     #region SDF ON GRID FOR RECONSTRUCTION
+        #     x = np.linspace(-box_lim, box_lim, resolution)
+        #     y = np.linspace(-box_lim, box_lim, resolution)
+        #     z = np.linspace(-box_lim, box_lim, resolution)
+        #     xx, yy, zz = np.meshgrid(x, y, z)
+
+        #     grid = np.c_[xx.ravel(), yy.ravel(), zz.ravel()]
+        #     xyz_raw = grid
+
+        #     n_points = 500000
+        #     n_batches = len(xyz_raw) // n_points
+
+        #     sdf_preds = []
+
+        #     for i in range(n_batches + 1):
+        #         if i < n_batches:
+        #             xyz = torch.from_numpy(xyz_raw[n_points * i : n_points * (i + 1)]).to(self.device)
+        #         else:
+        #             xyz = torch.from_numpy(xyz_raw[n_points * i :]).to(self.device)
+
+        #         batch_vecs = latent.expand(xyz.shape[0], -1)
+
+        #         input_ = torch.cat([batch_vecs, xyz], dim=1)
+
+        #         sdf_pred_batch = self.decoder(input_.to(torch.float32)).cpu().data.numpy() 
+
+        #         sdf_preds.append(sdf_pred_batch)
+            
+        # sdf_pred = np.concatenate(sdf_preds, axis=0)
+
+        # # ==================================================== #
+        # # region compute some metric to track
+        # # ==================================================== #
+
+        # sdfs_pred = {
+        #     "epicardium": sdf_pred[:, 0],
+        #     "la_endo": sdf_pred[:, 1],
+        #     "ra_endo": sdf_pred[:, 2]
+        # }
+
+        # organs_to_process = ["epicardium", "la_endo", "ra_endo"]
+
+        # for i,organ in enumerate(organs_to_process):
+
+        #     threshold = 0.0 
+                                    
+        #     try:
+        #         mesh_reconstructed = isosurface_from_sdf( x, y, z, sdf_pred=sdfs_pred[organ], level = threshold, box_lim = box_lim )
+        #     except:
+        #         logger.warning( f"Version {version}: skipping {organ} isosurface extraction: not found for current isovalue")
+        #         if i == len(organs_to_process)-1:
+        #             return
+        #         else:
+        #             continue
+
+        self.log_dict(
+            {
+                "sdf_regression_loss_on_test_shape": regression_loss.detach().cpu()
+            },
+            logger=True,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False
+        )
+
+        return loss
 
 
 

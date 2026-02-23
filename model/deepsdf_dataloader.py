@@ -277,6 +277,13 @@ class SDFDataModule(pl.LightningDataModule):
             shuffle=False,
         )
 
+    def val_dataloader(self):
+        print(f"VALIDATION DATA LOADED: {len(self.sdf_test)} scenes. Default num_samp_per_scene = {self.num_samples_per_scene}.")
+        return DataLoader(
+            self.sdf_test,
+            batch_size=1, # hard coded for now !!
+            shuffle=False, # otherwise I get always the same scene 
+        )
 
 
 
