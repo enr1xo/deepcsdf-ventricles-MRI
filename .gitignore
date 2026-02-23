@@ -58,9 +58,8 @@ launch_training_bash/
 launched_slurm/
 launched_bash/
 
-specs_files/
-*.json
-!specs_deepsdfatria.json
+specs_files/*
+!specs_files/specs_deepsdfatria.json
 
 # ===============================
 # scripts
