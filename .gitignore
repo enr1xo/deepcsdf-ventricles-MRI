@@ -53,6 +53,10 @@ checkpoints/
 *.pt
 *.pth
 
+launch_training_slurm/
+launch_training_bash/
+launched_slurm/
+
 # ===============================
 # Temporary / scratch
 # ===============================
