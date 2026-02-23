@@ -30,6 +30,9 @@ config.py
 environment.yml
 *.env
 .env
+*.toml
+*.md
+!README.md
 
 # ===============================
 # Data (usually should NOT be versioned)
