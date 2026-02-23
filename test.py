@@ -45,6 +45,23 @@ def get_dataset_patients_names(data: dict):
 
     return patient_names
 
+def save_metrics_csv(metric_name, experiment_name, version, which_shapes, metric_data : dict):
+    rows = []
+    for name, organs in metric_data.items():
+        for organ, metric in organs.items():
+            rows.append({
+                "version": int(version.split("_")[-1]),
+                "patient": name,
+                "organ": organ,
+                "metric": metric_name,
+                "value": metric,
+            })
+    df = pd.DataFrame(rows)
+    output_path = METRICS_DIR / experiment_name / f"{experiment_name}-{version}-{metric_name}-{which_shapes}.csv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+
+    
 def find_pointcloud_noise(
         decoder: Decoder,
         model: DeepSDF,
@@ -515,53 +532,17 @@ def run(
     
     if compute_chamfer:
         exp_name = experiment_name.split("/")[-1]
-        # chamfer
-        rows = []
-        for name, organs in chamfer_dists.items():
-            for organ, metric in organs.items():
-                rows.append({
-                    "version": int(version.split("_")[-1]),
-                    "patient": name,
-                    "organ": organ,
-                    "metric": "chamfer",
-                    "value": metric,
-                })
-        df = pd.DataFrame(rows)
-        df.to_csv(METRICS_DIR / f"{exp_name}-{version}-chamfer-{which_shapes}.csv", index=False)
+        save_metrics_csv("chamfer", exp_name, version, which_shapes, chamfer_dists)
         logger.info("Saved chamfer distances")
 
     if compute_haussdorff:
         exp_name = experiment_name.split("/")[-1]
-        # haussdorff
-        rows = []
-        for name, organs in haussdorff_dists.items():
-            for organ, metric in organs.items():
-                rows.append({
-                    "version": int(version.split("_")[-1]),
-                    "patient": name,
-                    "organ": organ,
-                    "metric": "haussdorff",
-                    "value": metric,
-                })
-        df = pd.DataFrame(rows)
-        df.to_csv(METRICS_DIR / f"{exp_name}-{version}-haussdorff-{which_shapes}.csv", index=False)
+        save_metrics_csv("haussdorff", exp_name, version, which_shapes, haussdorff_dists)
         logger.info("Saved haussdorff distances")
 
     if compute_lddmm:
         exp_name = experiment_name.split("/")[-1]
-        # LDDMM
-        rows = []
-        for name, organs in LDDMM_losses.items():
-            for organ, metric in organs.items():
-                rows.append({
-                    "version": int(version.split("_")[-1]),
-                    "patient": name,
-                    "organ": organ,
-                    "metric": "LDDMM",
-                    "value": metric,
-                })
-        df = pd.DataFrame(rows)
-        df.to_csv(METRICS_DIR / f"{exp_name}-{version}-LDDMM-{which_shapes}.csv", index=False)
+        save_metrics_csv("LDDMM", exp_name, version, which_shapes, LDDMM_losses)
         logger.info("Saved LDDMM distances")
 
     if save_latent_codes:
