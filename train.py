@@ -198,6 +198,7 @@ def train(specs: dict, experiment_name, num_workers = 0, show_progress = False):
         enable_model_summary=False,  
         enable_progress_bar=show_progress,
         log_every_n_steps=1,
+        check_val_every_n_epoch=model.log_val_every_n_epochs,  # run validation every 5 epochs
         logger=logger_tb,
         enable_checkpointing=True,
         callbacks = [
