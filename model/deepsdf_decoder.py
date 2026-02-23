@@ -250,7 +250,7 @@ class DeepSDF(pl.LightningModule):
 
         self.log_every_n_epochs = specs.get("log_every_n_epochs", 1000)
 
-        self.log_val_every_n_epochs = specs.get("log_val_every_n_epochs", 5000)
+        self.log_val_every_n_epochs = specs.get("log_val_every_n_epochs", 0)
 
     def set_embedding(self, num_scenes = None, embedding=None):
         if num_scenes is None:
@@ -416,30 +416,30 @@ class DeepSDF(pl.LightningModule):
 
         data = batch[0]
 
+        batch_size = data["coords"].shape[0]  # batch size
+        num_samp_per_scene = data["coords"].shape[1]  # points per scene
+
         xyz_gt = data["coords"].to(self.device)
         sdf_gt = data["sdf"].to(self.device)
 
         xyz_gt = xyz_gt.reshape(-1, 3) * self.Cs
-
         sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim)
         if self.enforce_minmax:
-            sdf_gt = torch.clamp(sdf_gt, min = -self.clamp_distance, max=self.clamp_distance)
+            sdf_gt = torch.clamp(sdf_gt, min=-self.clamp_distance, max=self.clamp_distance)
 
         num_sdf_samples = sdf_gt.shape[0]
+
+        xyz_gt.requires_grad = False
+        sdf_gt.requires_grad = False
 
         # starting point for optimization: zero
         # I could also save initial vectors when training and start with empirical mean and covariance,
         # sampling a latent using MultivariateNormal and rsample()
         # TODO: add option to start from somewhere else (from mean of loaded latents, random sample, ...)
-        latent_size = self.latent_size
 
-        latent = torch.zeros(latent_size, device=self.device)
-
-        # latent = torch.randn(latent_size, device=DEVICE) * ( 1.0 / math.sqrt(latent_size) ) # same std as in training 
-        
-        latent.requires_grad = True
-        
-        optimizer = torch.optim.Adam(params=[latent], lr=0.005)
+        latents = torch.zeros(batch_size, self.latent_size, device=self.device, requires_grad=True)
+            
+        optimizer = torch.optim.Adam(params=[latents], lr=0.005)
         
         # ==================================================== #
         # region fit latent
@@ -452,8 +452,7 @@ class DeepSDF(pl.LightningModule):
                 
                 optimizer.zero_grad()
 
-                batch_vecs = latent.expand(num_sdf_samples, -1)
-                
+                batch_vecs = latents.unsqueeze(1).expand(batch_size, num_samp_per_scene, self.latent_size).reshape(batch_size*num_samp_per_scene, self.latent_size)
                 input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
 
                 sdf_pred = self.decoder(input_)
@@ -463,7 +462,7 @@ class DeepSDF(pl.LightningModule):
                 # mahalanobis to train codes distribution
 
                 # vanilla loss : same loss as in training
-                reg_loss = torch.linalg.norm(latent) ** 2 
+                reg_loss = torch.sum(latents ** 2, dim=1).mean() 
 
                 chunk_loss = self.loss_fn(sdf_pred, sdf_gt) / (num_sdf_samples *  self.decoder.out_dim)
 
@@ -473,12 +472,7 @@ class DeepSDF(pl.LightningModule):
 
                 optimizer.step()
 
-        batch_vecs = latent.expand(num_sdf_samples, -1)
-        input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
-        sdf_pred = self.decoder(input_)
-        if self.enforce_minmax:
-            sdf_pred = torch.clamp(sdf_pred, min = -self.clamp_distance, max=self.clamp_distance)
-        regression_loss = self.loss_fn(sdf_pred, sdf_gt)
+        regression_loss = chunk_loss
 
         # # ==================================================== #
         # # region reconstruct surface from predicted sdf
@@ -548,7 +542,7 @@ class DeepSDF(pl.LightningModule):
 
         self.log_dict(
             {
-                "sdf_regression_loss_on_test_shape": regression_loss.detach().cpu()
+                "sdf_regression_loss_on_test_shapes": regression_loss.detach().cpu()
             },
             logger=True,
             on_step=False,

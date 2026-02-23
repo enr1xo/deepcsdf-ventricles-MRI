@@ -43,6 +43,8 @@ class SDFSamples(Dataset):
 
         self.test_fname = DATA_DIR / specs.get("TestSplit", None)
 
+        self.val_fname = DATA_DIR / specs.get("ValSplit", self.test_fname)
+
         self.data_file = ""
 
     def _read_data(self):
@@ -219,6 +221,8 @@ class SDFDataModule(pl.LightningDataModule):
 
         self.batch_size = self.specs.get("batch_size", 2)
 
+        self.val_batch_size = self.specs.get("val_batch_size", 2)
+
         self.sampling_method = self.specs.get("sampling_scene_method", "random_seed")
 
         self.num_workers = num_workers 
@@ -293,8 +297,10 @@ class SDFDataModule(pl.LightningDataModule):
         print(f"VALIDATION DATA LOADED: {len(self.sdf_val)} scenes. Default num_samp_per_scene = {self.num_samples_per_scene_val}.")
         return DataLoader(
             self.sdf_val,
-            batch_size=1, # hard coded for now !!
+            batch_size=self.val_batch_size, 
             shuffle=False, # I get always the same scene 
+            num_workers=0,
+            drop_last=True,
         )
 
 
