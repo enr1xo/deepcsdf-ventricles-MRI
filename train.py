@@ -21,16 +21,16 @@ from model.deepsdf_dataloader import SDFDataModule
 from model.deepsdf_decoder import Decoder, DeepSDF 
 
 
-# # =========== setup for H100 / A100 / L40S GPU =========== #
-# torch.set_float32_matmul_precision("high")   # "medium" if instability (NaNs / loss spikes) appear, "high" is ignored by L40S
-# PRECISION = "bf16-mixed"
-# # next flags ignored by L40S
-# torch.backends.cuda.matmul.allow_tf32 = True
-# torch.backends.cudnn.allow_tf32 = True
+# =========== setup for H100 / A100 / L40S GPU =========== #
+torch.set_float32_matmul_precision("high")   # "medium" if instability (NaNs / loss spikes) appear, "high" is ignored by L40S
+PRECISION = "bf16-mixed"
+# next flags ignored by L40S
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
-# =========== setup for RTX 3090 GPU =========== #
-torch.set_float32_matmul_precision("medium") # "medium" if instability (NaNs / loss spikes) appear
-PRECISION = "16-mixed"
+# # =========== setup for RTX 3090 GPU =========== #
+# torch.set_float32_matmul_precision("medium") # "medium" if instability (NaNs / loss spikes) appear
+# PRECISION = "16-mixed"
 
 # # # =========== setup for GTX 1050 GPU =========== #
 # PRECISION = "32"
@@ -129,7 +129,6 @@ class SaveEmbeddingsCallback(pl.Callback):
 # ============================== #
 # TRAINING
 # ============================== #
-
 def train(specs: dict, experiment_name, num_workers = 0, show_progress = False):
 
     # region LOAD DATA 
