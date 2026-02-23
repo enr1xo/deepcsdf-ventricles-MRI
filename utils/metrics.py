@@ -29,7 +29,7 @@ def chamfer_distance_L2_squared(points1, points2):
     dists_2, _ = tree.query(points1)
     return np.mean(dists_1 ** 2)  + np.mean(dists_2 ** 2)
 
-def varifold_inner(faces1, faces2, gamma = 1.0, block=2048, device = "gpu"):
+def varifold_inner(faces1, faces2, gamma = 1.0, block=2048, device = "cuda"):
     faces1 = faces1.to(device)
     faces2 = faces2.to(device)
 
@@ -69,7 +69,7 @@ def varifold_inner(faces1, faces2, gamma = 1.0, block=2048, device = "gpu"):
 
     return total
 
-def LDDMM_loss(mesh1: pv.PolyData, mesh2: pv.PolyData, compute_normals = True, remeshing = True, n_points = 50000, gamma = 1.0, device = "gpu"):
+def LDDMM_loss(mesh1: pv.PolyData, mesh2: pv.PolyData, compute_normals = True, remeshing = True, n_points = 50000, gamma = 1.0, device = "cuda"):
 
     # remeshing to have same resolution
     if remeshing:
