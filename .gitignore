@@ -1,0 +1,83 @@
+# ===============================
+# Python
+# ===============================
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ===============================
+# Jupyter
+# ===============================
+.ipynb_checkpoints/
+*.ipynb
+!summarize_experiment_performance.ipynb  # keep only this notebook tracked
+
+# ===============================
+# Environment / local config
+# ===============================
+config.py
+environment.yml
+*.env
+.env
+
+# ===============================
+# Data (usually should NOT be versioned)
+# ===============================
+data/
+datasets/
+*.csv
+*.h5
+*.npz
+
+# ===============================
+# Training outputs / experiments
+# ===============================
+experiments/
+results/
+logs/
+runs/
+cache/
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+
+launch_training_slurm/
+launch_training_bash/
+launched_slurm/
+launched_bash/
+
+specs_files/*
+!specs_files/specs_deepsdfatria.json
+
+# ===============================
+# scripts
+# ===============================
+*.py
+!train.py
+!test.py
+!atria_data_preparing.py
+
+# ===============================
+# Temporary / scratch
+# ===============================
+tmp/
+temp/
+*.log
+
+# ===============================
+# OS junk
+# ===============================
+.DS_Store
+Thumbs.db
