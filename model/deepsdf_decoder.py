@@ -421,7 +421,7 @@ class DeepSDF(pl.LightningModule):
 
         xyz_gt = xyz_gt.reshape(-1, 3) * self.Cs
 
-        sdf_gt = sdf_gt.reshape(-1, decoder.out_dim)
+        sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim)
         if self.enforce_minmax:
             sdf_gt = torch.clamp(sdf_gt, min = -self.clamp_distance, max=self.clamp_distance)
 
@@ -444,32 +444,34 @@ class DeepSDF(pl.LightningModule):
         # ==================================================== #
         # region fit latent
         # ==================================================== #
-        for i in range(250):
+        with torch.enable_grad(): # I want them during validation, they are disabled automatically
             
-            self.decoder.eval()
-            
-            optimizer.zero_grad()
-
-            batch_vecs = latent.expand(num_sdf_samples, -1)
-            
-            input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
-
-            sdf_pred = self.decoder(input_)
-            if self.enforce_minmax:
-                sdf_pred = torch.clamp(sdf_pred, min = -self.clamp_distance, max=self.clamp_distance)
+            for i in range(250):
                 
-            # mahalanobis to train codes distribution
+                self.decoder.eval()
+                
+                optimizer.zero_grad()
 
-            # vanilla loss : same loss as in training
-            reg_loss = torch.linalg.norm(latent) ** 2 
+                batch_vecs = latent.expand(num_sdf_samples, -1)
+                
+                input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
 
-            chunk_loss = self.loss_fn(sdf_pred, sdf_gt) / (num_sdf_samples *  self.decoder.out_dim)
+                sdf_pred = self.decoder(input_)
+                if self.enforce_minmax:
+                    sdf_pred = torch.clamp(sdf_pred, min = -self.clamp_distance, max=self.clamp_distance)
+                    
+                # mahalanobis to train codes distribution
 
-            loss = chunk_loss + self.code_reg_lambda * reg_loss
+                # vanilla loss : same loss as in training
+                reg_loss = torch.linalg.norm(latent) ** 2 
 
-            loss.backward()
+                chunk_loss = self.loss_fn(sdf_pred, sdf_gt) / (num_sdf_samples *  self.decoder.out_dim)
 
-            optimizer.step()
+                loss = chunk_loss + self.code_reg_lambda * reg_loss
+
+                loss.backward()
+
+                optimizer.step()
 
         batch_vecs = latent.expand(num_sdf_samples, -1)
         input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
