@@ -412,7 +412,6 @@ class DeepSDF(pl.LightningModule):
 
         return training_loss
 
-
     def validation_step(self, batch, batch_idx):
 
         data = batch[0]

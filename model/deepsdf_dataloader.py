@@ -241,7 +241,19 @@ class SDFDataModule(pl.LightningDataModule):
 
             self.num_samples_per_scene = self.sdf_train.num_samp_per_scene
 
-        if stage in ["test", "validate"]:
+            sdf_dataset = SDFSamples( 
+                specs = self.specs,
+                stage="test"
+            ) 
+            sdf_dataset._read_data()
+
+            self.sdf_val = sdf_dataset
+
+            self.num_fit_scenes_val = len(self.sdf_val)
+
+            self.num_samples_per_scene_val = self.sdf_val.num_samp_per_scene
+
+        if stage in ["test"]:
             #TODO: add loading partial files like h5 option
             sdf_dataset = SDFSamples( 
                 specs = self.specs,
@@ -278,11 +290,11 @@ class SDFDataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self):
-        print(f"VALIDATION DATA LOADED: {len(self.sdf_test)} scenes. Default num_samp_per_scene = {self.num_samples_per_scene}.")
+        print(f"VALIDATION DATA LOADED: {len(self.sdf_val)} scenes. Default num_samp_per_scene = {self.num_samples_per_scene_val}.")
         return DataLoader(
-            self.sdf_test,
+            self.sdf_val,
             batch_size=1, # hard coded for now !!
-            shuffle=False, # otherwise I get always the same scene 
+            shuffle=False, # I get always the same scene 
         )
 
 
