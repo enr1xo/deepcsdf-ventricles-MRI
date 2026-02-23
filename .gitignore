@@ -57,6 +57,17 @@ launch_training_slurm/
 launch_training_bash/
 launched_slurm/
 
+specs_files/
+!specs_deepsdfatria.json
+
+# ===============================
+# scripts
+# ===============================
+.py
+!train.py
+!test.py
+!atria_data_preparing.py
+
 # ===============================
 # Temporary / scratch
 # ===============================
