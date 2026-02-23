@@ -241,7 +241,7 @@ class SDFDataModule(pl.LightningDataModule):
 
             self.num_samples_per_scene = self.sdf_train.num_samp_per_scene
 
-        if stage in ["test", "predict"]:
+        if stage in ["test", "validate"]:
             #TODO: add loading partial files like h5 option
             sdf_dataset = SDFSamples( 
                 specs = self.specs,
