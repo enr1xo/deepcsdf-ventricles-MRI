@@ -56,8 +56,10 @@ checkpoints/
 launch_training_slurm/
 launch_training_bash/
 launched_slurm/
+launched_bash/
 
 specs_files/
+*.json
 !specs_deepsdfatria.json
 
 # ===============================
