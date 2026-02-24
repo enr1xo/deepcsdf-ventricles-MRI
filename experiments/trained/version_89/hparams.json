@@ -1,0 +1,57 @@
+{
+    "Description": "...",
+    "TrainSplit": "test/AF001_AF069_LEU_NORM_F004_data_fnames.json",
+    "TestSplit": "test/AF001_AF003_P1_data_fnames.json",
+    "Network_specs": {
+        "latent_size": 64,
+        "out_dim": 3,
+        "positional_encoding": false,
+        "dims": [
+            256,
+            256,
+            256,
+            256,
+            256
+        ],
+        "norm_layers": [
+            -1
+        ],
+        "dropout_prob": 0.2,
+        "dropout_layers": [
+            -1
+        ],
+        "latent_in": [
+            2
+        ],
+        "batch_norm": false,
+        "lipschits_layers": [
+            0,
+            1,
+            2,
+            3,
+            4
+        ],
+        "pos_enc_dim": 4,
+        "activation": "SiLU",
+        "last_tanh": true
+    },
+    "NumEpochs": 100000,
+    "lr_weights": 0.005,
+    "lr_latents": 0.005,
+    "num_samp_per_scene": 8192,
+    "sampling_scene_method": "random",
+    "batch_size": 2,
+    "scale_spatial_inputs_by": 100,
+    "enforce_minmax": true,
+    "clamp_distance": 0.1,
+    "use_loss": "L1Loss",
+    "lipschitz_alpha": 2e-06,
+    "code_reg_lambda": 2e-06,
+    "use_lr_scheduler": true,
+    "lr_weights_final": 0.0001,
+    "lr_latents_final": 0.0001,
+    "checkpoint_every_n_epochs": 200000,
+    "resume_training_from_version": "_",
+    "resume_from": "last",
+    "reference_patient": "AF069"
+}

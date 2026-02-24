@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""
+r"""
 Extract unique tag values from VTK files in a directory.
 
 Usage:
-C:\Users\e.rizzardi\OneDrive\Desktop\grazproject\deepcsdf-atria\extract_tags_from_vtk.py
+C:\Users\e.rizzardi\OneDrive\Desktop\grazproject\deepcsdf-ventricles\extract_tags_from_vtk.py
   python extract_tags_from_vtk.py /path/to/vtk_dir --field tag
 """
 

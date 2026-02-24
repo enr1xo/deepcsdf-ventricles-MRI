@@ -13,8 +13,9 @@ from utils.visual_utils import plot_gt_vs_reconstructed_with_error
 from vtk import vtkImplicitPolyDataDistance
 from tqdm import tqdm
 import pandas as pd
+from pprint import pprint
 
-from config import (
+from config_v import (
     EXPERIMENTS_DIR,
     IMAGES_DIR,
     RECONSTRUCTED_MESHES_DIR,
@@ -23,60 +24,129 @@ from config import (
     PATIENT_MESHES_DIR
 )
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
+# ======================== #
+# Helpers
+# ======================== #
 def get_dataset_patients_names(data: dict):
     patient_names = []
 
-    # file names are <patient_name>-<suffix>.npy where suffix isn't supposed to have any - in it
+    # file names are <patient_name>-<suffix>.npy
     for fullfname in data:
         patient_name = fullfname.split("-")[0]
         patient_names.append(patient_name)
 
     return patient_names
 
+def find_pointcloud_noise(
+        decoder: Decoder,
+        model: DeepSDF,
+        xyz_gt,
+        sdf_gt,
+        num_epochs_fit_latent,
+        lr_fit_latent,
+        max_iter = 10
+    ):
+    """
+    Find noise of input point cloud as in ShapeOfMyHeart, to define regularization strength in reconstruction loss
+    """
 
-# def compute_chd_dists(mesh_orig, mesh_organ):
+    latent_size = decoder.latent_size
+    mean_code = torch.zeros(latent_size, device=DEVICE)  
+    latent = mean_code
 
-#     samples_orig = make_trimesh_from_pv(mesh_orig).sample(count=50000)
-#     samples_rec = make_trimesh_from_pv(mesh_organ).sample(count=50000)
+    latent.requires_grad = True
 
-#     chd = chamfer_distance_L2(samples_orig, samples_rec)
+    loss_fn = torch.nn.MSELoss(reduction="sum")
 
-#     # scale by some characteristic scale
-#     xmin, xmax, ymin, ymax, zmin, zmax = mesh_orig.bounds
-#     pmin = np.array([xmin, ymin, zmin])
-#     pmax = np.array([xmax, ymax, zmax])
-#     s_bbox = np.linalg.norm(pmax - pmin)
+    num_epochs = num_epochs_fit_latent
 
-#     return chd / s_bbox
+    optimizer = torch.optim.Adam(params=[latent], lr=lr_fit_latent)
+    
+    num_samp_per_scene = sdf_gt.shape[0]
 
+    code_reg_lambda = 2e-05
+
+    epsilon = 0.0
+
+    epsilons = [epsilon]
+
+    # find variance of the noise iteratively
+    for it in range(max_iter):
+
+        mean_code = torch.zeros(latent_size, device=DEVICE, requires_grad=True)
+        latent = mean_code
+
+        optimizer = torch.optim.Adam(params=[latent], lr=lr_fit_latent)
+
+        # reconstruct
+        for i in range(num_epochs):
+            
+            decoder.eval()
+            
+            optimizer.zero_grad()
+
+            batch_vecs = latent.expand(num_samp_per_scene, -1)
+            
+            input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
+
+            sdf_pred = decoder(input_)
+            if model.enforce_minmax:
+                sdf_pred = torch.clamp(sdf_pred, min = -model.clamp_distance, max = model.clamp_distance)
+        
+            # vanilla loss : same loss as in training
+            reg_loss = torch.linalg.norm(latent) ** 2 
+            recon_loss = loss_fn(sdf_pred, sdf_gt) 
+            chunk_loss = recon_loss / num_samp_per_scene
+
+            loss = chunk_loss + 100 * epsilon * code_reg_lambda * reg_loss
+
+            loss.backward()
+
+            optimizer.step()
+        
+            if i == num_epochs - 1: # last epoch
+                epsilon = recon_loss.detach().item() / (num_samp_per_scene - 1) # detach or on the next epoch it is still attached to the computational graph, instead like this is just a scalar to be reused
+                epsilons.append(epsilon)
+
+        # stopping criterion   ...
+        tol = 1e-7 
+        if abs(epsilons[-1] - epsilons[-2]) < tol:
+            break
+    
+    # for i,ep in enumerate(epsilons):
+    #     print(f"eps_{i} = ", ep)
+
+    return epsilons[-1]
 
 # ======================== #
 # RUN TESTS
 # ======================== #
 def run(
-        experiment_name,
-        version,
-        override_with_dataset = None,
-        which_shapes = "train",
-        subsample_scenes_for_fit = True,
-        num_samp_per_scene_for_fit = 8196,
-        hparams_file = None,
-        num_epochs_fit_latent = 250,
-        latent_reg_factor = 2e-3,
-        lr_fit_latent = 5e-3,
-        reconstruct_surface = True,
-        reconstruct_from = "all",
-        show_reconstruction_images = True,
-        save_reconstruction_images = False,
-        save_reconstructed_mesh = False,
-        compute_metrics = True,
-        save_latent_codes = True
-    ):
+    experiment_name,
+    version,
+    override_with_dataset = None,
+    num_samp_per_scene_for_fit = None,
+    hparams_file = None,
+    num_epochs_fit_latent = 250,
+    latent_reg_factor = 2e-3,
+    lr_fit_latent = 5e-3,
+    reconstruct_surface = True,
+    reconstruct_from = "all",
+    show_reconstruction_images = True,
+    save_reconstruction_images = False,
+    save_reconstructed_mesh = False,
+    compute_chamfer = False,
+    compute_lddmm = False,
+    compute_haussdorff = False,
+    save_latent_codes = True
+):
 
     logger.info(f"Experiment: {experiment_name}")
 
-    # get specifics for the wanted run
+    # region specs: get specifics for the wanted run
     version_dir = EXPERIMENTS_DIR / experiment_name / version
 
     if hparams_file is None:
@@ -84,12 +154,13 @@ def run(
 
     specs = json.load( open(hparams_file) )
     
-    # manual test dataset
+    # region manual test dataset
     if override_with_dataset is not None:
         specs["TestSplit"] = override_with_dataset
 
-    logger.info(f"Loaded specs from version: {version_dir.name}")
+    logger.info(f"Loaded specs from: {version_dir.name}")
 
+    # region decoder
     # rebuild trained decoder and model: I do it with specs that contain everything alerady, no need for checkpoints now
     decoder_params = specs["Network_specs"]
 
@@ -99,27 +170,26 @@ def run(
     print(decoder.description())
     print("\n")
     
-
     # get trained model parameters
     decoder_weights_path = version_dir / "decoder_weights.pth"
     if decoder_weights_path.is_file():
         state_dict = torch.load(decoder_weights_path)
         decoder.load_state_dict(state_dict)
     else:
-        logger.warning(f"Decoder weights not found for {version}")
+        logger.warning(f"Decoder weights .pth file not found in {version_dir}")
         return
 
-    decoder.cuda()
+    decoder.to(DEVICE)
 
-    model = DeepSDF(decoder=decoder, specs=specs)
+    # this I just need to build automatically the same loss function I used in training, could be dropped and built here explicitelys
+    model = DeepSDF(decoder=decoder, specs=specs) 
 
-    # dataset
-    # optionally subsample total samples PER SCENE to use 
-    # --> the dataloader returns scenes with specs["num_samp_per_scene"] points !!!
-    if subsample_scenes_for_fit:
+    # region load dataset
+    # optionally set num of subsamples to use --> the dataloader will return scenes with specs["num_samp_per_scene"] points !!!
+    if num_samp_per_scene_for_fit is not None:
         specs["num_samp_per_scene"] = num_samp_per_scene_for_fit
 
-    logger.warning(f"Will use {specs["num_samp_per_scene"]} samples per scene to fit latents")
+    logger.warning(f"Will use {specs['num_samp_per_scene']} samples per scene to fit latents")
 
     dataloader = SDFDataModule(specs = specs)
 
@@ -129,6 +199,7 @@ def run(
 
     # retrieve original patient names in current dataset
     data_file = dataset.data_file
+    which_shapes = "test" if "test" in Path(data_file).name else "train"
     patient_names = get_dataset_patients_names( json.load(open(data_file)) )
 
     decoder_input_scale = specs.get("scale_spatial_inputs_by", 100)
@@ -144,9 +215,12 @@ def run(
 
     latent_codes = {}
         
-    for shape_idx in range( len(dataset) ):
+    for shape_idx in range( len(dataset) ): # --> the dataloader already returns scenes with specs["num_samp_per_scene"] points each. I call it here only ONE time per shape, so latents are effectively fitted using only these points
 
         patient_name = patient_names[shape_idx] # careful
+
+        # print(f"##### ===== PATIENT {patient_name} : {shape_idx}/{len(dataset)} ===== #####")
+        print("\033[48;2;30;30;30;0;38;2;255;200;0m" + f"##### ===== PATIENT {patient_name} : {shape_idx+1}/{len(dataset)} ===== #####" + "\033[0m")
 
         chamfer_dists[patient_name] = {}
 
@@ -160,7 +234,7 @@ def run(
 
         xyz_gt = data["coords"]
         sdf_gt = data["sdf"]
-        
+
         if reconstruct_from == "la":
             near_la = np.where(np.abs(sdf_gt[:,1]) <=  0.005)
             xyz_gt = xyz_gt[near_la]
@@ -168,27 +242,29 @@ def run(
             logger.warning(f"Fitting latent code using only points near left atrium, keeping  {len(xyz_gt)}")
 
         xyz_gt = xyz_gt.reshape(-1, 3) * decoder_input_scale
+
         sdf_gt = sdf_gt.reshape(-1, decoder.out_dim)
         if enforce_minmax:
             sdf_gt = torch.clamp(sdf_gt, min = -clamp_distance, max = clamp_distance)
 
-        # print(f"##### ===== PATIENT {patient_name} : {shape_idx}/{len(dataset)} ===== #####")
-        print("\033[48;2;30;30;30;0;38;2;255;200;0m" + f"##### ===== PATIENT {patient_name} : {shape_idx+1}/{len(dataset)} ===== #####" + "\033[0m")
-     
-        sdf_gt = sdf_gt.cuda()
-        xyz = xyz_gt.cuda()
+        sdf_gt = sdf_gt.to(DEVICE)
+        xyz = xyz_gt.to(DEVICE)
 
-        # starting point for optimization (same I use initializing latent codes in training): zero
+        # starting point for optimization: zero
         # I could also save initial vectors when training and start with empirical mean and covariance,
         # sampling a latent using MultivariateNormal and rsample()
+        # TODO: add option to start from somewhere else (from mean of loaded latents, random sample, ...)
         latent_size = decoder.latent_size
-        mean_code = torch.zeros(latent_size, device="cuda")  
+        mean_code = torch.zeros(latent_size, device=DEVICE)  
         latent = mean_code
+
         latent.requires_grad = True
         
         loss_fn = model.loss_fn
 
-        code_reg_lambda = latent_reg_factor
+        beta = 100 * find_pointcloud_noise(decoder, model, xyz, sdf_gt, num_epochs_fit_latent=250, lr_fit_latent=0.005)
+
+        code_reg_lambda = latent_reg_factor 
 
         num_epochs = num_epochs_fit_latent
 
@@ -222,11 +298,10 @@ def run(
             # mahalanobis to train codes distribution
 
             # vanilla loss : same loss as in training
-            reg_loss = torch.sum( torch.linalg.norm(latent) ) * code_reg_lambda
-
+            reg_loss = torch.linalg.norm(latent) ** 2 
             chunk_loss = loss_fn(sdf_pred, sdf_gt) / num_samp_per_scene
 
-            loss = chunk_loss + reg_loss
+            loss = chunk_loss + beta * code_reg_lambda * reg_loss
 
             loss.backward()
 
@@ -235,8 +310,9 @@ def run(
             chunk_losses.append(chunk_loss.cpu().detach().numpy())
             reg_losses.append(reg_loss.cpu().detach().numpy())
             losses.append(loss.cpu().detach().numpy())
-
+    
         latent.requires_grad = False
+
 
         if save_latent_codes:
             latent_codes[patient_name] = latent.cpu().numpy().ravel()  # keep fitted latent code, keep latent on gpu for reconstruction
@@ -271,10 +347,10 @@ def run(
                 for i in range(n_batches + 1):
                     if i < n_batches:
                         print(250000 * i, 250000 * (i + 1))
-                        xyz = torch.from_numpy(xyz_raw[250000 * i : 250000 * (i + 1)]).cuda()
+                        xyz = torch.from_numpy(xyz_raw[250000 * i : 250000 * (i + 1)]).to(DEVICE)
                     else:
                         print(250000 * i, ": ")
-                        xyz = torch.from_numpy(xyz_raw[250000 * i :]).cuda()
+                        xyz = torch.from_numpy(xyz_raw[250000 * i :]).to(DEVICE)
 
                     if decoder.use_positional_encoding:
                         freqs = 2.0 ** torch.arange(decoder.pos_enc_dim)
@@ -308,7 +384,9 @@ def run(
 
                 thresholds = {}
                 
-                for organ in ["epicardium", "la_endo", "ra_endo"]:
+                organs_to_process = ["epicardium", "la_endo", "ra_endo"]
+
+                for i,organ in enumerate(organs_to_process):
 
                     logger.info(f"Processing {organ} surface ")
                         
@@ -320,8 +398,11 @@ def run(
                     try:
                         mesh_reconstructed = isosurface_from_sdf( x, y, z, sdf_pred=sdfs_pred[organ], level = threshold, box_lim = box_lim )
                     except:
-                        logger.warning( f"Version {version}: skipping isosurface extraction: not found for current isovalue")
-                        return
+                        logger.warning( f"Version {version}: skipping {organ} isosurface extraction: not found for current isovalue")
+                        if i == len(organs_to_process)-1:
+                            return
+                        else:
+                            continue
 
                     if save_reconstructed_mesh:
                         logger.info("Saving vtp file")
@@ -350,12 +431,11 @@ def run(
                         mesh_gt_show = mesh_gt.copy()
                         mesh_reconstructed_show = mesh_reconstructed.copy()
 
-                        # ==== compute sdf of points on predicted surface to the original surface ==== #               
-                        # compute (signed!) distances of ground truth points (on the true surface) from the nearest spot on the predicted mesh surface
+                        # ==== compute (signed!) distances of points on the predicted surface from the nearest spot on the original surface ==== #               
                         implicit_distance = vtkImplicitPolyDataDistance()
                         implicit_distance.SetInput(mesh_gt_show)
                         points_pred = mesh_reconstructed_show.points
-                        signed_distances = np.array([implicit_distance.EvaluateFunction(p) for p in points_pred])
+                        signed_distances = np.array([implicit_distance.EvaluateFunction(p) for p in points_pred]) # relies on normal orientation, less accurate maybe than libigl, but I'm using it just for plots ...
                         mesh_reconstructed_show.point_data['error'] = signed_distances # save as point data in the predicted mesh
 
                         last_cam_pos = None
@@ -364,7 +444,7 @@ def run(
                                 mesh_gt_show, mesh_reconstructed_show, patient_name, signed_distances, off_screen = False
                                 )
                             plotter.show(interactive=True)
-                            last_cam_pos = plotter.camera_position # this used if interactive AND saving images later
+                            last_cam_pos = plotter.camera_position
                             plotter.close()
 
                         if save_reconstruction_images:
@@ -378,30 +458,31 @@ def run(
                             plotter.screenshot(save_fname, transparent_background=True)
                             pv.close_all()
 
-                    if compute_metrics: 
+                    if compute_chamfer or compute_haussdorff or compute_lddmm: 
                         # ======= COMPUTE METRICS ======= # 
                         # use meshes in their ORIGINAL micrometers scale
                         logger.info("Remeshing and sampling surface")
                         mesh_gt = remesh(mesh_gt, n_points=50000)
                         mesh_reconstructed = remesh(mesh_reconstructed, n_points=50000)
 
-                        samples_orig = make_trimesh_from_pv(mesh_gt).sample(count=50000)
-                        samples_rec = make_trimesh_from_pv(mesh_reconstructed).sample(count=50000)
+                        if compute_chamfer or compute_haussdorff:
+                            samples_orig = make_trimesh_from_pv(mesh_gt).sample(count=50000)
+                            samples_rec = make_trimesh_from_pv(mesh_reconstructed).sample(count=50000)
 
-                        logger.info(f"Computing chamfer")
-                        chamfer_dists[patient_name][organ] = chamfer_distance_L2(samples_orig, samples_rec)
+                            if compute_chamfer:
+                                logger.info(f"Computing chamfer")
+                                chamfer_dists[patient_name][organ] = chamfer_distance_L2(samples_orig, samples_rec)
+                        
+                            if compute_haussdorff:
+                                logger.info(f"Computing Haussdorff")
+                                haussdorff_dists[patient_name][organ] = haussdorff(samples_orig, samples_rec)
 
-                        logger.info(f"Computing Haussdorff")
-                        haussdorff_dists[patient_name][organ] = haussdorff(samples_orig, samples_rec)
-
-                        logger.info(f"Computing LDDMM")
-                        LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False)
-
-    if compute_metrics:
-        logger.info("Saving metrics data to csv")
-
+                        if compute_lddmm:
+                            logger.info(f"Computing LDDMM")
+                            LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False)
+    
+    if compute_chamfer:
         exp_name = experiment_name.split("/")[-1]
-
         # chamfer
         rows = []
         for name, organs in chamfer_dists.items():
@@ -416,6 +497,7 @@ def run(
         df = pd.DataFrame(rows)
         df.to_parquet(METRICS_DIR / f"{version}-{exp_name}-chamfer-{which_shapes}.parquet", index=False)
 
+    if compute_haussdorff:
         # haussdorff
         rows = []
         for name, organs in chamfer_dists.items():
@@ -430,6 +512,7 @@ def run(
         df = pd.DataFrame(rows)
         df.to_parquet(METRICS_DIR / f"{version}-{exp_name}-haussdorff-{which_shapes}.parquet", index=False)
 
+    if compute_lddmm:
         # LDDMM
         rows = []
         for name, organs in LDDMM_losses.items():
@@ -445,7 +528,8 @@ def run(
         df.to_parquet(METRICS_DIR / f"{version}-{exp_name}-LDDMM-{which_shapes}.parquet", index=False)
 
     if save_latent_codes:
-        logger.info("Saving fitted latents")
+        fname = f"latent_codes_{len(latent_codes.keys())}_patients_{version}-codereg={code_reg_lambda:.6f}-epochs={num_epochs}.npz"
+        logger.info(f"Saving fitted latents: {fname}")
         np.savez(LATENTS_DIR / f"latent_codes_{len(latent_codes.keys())}_patients_{version}-codereg={code_reg_lambda:.6f}-epochs={num_epochs}.npz", **latent_codes)
 
     logger.info("Done.")
@@ -465,29 +549,36 @@ if __name__ == "__main__":
     parser.add_argument("--version", "-v", type=str, default = "version_0")
     parser.add_argument("--override_with_dataset", "-od", type=str, default=None)
     parser.add_argument("--mode", "-m", type=int, default=1, choices=[1, 2])
+    parser.add_argument("--reconstruct_from", "-r", type=str, default="all", choices=["la","ra","all"])
+    parser.add_argument("--num_samp_per_scene_for_fit", "-nsamp", type=int, default=None)
+    parser.add_argument("--num_epochs", "-N", type=int, default=250)
+    parser.add_argument("--latent_reg_factor", "-lreg", type=float, default=2e-4)
+    parser.add_argument("--lr", type=float, default=0.005)
     parser.add_argument("--save_latent_codes", "-sc", action="store_true")
     parser.add_argument("--interactive_images", "-i", action="store_true")
     parser.add_argument("--save_images", "-si", action="store_true")
     parser.add_argument("--save_reconstructed_meshes", "-sm", action="store_true")
-    parser.add_argument("--compute_metrics", "-cm", action="store_true")
-    # parser.add_argument("--compute_lddmm", "-lddmm", action="store_true")
+    parser.add_argument("--compute_chamfer", "-chd", action="store_true")
+    parser.add_argument("--compute_lddmm", "-lddmm", action="store_true")
+    parser.add_argument("--compute_haussdorff", "-hauss", action="store_true")
     args = parser.parse_args()
 
     exp_name = args.experiment_name
     vers = args.version
-    test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "train/AF059-LEU_NORM_F017.json" # "train/data_fnames_train-20patients.json"
+    test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "test/AF009_P2R-LEU_NORM_F004.json" # "train/data_fnames_train-20patients.json"
     mode = args.mode 
-    num_epochs_fit_latent = 250
-    latent_reg_factor = 2e-4
-    lr_fit_latent = 5e-3
+    # num_epochs_fit_latent = 250
+    # latent_reg_factor = 2e-4
+    # lr_fit_latent = 5e-3
 
     kwargs = {
         "experiment_name" : exp_name,
         "version" : vers,
         "override_with_dataset" : test_datafnames,
-        "num_epochs_fit_latent" : num_epochs_fit_latent,
-        "latent_reg_factor" : latent_reg_factor,
-        "lr_fit_latent" : lr_fit_latent,
+        "num_samp_per_scene_for_fit" : args.num_samp_per_scene_for_fit,
+        "num_epochs_fit_latent" : args.num_epochs,
+        "latent_reg_factor" : args.latent_reg_factor,
+        "lr_fit_latent" : args.lr,
     }
 
     match mode:
@@ -496,11 +587,13 @@ if __name__ == "__main__":
             run_kwargs = {
                 **kwargs,
                 "reconstruct_surface" : True,
-                "reconstruct_from" : "all",
+                "reconstruct_from" : args.reconstruct_from,
                 "show_reconstruction_images" : args.interactive_images,
                 "save_reconstruction_images" : args.save_images,
                 "save_reconstructed_mesh" : args.save_reconstructed_meshes,
-                "compute_metrics" : args.compute_metrics,
+                "compute_chamfer" : args.compute_chamfer,
+                "compute_lddmm" : args.compute_lddmm,
+                "compute_haussdorff" : args.compute_haussdorff,
                 "save_latent_codes" : args.save_latent_codes
             }
 
@@ -508,10 +601,13 @@ if __name__ == "__main__":
             run_kwargs = {
                 **kwargs,
                 "reconstruct_surface" : False,
+                "reconstruct_from" : args.reconstruct_from,
                 "show_reconstruction_images" : False,
                 "save_reconstruction_images" : False,
                 "save_reconstructed_mesh" : False,
-                "compute_metrics" : False,
+                "compute_chamfer" : False,
+                "compute_lddmm" : False,
+                "compute_haussdorff" : False,
                 "save_latent_codes" : True
             }
 

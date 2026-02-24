@@ -4,7 +4,7 @@
 # Ignore all .ipynb files
 *.ipynb
 # Except some notebook 
-!summarize_performance_metrics.ipynb
+!summarize_experiment_performance.ipynb
 
 #Ignore all text files
 *.txt
@@ -18,10 +18,14 @@ model/atria_dataloader-playground.py
 
 # Ignore all files inside subfolders, but keep the top-level folder
 # But un-ignore all directories (keep folder structure)
-experiments/**/*
-!experiments/**/
-results/**/*
-!results/**/
+# experiments/
+# results/
+experiments/training_sweeps/RegLambdaAndAnneal
+experiments/training_sweeps/RegLambdaAndCs
+experiments/training_sweeps/LipPenaltyAndAct
+experiments/deepsdf_atria_training_local
+experiments/logs-*
+experiments/trained
 data/**/*
 !data/**/
 

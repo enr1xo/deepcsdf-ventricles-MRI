@@ -54,7 +54,7 @@ def find_existing_vtu(patient_root: Path) -> Path | None:
 
 def ensure_vtu_exists(patient_root: Path, out_dir: Path | None = None) -> Path:
     """
-    Cerca un .vtu nel ramo del paziente; se non c'è, lo crea da CARP bin.
+    Cerca un .vtu nel ramo del paziente; se non c'è, lo crea da CARP bin o dal VTK se questo c'è.
     Auto-detect del base: prende il primo .elem trovato (es. vol_fib.elem -> base vol_fib).
     """
     patient_root = Path(patient_root)        
@@ -65,6 +65,23 @@ def ensure_vtu_exists(patient_root: Path, out_dir: Path | None = None) -> Path:
     existing = find_existing_vtu(patient_root)
     if existing is not None:
         return existing
+
+    # 1.1) se c'è il .vtk, cra il vtu da questo
+    vtk_files = [p for p in patient_root.rglob("*.vtk") if "processed" not in p.stem.lower()]
+    if vtk_files:
+        vtk_path = vtk_files[0]
+        mesh = pv.read(vtk_path)
+
+        if not isinstance(mesh, pv.UnstructuredGrid):
+            raise TypeError(f"{vtk_path} non è voluemtrico (serve unstructuregrid).")
+        
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_vtu = (out_dir / patient_root.name).with_suffix(".vtu")
+
+        logger.warning(f"VTU non trovato per {patient_root.name}")
+        mesh.save(out_vtu)
+        return out_vtu
+
 
     # 2) trova un .elem (CARP bin) ricorsivamente
     elem_files = list(patient_root.rglob("*.elem"))
@@ -543,7 +560,7 @@ def _create_processed_surfaces_meshes(
 def _create_deepsdf_data_npy(
     source_dir,
     save_to_dir,
-    reference_patient = "AF001",
+    reference_patient = "",
     num_epi_samples=None,
     num_lendo_samples=None,
     num_rendo_samples=None,
@@ -623,6 +640,9 @@ def _create_deepsdf_data_npy(
     if create_processed_meshes:
         ref_dir = source_dir / reference_patient
         # print(f"reference directory: {ref_dir}") #############################################################################################################
+        ref_vtu_path = ensure_vtu_exists(ref_dir)
+        reference_mesh = pv.read(ref_vtu_path)
+
         mesh_path = next(ref_dir.glob("*.vtu"), None)
         if mesh_path is None:
             raise FileNotFoundError(
@@ -857,14 +877,26 @@ if __name__ == "__main__":
     #     reference_patient="AF069"
     # )
 
-    num_epi_samples = 30000
-    num_lendo_samples = 35000
-    num_rendo_samples = 35000
+    sickness_list = ["AF", "SV"]
+    reference_patient_lis = ["AF001", "yrm0342_v1"]
+
+    sickness = "AF"
+
+    if sickness == sickness_list[0]:
+        reference_patient = reference_patient_lis[0]
+
+    elif sickness == sickness_list[1]:
+        reference_patient = reference_patient_lis[1]
+
+    num_epi_samples = 15000
+    num_lendo_samples = 17500
+    num_rendo_samples = 17500
     num = num_epi_samples + num_lendo_samples + num_rendo_samples
 
     _create_deepsdf_data_npy(
         source_dir=PATIENT_MESHES_DIR,
         save_to_dir= PATIENTS_COORDS_AND_SDFS_DIR / f"single_patients_{num}pts_npy",
+        reference_patient=reference_patient,
         num_epi_samples=num_epi_samples,
         num_lendo_samples=num_lendo_samples,
         num_rendo_samples=num_rendo_samples,
@@ -872,9 +904,10 @@ if __name__ == "__main__":
         store_processed_meshes=True
     )
 
-    patient = "AF001"
+    
+    patient = reference_patient
 
-    data = np.load(PATIENTS_NPY_DATA_DIR / f"{patient}-epi_lv_rv_100000_coords_and_sdf.npy") 
+    data = np.load(PATIENTS_NPY_DATA_DIR / f"{patient}-epi_lv_rv_{num}_coords_and_sdf.npy") 
 
     coords = data[:,:3]
     sdfs = data[:,3:]

@@ -7,10 +7,59 @@ The various python scripts rely on a specific organizational structure which is 
 
 This sets paths for directories containing meshes files for each patient, training data, and results directories, as well as specific informations on locations of atrial regions used to process the original meshes from the specific dataset used (see specifics in How to use).
 
-Explain here mabye what the config file specifies and for what purpose
 
 #### Experiments runs
-Each training run is organized under an "experiment" and "version" directory. Training only results in the creation of `.pth` files storing the trained model weights, and an `hparams.json` file recording the specifics used for that run. The only file that is required to start training (or testing) is a `.json` under the specification files directory path, which sets the hyperparameters, network architecture, and data files to be used for the experiment.
+Each training run is organized under an "experiment" and "version" directory. Training only results in the creation of `.pth` files storing the trained model weights, and an `hparams.json` file recording the specifics used for that run. Model checkpoints during training can be also saved.
+
+The only file that is required to start training (or testing) is a `.json` under the specification files directory path, which sets the hyperparameters, network architecture, and data files to be used for the experiment.
+
+Example of a specs file:
+```python
+{
+    "TrainSplit" : "train/data_fnames_train.json",
+
+    "TestSplit" : "test/data_fnames_test.json",
+
+    "Network_specs" : {
+        "latent_size" : 64,
+        "out_dim" : 3,
+        "dims" : [256,256,256,256,256],
+        "latent_in" : [2],
+        "positional_encoding" : false,
+        "pos_enc_dim" : 4,   
+        "lipschitz_layers" : [2,3,4],
+        "regularize_layers" : [-1],
+        "activation" : "SiLU",
+        "last_tanh" : false,
+        "norm_layers" : [-1],
+        "batch_norm" : false,
+        "dropout_prob" : 0.2,
+        "dropout_layers" : [-1]       
+    },
+    
+    "NumEpochs": 50000,
+    "lr_weights": 0.001,
+    "lr_latents": 0.005,
+    "num_samp_per_scene": 4096,
+    "sampling_scene_method": "random",
+    "balance_pos_neg" : false,
+    "batch_size": 16,
+    "scale_spatial_inputs_by": 100,
+    "enforce_minmax": false,
+    "clamp_distance": 0.2,
+    "use_loss": "SmoothL1",
+    "use_lipreg_loss": false,
+    "lipschitz_alpha": 2e-06,
+    "code_reg_lambda": 2e-05,
+    "use_lr_scheduler": true,
+    "lr_weights_final": 1e-05,
+    "lr_latents_final": 5e-05,
+    "lr_decay_time_max": 100000,
+    "log_every_n_epochs" : 100,
+    "checkpoint_every_n_epochs": 20001,
+    "resume_training_from_version": "-"
+}
+```
 
 ## How to use
 
@@ -22,13 +71,11 @@ In order to use mesh data for training a DeepSDF model, the mesh will need to be
 - extract **watertight** epicardium and left / right endocardium surfaces from volumetric meshes of the atria in `.vtu` format
 - create `.npy` files containing arrays of sampled points with their sdf values for a given anatomy
 
-The surface extraction is done using a specific dictionary of TAGS identifying various parts of the anatomies. For now this is tailored *precisely* use the dataset supplied by Elena, if new geometries are added they have to respect these exact tags!
+The surface extraction is done using a specific dictionary of TAGS identifying various parts of the anatomies. For now this is tailored *precisely* to be used with the dataset supplied by Elena, if new geometries are added they have to respect these exact tags!
 
 All these steps can be done separately or alltogheter, over one or multiple patients. See docstrings of functions to understand what directories or files are expected, and how and where results are saved.
 
-Script can be run with (...)
-
-work in progress: make it executable from command like passing options as input, actually split into several executable scripts that each do a step, then explain here the intended sequence in which to use them if starting from scratch.
+Possible TODO: make it executable from command like passing options as input, actually split into several executable scripts that each do a step, then explain here the intended sequence in which to use them if starting from scratch.
 
 ### Training 
 
@@ -43,7 +90,7 @@ example: `data_fnames.json` contains `["patient1.npy", "patient2.npy"]`, then fu
 Then the script `train.py` can be executed combining optional features:
 
 - `--experiment_name`, `-e` *(str)*  
-  Experiment identifier. Becomes the directory name under which the corresponding `version_x` folder .. checkpoints and logs are saved  
+  Experiment identifier. Becomes the directory name under which the corresponding `version_x` folder is created for the training run.  
 
 - `--specs_file_path`, `-s` *(str)*  
   Path to the `.json` specs file defining training hyperparameters, network architecture, and data paths.
@@ -55,7 +102,7 @@ Then the script `train.py` can be executed combining optional features:
   Path to an alternative specs file. Overrides values defined in the default specs file. It can also just contain the specific fields to override, with the same names as in the original specs. -->
 
 - `--show_progress`  
-  Display training progress.
+  Optionally display training progress bar.
 
 <!-- A folder `experiment` will be created as a directory under the `EXPERIMENTS_DIR` path specified in `config.py`. The training creates a `.pth` file storing the model weights, records the specs used in a `hparams.json` file, and records the trainer logs in an `events.out` type file readable with tensorboard. Each run with the same experiment name will be saved under `version_x` folders under the same experiment directory.  -->
 
@@ -64,18 +111,20 @@ Then the script `train.py` can be executed combining optional features:
 
 A trained model from a specific experiment and version can be loaded from just the `.pth` file storing the model weights, and the `hparams.json` specification file defining the architecture. 
 
-The script `test.py` can be executed with additional flags specify the trained model to use, data, and what to do:
+The script `test.py` can be executed with additional flags specifying the trained model to use, data, and what to do:
 
 - `--experiment_name`, `-e` *(str)*  and `--version`, `-v` *(str)*
   Run identifiers, specify which run to load decoder weights and parameters from 
 
 - `--override_with_test_dataset`, , `-od` *(str)*  
-  path to test file, overrides the one specified in specs
+  path to `.json` file indicating which anatomies to process, overrides the one specified in specs `TestSplit`. This again is a file storing paths to `.npy` files storing coords and sdf for each anatomy.
 
 - `--mode`, `-m` *(int, {1,2})*  
   `1`: fit latent codes to reconstruct surfaces, optionally visualize / compute metrics / save  
   `2`: fit and save latent codes only
 
+- `--num_epochs`, `-N` and `--lr` and `--latent_reg_factor`, `-lreg` 
+  Number of epochs to fit latent code, learning rate, and factor of latent regularization in the loss
 
 Then one can specify further options if wanted: 
 - `--save_latent_codes`, `-sc`  
@@ -90,8 +139,8 @@ Then one can specify further options if wanted:
 - `--save_reconstructed_meshes`, `-sm`  
   Save reconstructed meshes to `.vtp` format
 
-- `--compute_chamfer`, `-chd`  and `--compute_lddmm`, `-lddmm`  
-  Compute chamfer and/or LDDMM metric, results are always saved to `.parquet` files if computed
+- `--compute_metrics`, `-cm`  
+  Compute chamfer, haussdorff and LDDMM metrics, results are always saved to `.parquet` files if computed
 
 This will process all the anatomies (patients) specified in the test split.
 
@@ -103,7 +152,7 @@ python test.py \
   --mode 1 \
   --save_images \
   --save_reconstructed_meshes \
-  --compute_chamfer
+  --compute_metrics
 ```
 
 <!-- Generally, test SDF sampling strategy and regularization could affect the quality of the test reconstructions. For example, sampling aggressively near the surface could provide accurate surface details but might leave under-sampled space unconstrained, and using high L2 regularization coefficient could result in perceptually better but quantitatively worse test reconstructions. -->

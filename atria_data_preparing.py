@@ -12,12 +12,13 @@ from scipy.spatial import KDTree
 import pymeshfix
 from utils.surface_utils import (
     check_watertight,
+    make_surface_watertight,
     scale_to_unit_sphere,
     sample_surface_for_deepsdf,
     compute_signed_distance_libigl
 )
 
-from config import (
+from config_v import (
     PATIENT_MESHES_DIR, 
     ATRIA_TAGS_METADATA,
     DATA_DIR,
@@ -43,7 +44,7 @@ def create_vtu_from_carpbin(
     command = [
         "meshtool",
         "convert",
-        f"-imsh", None,
+        f"-imsh", None, 
         f"-ifmt", input_format,
         f"-omsh", None,
         f"-ofmt", "vtu"
@@ -64,7 +65,7 @@ def create_vtu_from_carpbin(
 
                 print(e.stderr)
     else:
-        logger.warning("A.vtu file is already present in source directory, skipping creation.")
+        logger.warning("A .vtu file is already present in source directory, skipping creation.")
     
     return
 
@@ -81,26 +82,6 @@ def split_cell_data_tags( mesh_tags, tags_metadata = ATRIA_TAGS_METADATA ):
             logger.warning("Available tags metadata dictionary does not contain key {key}.")
 
     return tags_split
-
-def propagate_surface_cell_data_tags(original_surface, target_surface, elemtagskey):
-
-    orig_tags = original_surface.cell_data[elemtagskey]
-    
-    orig_centers = original_surface.cell_centers().points
-    
-    closed_centers = target_surface.cell_centers().points
-    
-    tree = KDTree(orig_centers)
-
-    new_tags = np.empty(target_surface.n_cells, dtype=orig_tags.dtype)
-
-    for i, p in enumerate(closed_centers):
-        _, idx = tree.query(p)
-        new_tags[i] = orig_tags[idx]
-
-    target_surface.cell_data[elemtagskey] = new_tags
-
-    return target_surface
 
 # def make_surface_consistently_oriented(surface_mesh: pv.PolyData):
 
@@ -130,38 +111,6 @@ def propagate_surface_cell_data_tags(original_surface, target_surface, elemtagsk
 #         surface_mesh.flip_normals()
 
 #     return
-
-def make_surface_watertight(surface_mesh: pv.PolyData):
-    """
-        Closes surface, additionally stores cell_data attribute 'isholepatch' indicating if cells are original or added to close holes.
-    """
-
-    # initial sanity check
-    surface_mesh = surface_mesh.triangulate() # make sure is all triangular mesh
-    surface_mesh = surface_mesh.clean(
-        tolerance=1e-12,     
-        inplace=False,
-    )
-
-    vertices = surface_mesh.points
-    faces = surface_mesh.faces.reshape((-1, 4))[:, 1:4]
-
-    orig_tri_count = faces.shape[0]
-
-    mf = pymeshfix.MeshFix(vertices, faces)
-
-    mf.repair() # this also close holes: faces after repair   = [ new patch faces | original faces ] appends new faces at the beginning !!
-    
-    vertices_repaired, faces_repaired = mf.v, mf.f
-    is_holepatch = np.zeros(faces_repaired.shape[0], dtype=np.int8)
-    is_holepatch[:-orig_tri_count] = 1
-
-    faces_pv = np.hstack([np.full((faces_repaired.shape[0], 1), 3), faces_repaired]).astype(np.int64)
-    faces_repaired = faces_pv.ravel()
-    surface_closed = pv.PolyData(vertices_repaired, faces_repaired)
-    surface_closed.cell_data["isholepatch"] = is_holepatch
-
-    return surface_closed
 
 def extract_raw_atria_surfaces(mesh, tags_metadata = ATRIA_TAGS_METADATA):
 
@@ -218,7 +167,7 @@ def extract_raw_atria_surfaces(mesh, tags_metadata = ATRIA_TAGS_METADATA):
 
     return epicardium_surface, RA_endo_surface, LA_endo_surface
 
-def extract_closed_atria_surfaces(mesh, tags_metadata = ATRIA_TAGS_METADATA):
+def extract_closed_atria_surfaces(mesh : pv.UnstructuredGrid | pv.PolyData, tags_metadata = ATRIA_TAGS_METADATA):
     """
         Extracts raw epicardium, left/right endocardium surfaces from the passed volumetric mesh using elements' tags,
         then closes the surfaces, returning watertight meshes.
@@ -733,6 +682,8 @@ def _create_deepsdf_data_npy(
 
         gc.collect()
 
+        break
+
     logger.info(" Done. ")
 
 
@@ -742,12 +693,6 @@ if __name__ == "__main__":
     pass
 
     #TODO: example usage
-
-    # _create_processed_surfaces_meshes(
-    #     source_dir  = Path("/home/navarri/AtriaProject/DATASETS/AtrialGeometriesOriginal"),
-    #     save_to_dir = Path("/home/navarri/AtriaProject/DATASETS/AtrialGeometries"),
-    #     reference_patient="AF069"
-    # )
 
     num_epi_samples = 30000
     num_lendo_samples = 35000
@@ -763,31 +708,3 @@ if __name__ == "__main__":
         create_processed_meshes=False,
         store_processed_meshes=False
     )
-
-    # patient = "AF001"
-
-    # data = np.load(PATIENTS_NPY_DATA_DIR / f"{patient}_epi_la_ra_100000_coords_and_sdf.npy") 
-
-    # coords = data[:,:3]
-    # sdfs = data[:,3:]
-
-    # points = pv.PolyData(coords)
-    # points["sdf_epi"] = sdfs[:,0]
-    # points["sdf_la"] = sdfs[:,1]
-    # points["sdf_ra"] = sdfs[:,2]
-
-    # plotter = pv.Plotter()
-    # plotter.add_mesh(points, scalars="sdf_epi", cmap="jet_r", render_points_as_spheres = True)
-    # plotter.show()
-
-    # plotter = pv.Plotter()
-    # plotter.add_mesh(points, scalars="sdf_la", cmap="jet_r", render_points_as_spheres = True)
-    # plotter.show()
-
-    # plotter = pv.Plotter()
-    # plotter.add_mesh(points, scalars="sdf_ra", cmap="jet_r", render_points_as_spheres = True)
-    # plotter.show()
-
-
-        
-

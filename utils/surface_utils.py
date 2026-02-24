@@ -5,7 +5,6 @@ from loguru import logger
 import trimesh
 from scipy.spatial import KDTree
 import pyacvd
-# import open3d as o3d
 import igl
 import gc
 
@@ -32,55 +31,34 @@ def check_watertight(mesh: pv.PolyData):
     return boundary_edges.n_cells == 0
 
 def make_surface_watertight(surface_mesh: pv.PolyData):
+    """
+        Closes surface, additionally stores cell_data attribute 'isholepatch' indicating if cells are original or added to close holes.
+    """
 
-    # --- Step 0: Remove duplicate points & clean non-manifold vertices
-    clean_mesh = surface_mesh.clean(
-        tolerance=0.0,     # merge points at exactly the same coordinates
-        inplace=False
-    )
-    
-    # --- Step 1: Recompute normals for consistent orientation
-    # Ensures inside/outside orientation is consistent
-    clean_mesh.compute_normals(
-        cell_normals=True,
-        point_normals=True,
-        auto_orient_normals=True,  # automatically flips normals to be consistent
-        split_vertices=False,      # keep shared vertices
-        inplace=True
+    # initial sanity check
+    surface_mesh = surface_mesh.triangulate() # make sure is all triangular mesh
+    surface_mesh = surface_mesh.clean(
+        tolerance=1e-12,     
+        inplace=False,
     )
 
-    vertices = clean_mesh.points
+    vertices = surface_mesh.points
+    faces = surface_mesh.faces.reshape((-1, 4))[:, 1:4]
 
-    faces = clean_mesh.faces.reshape((-1, 4))[:, 1:4]
+    orig_tri_count = faces.shape[0]
 
     mf = pymeshfix.MeshFix(vertices, faces)
 
-    mf.repair()
+    mf.repair() # this also close holes: faces after repair   = [ new patch faces | original faces ] appends new faces at the beginning !!
     
-    vertices_fixed, faces_fixed = mf.v, mf.f
-    faces_pv = np.hstack([np.full((faces_fixed.shape[0], 1), 3), faces_fixed]).astype(np.int64)
-    faces_pv = faces_pv.ravel()
+    vertices_repaired, faces_repaired = mf.v, mf.f
+    is_holepatch = np.zeros(faces_repaired.shape[0], dtype=np.int8)
+    is_holepatch[:-orig_tri_count] = 1
 
-    surface_closed = pv.PolyData(vertices_fixed, faces_pv)
-
-    surface_closed = surface_closed.clean(
-        tolerance=0.0,     # merge points at exactly the same coordinates
-        inplace=True
-    )
-
-    if not check_watertight(surface_closed):
-        logger.warning(f"Mesh is not watertight (found boundary edges)")
-
-    # mark patches holes cells
-    orig_face_sets = { frozenset(tuple(vertices[v]) for v in tri) for tri in faces } # to lookup
-    closed_face_sets = [ frozenset(tuple(vertices_fixed[v]) for v in tri) for tri in faces_fixed ] # to iterate over
-
-    mask = np.ones(len(faces_fixed), dtype=np.int8)
-    for i, face_set in enumerate(closed_face_sets):
-        if face_set in orig_face_sets:
-            mask[i] = 0   # original face
-
-    surface_closed.cell_data["isholepatch"] = mask # true (not 0) ==> not part of original mesh, so is part of a hole patch
+    faces_pv = np.hstack([np.full((faces_repaired.shape[0], 1), 3), faces_repaired]).astype(np.int64)
+    faces_repaired = faces_pv.ravel()
+    surface_closed = pv.PolyData(vertices_repaired, faces_repaired)
+    surface_closed.cell_data["isholepatch"] = is_holepatch
 
     return surface_closed
 
@@ -222,83 +200,45 @@ def sample_surface_for_deepsdf(
 
     return query_points
 
-# def compute_signed_distance_o3d(mesh: pv.PolyData, query_points):
-
-#     vertices = mesh.points
-#     faces_raw = mesh.faces.reshape(-1, 4)
-#     faces = faces_raw[:, 1:4]
-    
-#     # Build triangle mesh tensor
-#     mesh = o3d.t.geometry.TriangleMesh(
-#         o3d.core.Tensor(vertices, dtype=o3d.core.float32),
-#         o3d.core.Tensor(faces, dtype=o3d.core.int32),
-#     )
-
-#     # Scene for distance queries
-#     scene = o3d.t.geometry.RaycastingScene()
-#     mesh_id = scene.add_triangles(mesh)
-
-#     # Query points to tensor
-#     queries = o3d.core.Tensor(query_points, dtype=o3d.core.float32)
-
-#     # Unsigned distance
-#     unsigned = scene.compute_distance(queries).numpy()
-
-#     # Signed distance via winding number
-#     occupancy = scene.compute_occupancy(queries).numpy() # implemented via ray casting + parity counting.`
-#     # occupancy ∈ [0,1], >0.5 = inside
-#     inside = occupancy > 0.5
-
-#     sign = np.where(inside, -1.0, 1.0)
-
-#     return sign * unsigned
-
 def compute_signed_distance_libigl(mesh: pv.PolyData, query_points):
 
     # check again meshes are watertight! --> maybe original are, but then scaling them down introduces small numerical error in vertices so that mesh doesnìt result watertight really anymore ...
     if not check_watertight(mesh):
         logger.error("Going to compute SDF on a mesh that doesn't result watertight: found boundary edges. This may be small numerical errors introduced by previously scaling the meshes.")
 
-    vertices = mesh.points
-    faces = mesh.faces.reshape(-1, 4)[:, 1:4]
-    elements = faces.astype(np.int32)
+    # # automatic inside-outisde orientation
+    # # compute_normals can reorder the vertices in the triangles of the mesh so that all face normals are consistently oriented.
+    # # still doesnìt seem to work
+    # mesh.compute_normals(auto_orient_normals=True)
 
-    # TODO: automatic inside-outisde orientation, instead of manually flipping sign if it's opposite ...
+    vertices = mesh.points
+    faces = mesh.faces.reshape(-1, 4)[:, 1:4].astype(np.int32)
 
     sq_d, _, _ = igl.point_mesh_squared_distance(
         P = query_points,
         V = vertices,
-        Ele = elements
+        Ele = faces
     )
 
-    w = igl.fast_winding_number(V = vertices, F = elements, Q = query_points.astype(np.float64))
+    # assumes the mesh is consistently oriented !!!
+    w = igl.fast_winding_number(V = vertices, F = faces, Q = query_points.astype(np.float64))
 
     sdf = np.sqrt(sq_d) * np.sign(w - 0.5)
 
-    return sdf * -1
+    # heuristic: pick a point I know it's outside, flip sign if needed
+    bbox_max = mesh.bounds[1::2]  # xmax, ymax, zmax
+    outside_point = np.array([bbox_max[0] + 100.0, bbox_max[1] + 100.0, bbox_max[2] + 100.0])[None, :]  # shape (1,3)
+    w_out = igl.fast_winding_number(V = vertices, F = faces, Q = outside_point)[0]
+    if np.sign(w_out - 0.5) < 0:
+        sdf *= -1
+
+    return sdf
+
+
 
 if __name__ == "__main__":
 
-    from pathlib import Path
-    from tqdm import tqdm
-    
-    # PATIENT_MESHES_DIR = Path("/home/davidenava_linux/DATASETS/AtrialGeometriesData")
-
-    # patient_names = [subdir.name for subdir in PATIENT_MESHES_DIR.iterdir()] 
-    
-    # search_for_mesh_files = ["_epicardium_surface", "_LA_endo_surface", "_RA_endo_surface"]
-    # for i in tqdm(range(len(patient_names))):
-    #     patient = patient_names[i]
-    #     subdir = PATIENT_MESHES_DIR / patient
-    #     for meshname in search_for_mesh_files:
-    #         mesh_file = next( subdir.rglob(f"*{meshname}.vtp"), None)
-    #         mesh = pv.read(mesh_file)
-    #         # be sure every one is closed
-    #         mesh_closed = make_surface_watertight(mesh)
-    #         save_fname = patient + meshname + "_closed.vtp"
-    #         mesh_closed.save(subdir / save_fname)
-
-
+    pass
         
             
 

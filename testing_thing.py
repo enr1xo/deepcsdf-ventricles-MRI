@@ -1,26 +1,34 @@
 import numpy as np
 import plotly.graph_objects as go
 
-for col in range(3, 6):
-    SDF_COL = col            # 3=epi, 4=lv, 5=rv
+# fissata la colonna del LV e del paziente di indice 1 per debugging sul segno della sdf (ora solo > 0)
+# sickness = "AF" 
+sickness = "SickValve"
+# for col in range(3, 6):
+for i in range(3,6):
+    SDF_COL = i            # 3=epi, 4=lv, 5=rv
 
-    patients_list = ["AF001", "AF002_P2", "AF003_P2",
+    patients_list_AF = ["AF001", "AF002_P2", "AF003_P2",
                     "AF004_P1", "AF005_P1R", "AF006",
                     "AF007_P1", "AF008_P1"]
+    
+    patients_list_SV = ["yrm0342_v1"]
 
-    for i in range(len(patients_list)):
-        patient_nbr = i # from 0 to 7
-        patient = patients_list[patient_nbr]
+    # for i in range(len(patients_list)):
+    for i in range(0,1):
+        patient_nbr = 0 # from 0 to 7
+        patient = patients_list_SV[patient_nbr]
 
         # ====== INPUT/OUTPUT ======
-        NPY_PATH = f"/mnt/c/Users/e.rizzardi/OneDrive/Desktop/AF_patients/single_patients_100000pts_npy/{patient}-epi_lv_rv_100000_coords_and_sdf.npy"
-
+        NPY_PATH = f"/mnt/c/Users/e.rizzardi/OneDrive/Desktop/SDF_patients/{sickness}_patients/single_patients_50000pts_npy/{patient}-epi_lv_rv_50000_coords_and_sdf.npy"
+        #  "C:\Users\e.rizzardi\OneDrive\Desktop\SDF_patients\AF_patients\AF001\single_patients_50000pts_npy\AF001-epi_lv_rv_50000_coords_and_sdf.npy"
+        # "C:\Users\e.rizzardi\OneDrive\Desktop\SDF_patients\AF_patients\AF001\single_patients_50000pts_npy\yrm0342_v1-epi_lv_rv_50000_coords_and_sdf.npy"
         if SDF_COL == 3:
-            OUT_HTML = f"/mnt/c/Users/e.rizzardi/OneDrive/Desktop/samplings_and_sdf/{patient}/{patient}_sdf_EPI_plotly.html"
+            OUT_HTML = f"/mnt/c/Users/e.rizzardi/OneDrive/Desktop/samplings_and_sdf/{sickness}/{patient}_sdf_EPI_plotly.html"
         elif SDF_COL == 4:
-            OUT_HTML = f"/mnt/c/Users/e.rizzardi/OneDrive/Desktop/samplings_and_sdf/{patient}/{patient}_sdf_LV_plotly.html" 
+            OUT_HTML = f"/mnt/c/Users/e.rizzardi/OneDrive/Desktop/samplings_and_sdf/{sickness}/{patient}_sdf_LV_plotly.html" 
         elif SDF_COL == 5:
-            OUT_HTML = f"/mnt/c/Users/e.rizzardi/OneDrive/Desktop/samplings_and_sdf/{patient}/{patient}_sdf_RV_plotly.html"
+            OUT_HTML = f"/mnt/c/Users/e.rizzardi/OneDrive/Desktop/samplings_and_sdf/{sickness}/{patient}_sdf_RV_plotly.html"
 
 
         # OUT_HTML = "/mnt/c/Users/e.rizzardi/OneDrive/Desktop/AF008_P1_sdf_epi_plotly.html"
@@ -34,19 +42,30 @@ for col in range(3, 6):
         sdf = data[:, SDF_COL].astype(np.float32)
 
         # downsample per performance (mantieni più near-surface)
-        near = np.where(np.abs(sdf) < NEAR_EPS)[0]
-        far = np.where(np.abs(sdf) >= NEAR_EPS)[0]
+        # near = np.where(np.abs(sdf) < NEAR_EPS)[0]
+        # far = np.where(np.abs(sdf) >= NEAR_EPS)[0]
 
-        rng = np.random.default_rng(0)
-        n_near = min(len(near), int(MAX_POINTS * 0.85))
-        n_far  = min(len(far),  MAX_POINTS - n_near)
+        # rng = np.random.default_rng(0)
+        # n_near = min(len(near), int(MAX_POINTS * 0.85))
+        # n_far  = min(len(far),  MAX_POINTS - n_near)
 
-        near_idx = rng.choice(near, size=n_near, replace=False) if len(near) else np.array([], dtype=int)
-        far_idx  = rng.choice(far,  size=n_far,  replace=False) if len(far) else np.array([], dtype=int)
-        idx = np.concatenate([near_idx, far_idx])
+        # near_idx = rng.choice(near, size=n_near, replace=False) if len(near) else np.array([], dtype=int)
+        # far_idx  = rng.choice(far,  size=n_far,  replace=False) if len(far) else np.array([], dtype=int)
+        # idx = np.concatenate([near_idx, far_idx])
 
-        x, y, z = coords[idx].T
-        s = sdf[idx]
+        # correct, ora commentato per debug
+        x, y, z = coords.T
+        s = sdf
+
+        # debug
+        # mask = sdf < 0
+
+        # coords_neg = coords[mask]
+        # sdf_neg = sdf[mask]
+
+        # x, y, z = coords_neg.T
+        # s = sdf_neg
+        # fine debug
 
         fig = go.Figure(data=go.Scatter3d(
             x=x, y=y, z=z,
@@ -68,7 +87,7 @@ for col in range(3, 6):
             region = "RV"
 
         fig.update_layout(
-            title=f"SDF region={region} (points shown={len(idx)})",
+            title=f"SDF region={region} (points shown={len(s)})",
             scene=dict(
                 xaxis_title="x", yaxis_title="y", zaxis_title="z",
                 aspectmode="data"

@@ -2,7 +2,7 @@ from pathlib import Path
 import json
 import random
 
-from config import (
+from config_v import (
     PATIENTS_NPY_DATA_DIR,
     TRAIN_DATA_DIR,
     TEST_DATA_DIR
@@ -38,7 +38,7 @@ def create_train_test_split(
             data.append(str(file))
 
     with open(TRAIN_DATA_DIR / save_train_filename, "w") as f:
-        json.dump(data, f)
+        json.dump(data, f, indent=4)
 
     data = []
     for file in test_names:
@@ -47,7 +47,7 @@ def create_train_test_split(
             data.append(str(file))
 
     with open(TEST_DATA_DIR / save_test_filename, "w") as f:
-        json.dump(data, f)
+        json.dump(data, f, indent=4)
 
     return
 

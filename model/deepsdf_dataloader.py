@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from loguru import logger
 
-from config import DATA_DIR, PATIENTS_NPY_DATA_DIR
+from config_v import DATA_DIR, PATIENTS_NPY_DATA_DIR
 
 
 class SDFSamples(Dataset):
@@ -42,7 +42,7 @@ class SDFSamples(Dataset):
 
         self.sdf_dim = specs.get("Network_specs", {}).get("out_dim", 3)
 
-        self.train_fname = DATA_DIR / specs.get("TrainSplit", None) # I donìt like DATA_DIR hardcoded actually
+        self.train_fname = DATA_DIR / specs.get("TrainSplit", None) # I don't like DATA_DIR hardcoded actually
 
         self.test_fname = DATA_DIR / specs.get("TestSplit", None)
 
@@ -57,6 +57,8 @@ class SDFSamples(Dataset):
 
         if Path(self.data_file).suffix == ".json":
             data_tot = self._unpack_sdfdata_json(self.data_file)
+        else:
+            raise ValueError(f"Expected path to .json file listing data, got {self.data_file}")
         
         self.num_scenes = len(data_tot)
 

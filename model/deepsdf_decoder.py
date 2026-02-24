@@ -7,7 +7,6 @@ import json
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-from loguru import logger
 from pathlib import Path
 from deel.torchlip.modules.linear import SpectralLinear
 import numpy as np
@@ -23,7 +22,7 @@ act_fn = {
 
 class Decoder(nn.Module):
 
-    def __init__(self, **specs): # was **specs
+    def __init__(self, **specs): # unpacks given keyword args into specs dictionary, so I can use .get() and have default instead of errors if the key isn't there
         super().__init__()
 
         self.latent_size = specs.get("latent_size", 64)
@@ -47,8 +46,6 @@ class Decoder(nn.Module):
         self.batch_norm = specs.get("batch_norm", False)
 
         self.lipschitz_layers = specs.get("lipschitz_layers", [-1]) # these are SpectralLinear layers, enforced to be lipschitz
-
-        self.regularize_layers = specs.get("regularize_layers", [-1]) # these are layers from which we compute weight matrices to add in the lipschitz penalty in the loss
 
         self.hidden_dims = specs.get("dims", [])
         
@@ -125,12 +122,12 @@ class Decoder(nn.Module):
 
 class DeepSDF(pl.LightningModule):
 
-    def __init__(self, decoder, specs):
+    def __init__(self, decoder : Decoder, specs : dict):
         super().__init__()
 
         self.specs = specs
         
-        self.decoder: Decoder = decoder
+        self.decoder = decoder
 
         self.lr_weights = specs.get("lr_weights", 0.001)
         self.lr_latents = specs.get("lr_latents", 0.0005)
@@ -145,6 +142,12 @@ class DeepSDF(pl.LightningModule):
 
         self.lat_vecs = {"trainable": nn.Embedding}
 
+        self.code_reg_lambda = specs.get("code_reg_lambda", 1e-4)
+
+        self.anneal_reg_loss = specs.get("anneal_reg_loss", False)
+
+        self.anneal_warmup_epochs = specs.get("code_reg_anneal_warmup_epochs", 1000)
+
         self.use_loss = specs.get("use_loss", "SmoothL1")
 
         if self.use_loss == "L1":
@@ -154,17 +157,15 @@ class DeepSDF(pl.LightningModule):
         elif self.use_loss == "SmoothL1":
             self.loss_fn = torch.nn.SmoothL1Loss(reduction="sum") 
 
-        self.code_reg_lambda = specs.get("code_reg_lambda", 1e-2)
+        self.use_lipreg_loss = specs.get("use_lipreg_loss", False)
 
-        self.use_lipreg_loss = specs.get("use_lipreg_loss", True)
+        self.lipschitz_alpha = specs.get("lipschitz_alpha", 2e-6)
 
         self.enforce_minmax = specs.get("enforce_minmax", False)
 
         self.clamp_distance = specs.get("clamp_distance", 0.1)
 
         self.Cs = specs.get("scale_spatial_inputs_by", 100)
-
-        self.lipschitz_alpha = specs.get("lipschitz_alpha", 2e-6)
 
         self.log_every_n_epochs = specs.get("log_every_n_epochs", 1)
 
@@ -198,26 +199,30 @@ class DeepSDF(pl.LightningModule):
                     {
                         "params": self.decoder.parameters(),
                         "lr": self.lr_weights,
-                        # "lr": self.lr_schedules[0].get_learning_rate(0),
                     },
                     {
                         "params": self.lat_vecs["trainable"].parameters(),
-                        "lr": self.lr_latents #0.0005,  # was 0.0005
-                        # "lr": self.lr_schedules[1].get_learning_rate(0),
+                        "lr": self.lr_latents 
                     },
                 ]
             )
             if self.use_lr_scheduler:
                 T_max =  self.lr_decay_T_max
 
-                def cosine_lambda(epoch, base_lr, eta_min):
-                    return eta_min / base_lr + 0.5 * (1 - eta_min / base_lr) * (1 + math.cos(math.pi * epoch / T_max))
+                # maybe explore OneCycleR schedule: the LR first increases from a low start (lr_start) 
+                # to a maximum (max_lr) over pct_start fraction of total steps 
+                # Then decreases down to a final LR (lr_final) over the remaining steps (careful ! STEPS, not epochs !!)
+
+                # CUSTOM SCHEDULER USING LambdaLR scheduler, fully custom
+                def linear_lambda(epoch, lr_start, lr_final):
+                    return max(lr_final / lr_start, 1.0 - (epoch / T_max) * (1.0 - lr_final / lr_start))
 
                 scheduler = torch.optim.lr_scheduler.LambdaLR(
                     optimizer,
+                    # lr_lambda function does not return the absolute LR, it returns a multiplicative factor for it
                     lr_lambda=[
-                        lambda epoch: cosine_lambda(epoch, self.lr_weights, self.lr_weights_final),
-                        lambda epoch: cosine_lambda(epoch, self.lr_latents, self.lr_latents_final)
+                        lambda epoch: linear_lambda(epoch, self.lr_weights, self.lr_weights_final),
+                        lambda epoch: linear_lambda(epoch, self.lr_latents, self.lr_latents_final)
                     ]
                 )
 
@@ -232,6 +237,11 @@ class DeepSDF(pl.LightningModule):
 
         return optimizer
 
+    def anneal_latent_reg(self):
+        if "trainable" in self.lat_vecs.keys():
+            # linear annealing for now self.current_epoch, self.anneal_warmup_epochs
+            return self.code_reg_lambda * min(  self.current_epoch /  self.anneal_warmup_epochs, 1.0 )   
+
     def on_fit_start(self):
         # move manually latents on the device to be sure it's on the same device as data when fitting the model
         self.lat_vecs["trainable"].to(self.device)
@@ -245,6 +255,13 @@ class DeepSDF(pl.LightningModule):
             json_path = Path(self.logger.log_dir) / "hparams.json"
             with open(json_path, "w") as f:
                 json.dump(self.specs, f, indent=4)
+
+    def on_train_end(self):
+        # for now, save as numpy data
+        if self.logger is not None:
+            npy_path = Path(self.logger.log_dir) / "latents.npy"
+            embeddings = self.lat_vecs["trainable"].weight.data.cpu().numpy()
+            np.save(npy_path, embeddings)
 
     def training_step(self, batch, batch_idx):
 
@@ -270,7 +287,7 @@ class DeepSDF(pl.LightningModule):
 
         indices = indices.unsqueeze(-1).repeat(1, num_samp_per_scene).view(-1)
 
-        batch_vecs = self.lat_vecs["trainable"](indices)
+        batch_vecs = self.lat_vecs["trainable"](indices) # repeat latents for input
 
         input_ = torch.cat([batch_vecs, xyz], dim=1)
 
@@ -283,57 +300,54 @@ class DeepSDF(pl.LightningModule):
         chunk_loss = self.loss_fn(prediction, sdf_gt) / (num_sdf_samples * self.decoder.out_dim) # divide by N only --> total error per sample, divide by N * out_dim --> average per scalar, most unit-free choice
 
         # REGULARIZATION LOSS  # was: reg_loss = torch.sum( torch.linalg.norm(batch_vecs, dim=1) ) / num_sdf_samples
-        reg_loss = torch.mean(batch_vecs.pow(2).sum(dim=1)) / self.decoder.latent_size # I should maybe normalize by latent size so it becomes independent from it
+        # don't waste computation on batch_vecs, in there are repeated latents !! was reg_loss = torch.sum( torch.linalg.norm(batch_vecs, dim=1) ** 2 ) / num_sdf_samples
+        latents = self.lat_vecs["trainable"]( torch.unique(indices) )
+        reg_loss = torch.mean( torch.linalg.norm(latents, dim=1) ** 2 )
 
-        # # LIPSCHITZ PENALTY
-        # if self.use_lipreg_loss:
-        #     lipschitz_loss = 1.0
-        #     for layer in range(self.decoder.num_layers):
-        #         weight = self.decoder.__getattr__("lin" + str(layer)).weight
-        #         norm = torch.linalg.matrix_norm(weight, ord=float("inf")) # TODO: bound this so it doesn't explode
-        #         lipschitz_loss *= F.softplus(norm)
-        #     lipschitz_loss = self.lipschitz_alpha * lipschitz_loss
-        # else:
-        #     lipschitz_loss = 0.0
+        # if self.normalize_reg_loss: #TODO
+        #     pass
 
-        # # LIPSCHITZ PENALTY
+        if self.anneal_reg_loss: # self.global_step is the total optimizer steps so far (across all epochs), self.current_epoch is the actual epoch
+            code_reg_lambda = self.anneal_latent_reg()
+        else:
+            code_reg_lambda =  self.code_reg_lambda
+
+        # LIPSCHITZ PENALTY
         lipschitz_loss = 0.0
         if self.use_lipreg_loss: # compute product of spectral norms for all layers !
-            Ws = torch.stack([getattr(self.decoder, f"lin{i}").weight for i in range(self.decoder.num_layers)])
-            # Compute norms for all layers at once
-            norms = torch.linalg.matrix_norm(Ws, ord=float('inf'), dim=(1,2))  # shape: (num_layers,)
-            softplus_norms = F.softplus(norms)
             # compute product of spectral norms as sum in log space for stability
-            log_prod = torch.sum(torch.log(softplus_norms + 1e-12))  # add eps for stability
             # lipschitz_loss = torch.exp(log_prod) # normalized by depth:  torch.exp(log_prod / self.decoder.num_layers)
             # do not exponentiate for stabilty, for training it is unnecessary ( still get the same minimizer)
-            lipschitz_loss = log_prod 
+            for i in range(self.decoder.num_layers - 1):
+                W = getattr(self.decoder, f"lin{i}").weight  
+                norm = torch.linalg.matrix_norm(W, ord=float('inf'))  
+                softplus_norm = F.softplus(norm)
+                lipschitz_loss += torch.log(softplus_norm + 1e-12) 
 
-        training_loss = chunk_loss + self.code_reg_lambda * reg_loss + self.lipschitz_alpha * lipschitz_loss
+        training_loss = chunk_loss + code_reg_lambda * reg_loss + self.lipschitz_alpha * lipschitz_loss
 
         if self.logger is not None and (self.current_epoch + 1) % self.log_every_n_epochs == 0:
-
-            xyz_diag = xyz.detach().requires_grad_(True)
-            z_diag   = batch_vecs.detach().requires_grad_(True)
-
-            pred_diag = self.decoder(torch.cat([z_diag, xyz_diag], dim=1))
-
-            gx = torch.autograd.grad(pred_diag.sum(), xyz_diag, retain_graph=True)[0]
-            gz = torch.autograd.grad(pred_diag.sum(), z_diag)[0]
-
-            ratio = gx.norm(dim=1).mean() / ( gz.norm(dim=1).mean() + 1e-12 )
+            
+            # optimizer = self.optimizers()
+            # # optimizer.param_groups is a list of dicts — each dict corresponds to one group defined in torch.optim.Adam([ ... ])
+            # current_lrs = [pg['lr'] for pg in optimizer.param_groups]
+            # lr_weights, lr_latents = current_lrs
 
             self.log_dict(
                 {
-                    "latent_reg_loss": reg_loss,
-                    "prediction_loss": chunk_loss,
-                    "lipschitz_loss": lipschitz_loss,
-                    "ratio_gx_over_gz" : ratio
+                    "latents_mean_L2_squared": reg_loss.detach().cpu(),
+                    "lipschitz_penalty": lipschitz_loss.detach().cpu(),
+                    "regression_loss": chunk_loss.detach().cpu(),
+                    "train_loss" : training_loss.detach().cpu(),
+                    "code_reg_lambda" : code_reg_lambda,
+                    # "lr_weights" : lr_weights,
+                    # "lr_latents" : lr_latents
                 },
-                logger=True
+                logger=True,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False
             )
-
-            self.log_dict({"train_loss": training_loss}, prog_bar=True, on_step=False, on_epoch=True, logger=True)
 
         return training_loss
 
@@ -345,3 +359,57 @@ class DeepSDF(pl.LightningModule):
 if __name__ == "__main__":
 
     pass
+
+""" --> old setup
+        # # REGULARIZATION LOSS  # was: reg_loss = torch.sum( torch.linalg.norm(batch_vecs, dim=1) ) / num_sdf_samples
+        # reg_loss = torch.sum( torch.linalg.norm(batch_vecs, dim=1) ** 2 ) / num_sdf_samples
+
+        # # if self.normalize_reg_loss:
+        # #     pass
+
+
+        # # # LIPSCHITZ PENALTY
+        # # if self.use_lipreg_loss:
+        # #     lipschitz_loss = 1.0
+        # #     for layer in range(self.decoder.num_layers):
+        # #         weight = self.decoder.__getattr__("lin" + str(layer)).weight
+        # #         norm = torch.linalg.matrix_norm(weight, ord=float("inf")) # TODO: bound this so it doesn't explode
+        # #         lipschitz_loss *= F.softplus(norm)
+        # #     lipschitz_loss = self.lipschitz_alpha * lipschitz_loss
+        # # else:
+        # #     lipschitz_loss = 0.0
+
+        # # # LIPSCHITZ PENALTY
+        # lipschitz_loss = 0.0
+        # if self.use_lipreg_loss: # compute product of spectral norms for all layers !
+        #     Ws = torch.stack([getattr(self.decoder, f"lin{i}").weight for i in range(self.decoder.num_layers)])
+        #     # Compute norms for all layers at once
+        #     norms = torch.linalg.matrix_norm(Ws, ord=float('inf'), dim=(1,2))  # shape: (num_layers,)
+        #     softplus_norms = F.softplus(norms)
+        #     # compute product of spectral norms as sum in log space for stability
+        #     log_prod = torch.sum(torch.log(softplus_norms + 1e-12))  # add eps for stability
+        #     # lipschitz_loss = torch.exp(log_prod) # normalized by depth:  torch.exp(log_prod / self.decoder.num_layers)
+        #     # do not exponentiate for stabilty, for training it is unnecessary ( still get the same minimizer)
+        #     lipschitz_loss = log_prod 
+
+        # training_loss = chunk_loss + self.code_reg_lambda * reg_loss + self.lipschitz_alpha * lipschitz_loss
+
+        # if self.logger is not None and (self.current_epoch + 1) % self.log_every_n_epochs == 0:
+
+        #     self.log_dict(
+        #         {
+        #             "latent_reg_loss": reg_loss,
+        #             "prediction_loss": chunk_loss,
+        #         },
+        #         logger=True
+        #     )
+
+        #     self.log(
+        #         "train_loss",
+        #         training_loss,
+        #         on_step=False,
+        #         on_epoch=True,
+        #         prog_bar=True,
+        #         logger=True
+        #     )
+"""

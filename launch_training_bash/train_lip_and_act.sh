@@ -2,13 +2,13 @@
 
 # ---- Parameters ----
 EXPERIMENT=training_sweeps/LipAndAct
-SPECS_BASE=specs_files/specs_deepsdfatria-base.json
+SPECS_BASE=specs_files/specs_deepsdfatria-base2.json
 PYTHON_SCRIPT=train.py
-SLEEP_INTERVAL=300       # seconds
+SLEEP_INTERVAL=120       # seconds
 SAFETY_MARGIN_MB=500   # safety
 MEM_REQUIRED_MB=1500    
-MAX_PARALLEL=12 
-LOG_DIR=experiments/logs-temp
+MAX_PARALLEL=16 
+LOG_DIR=experiments/logs-train-temp
 # --------------------
 
 mkdir -p "$LOG_DIR"
@@ -38,11 +38,10 @@ declare -a JOB_PIDS=()
 
 # ---- Hyperparameters to sweep ----
 LIPSCHITZ_LAYERS=(
-  '[0,1,2,3,4]'
-  '[1,2,3,4]'
-  '[2,3,4]'
-  '[3,4]'
-  '[4]'
+    '[0,1,2,3,4]'
+    '[2,3,4]'
+    '[3,4]'
+    '[-1]'
 )
 
 ACTS=('Softplus' 'GELU' 'Tanh' 'SiLU')
@@ -53,7 +52,7 @@ for lip in "${LIPSCHITZ_LAYERS[@]}"; do
         # $() --> parentheses open a subshell, and stdout is captured to a variable,
         # cat alone reads from stdin and outputs to stdout
         # <<SOMETHING tells the shell: feed everything between here and the next SOMETHING as stdin to the command before it
-        # so cat <<SOMETHING reads everything from stdin untile the next EOF and sends it to stdout
+        # so cat <<SOMETHING reads everything from stdin untile the next SOMETHING and sends it to stdout
         override_specs=$(cat <<BIPBOP
 {
 "Network_specs": {
@@ -102,20 +101,20 @@ done
 wait
 echo "All trainings completed at $(date)"
 
-# # send email to myself with list of versions completed
-# VERSIONS=()
-# for logfile in "$LOG_DIR"/*.log; do
-#     version=$(grep "TRAINING_DONE_VERSION=" "$logfile" | cut -d= -f2)
-#     [[ -n "$version" ]] && VERSIONS+=("$version")
-# done
+# send email to myself with list of versions completed
+VERSIONS=()
+for logfile in "$LOG_DIR"/*.log; do
+    version=$(grep "TRAINING_DONE_VERSION=" "$logfile" | cut -d= -f2)
+    [[ -n "$version" ]] && VERSIONS+=("$version")
+done
 
-# EMAIL_BODY=$'\n\nVersions:\n'
-# for v in "${VERSIONS[@]}"; do
-#     EMAIL_BODY+=$" - $v"
-#     EMAIL_BODY+=$'\n'
-# done
+EMAIL_BODY=$'\n\nVersions:\n'
+for v in "${VERSIONS[@]}"; do
+    EMAIL_BODY+=$" - $v"
+    EMAIL_BODY+=$'\n'
+done
 
-python "send_email.py" --subject "Training concurrently: all jobs done" # --body "$EMAIL_BODY"
+python "send_email.py" --subject "Training concurrently: all jobs done" --body "$EMAIL_BODY"
 
 # # # # echo "Cleaning up log directory..."
 # # # # rm -rf "$LOG_DIR"

@@ -1,17 +1,18 @@
 #!/bin/bash
 
 # ---- Parameters ----
-VERSION_DIR=experiments/training_sweeps/LipAndAct
+VERSION_DIR=experiments/training_sweeps/RegLambdaAndAnneal
+EXPERIMENT=training_sweeps/RegLambdaAndAnneal
 PYTHON_SCRIPT=test.py
-TEST_DATASET="train/data_fnames_train-20patients.json"
+TEST_DATASET="test/data_fnames_test.json"
 SLEEP_INTERVAL=60       # seconds
 SAFETY_MARGIN_MB=500   # safety
-MEM_REQUIRED_MB=6000    
-MAX_PARALLEL=4 
-LOG_DIR=experiments/logs-temp
+MEM_REQUIRED_MB=1000    
+MAX_PARALLEL=5 
+LOG_DIR=experiments/logs-test-temp
 # --------------------
 
-mkdir -p "$LOG_DIR"
+mkdir "$LOG_DIR"
 
 # Function to get free GPU memory in MB
 GPU_ID=1 
@@ -40,7 +41,6 @@ for dir in "$VERSION_DIR"/*/; do
     ver=${dir%/}
     ver="${ver##*/}"
 
-    if [ "$ver" != "version_34" ]; then
             
         while true; do
             clean_jobs
@@ -52,19 +52,26 @@ for dir in "$VERSION_DIR"/*/; do
             # Check if enough memory + below max jobs
             if (( free > MEM_REQUIRED_MB + SAFETY_MARGIN_MB && running < MAX_PARALLEL )); then
                 echo "Launching $ver"
-                logfile="$LOG_DIR/$ver.log"
 
-                python "$PYTHON_SCRIPT" -e "training_sweeps/LipAndAct" -v "$ver" -od "$TEST_DATASET" -cm &> "$logfile" &
+                logfile="$LOG_DIR/test_${ver}.log"
+
+                python "$PYTHON_SCRIPT" \
+                    -e "$EXPERIMENT" \
+                    -v "$ver" \
+                    -od "$TEST_DATASET" \
+                    -nsamp 4096 \
+                    -lreg 5e-4 \
+                    -chd \
+                     &> "$logfile" &
 
                 JOB_PIDS+=($!)
                 sleep 10
                 break
             else
-                echo "Waiting for GPU memory..."
+                echo "Waiting for GPU memory or jobs ending  $(date)"
                 sleep "$SLEEP_INTERVAL"
             fi
         done
-    fi
 
 done
 
