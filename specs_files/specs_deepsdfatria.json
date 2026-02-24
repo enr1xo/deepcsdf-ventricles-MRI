@@ -22,7 +22,7 @@
         "dropout_layers" : [-1]       
     },
     
-    "NumEpochs": 200000,
+    "NumEpochs": 500,
     "lr_weights": 3e-4,
     "lr_latents": 3e-4,
     "num_samp_per_scene": 4096,
@@ -41,7 +41,9 @@
     "lr_weights_final": 1e-04,
     "lr_latents_final": 1e-04,
     "lr_decay_time_max": 180000,
-    "log_every_n_epochs" : 1000,
+    "log_every_n_epochs" : 10,
+    "log_val_every_n_epochs" : 100,
+    "val_batch_size" : 8,
     "checkpoint_every_n_epochs": 50000,
     "resume_training_from_version": "-"
 }
