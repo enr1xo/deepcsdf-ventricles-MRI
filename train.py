@@ -1,7 +1,7 @@
 """ Train deepsdf model to learn atrial shapes. Needs a specification file that gives all data, decoder, training parameters and optionally post-processing directories
 """
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import re
 import json
 import torch
@@ -198,7 +198,7 @@ def train(specs: dict, experiment_name, num_workers = 0, show_progress = False):
         enable_model_summary=False,  
         enable_progress_bar=show_progress,
         log_every_n_steps=1,
-        check_val_every_n_epoch=model.log_val_every_n_epochs,  # run validation every 5 epochs
+        check_val_every_n_epoch=model.log_val_every_n_epochs,  # run validation
         logger=logger_tb,
         enable_checkpointing=True,
         callbacks = [

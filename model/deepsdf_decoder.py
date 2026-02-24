@@ -250,7 +250,7 @@ class DeepSDF(pl.LightningModule):
 
         self.log_every_n_epochs = specs.get("log_every_n_epochs", 1000)
 
-        self.log_val_every_n_epochs = specs.get("log_val_every_n_epochs", 0)
+        self.log_val_every_n_epochs = specs.get("log_val_every_n_epochs", None)
 
     def set_embedding(self, num_scenes = None, embedding=None):
         if num_scenes is None:
