@@ -18,16 +18,7 @@ def chamfer_distance_L2(points1, points2):
     dists_1, _ = tree.query(points2)
     tree = KDTree(points2)
     dists_2, _ = tree.query(points1)
-    return np.mean(dists_1)  + np.mean(dists_2)
-
-def chamfer_distance_L2_squared(points1, points2):
-    if len(points1) == 0 or len(points2) == 0:
-        return float("nan")
-    tree = KDTree(points1)
-    dists_1, _ = tree.query(points2)
-    tree = KDTree(points2)
-    dists_2, _ = tree.query(points1)
-    return np.mean(dists_1 ** 2)  + np.mean(dists_2 ** 2)
+    return 0.5 * ( np.mean(dists_1)  + np.mean(dists_2) )
 
 def varifold_inner(faces1, faces2, gamma = 1.0, block=2048, device = "cuda"):
     faces1 = faces1.to(device)

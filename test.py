@@ -9,10 +9,11 @@ import pyvista as pv
 from model.deepsdf_decoder import Decoder, DeepSDF
 from model.deepsdf_dataloader import SDFDataModule
 from utils.metrics import chamfer_distance_L2, LDDMM_loss, haussdorff
-from utils.surface_utils import remesh, make_trimesh_from_pv, scale_to_unit_sphere
+from utils.surface_utils import remesh
 from utils.reconstruction_utils import isosurface_from_sdf
 from utils.visual_utils import plot_gt_vs_reconstructed_with_error
 from vtk import vtkImplicitPolyDataDistance
+from scipy.interpolate import griddata
 from tqdm import tqdm
 import pandas as pd
 from pprint import pprint
@@ -24,7 +25,8 @@ from config import (
     RECONSTRUCTED_MESHES_DIR,
     LATENTS_DIR,
     METRICS_DIR,
-    PATIENT_MESHES_DIR
+    PATIENT_MESHES_DIR,
+    PATIENTS_NPY_DATA_DIR
 )
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -250,6 +252,12 @@ def run(
         # print(f"##### ===== PATIENT {patient_name} : {shape_idx}/{len(dataset)} ===== #####")
         print("\033[48;2;30;30;30;0;38;2;255;200;0m" + f"##### ===== PATIENT {patient_name} : {shape_idx+1}/{len(dataset)} ===== #####" + "\033[0m")
 
+        coords_and_sdf_file = next( PATIENTS_NPY_DATA_DIR.glob(f"{patient_name}*.npy"), None )
+        if coords_and_sdf_file is None:
+            raise FileNotFoundError(f"Tried to load original points and sdf data from directory \
+                                    {PATIENTS_NPY_DATA_DIR} for patient {patient_name}, found None. \
+                                    These should be used for chamfer distance computations.")
+        
         chamfer_dists[patient_name] = {}
 
         haussdorff_dists[patient_name] = {}
@@ -360,7 +368,7 @@ def run(
             # region reconstruct surface from predicted sdf
             # ==================================================== #
             resolution = 128
-            box_lim = decoder_input_scale * 1.05
+            box_lim = 1.1
 
             with torch.no_grad():
                 
@@ -375,27 +383,20 @@ def run(
                 xx, yy, zz = np.meshgrid(x, y, z)
 
                 grid = np.c_[xx.ravel(), yy.ravel(), zz.ravel()]
-                xyz_raw = grid
 
-                n_batches = len(xyz_raw) // 250000
+                n_batches = len(grid) // 250000
 
                 sdf_preds = []
 
                 for i in range(n_batches + 1):
                     if i < n_batches:
                         # print(250000 * i, 250000 * (i + 1))
-                        xyz = torch.from_numpy(xyz_raw[250000 * i : 250000 * (i + 1)]).to(DEVICE)
+                        xyz = torch.from_numpy(grid[250000 * i : 250000 * (i + 1)]).to(DEVICE)
                     else:
                         # print(250000 * i, ": ")
-                        xyz = torch.from_numpy(xyz_raw[250000 * i :]).to(DEVICE)
+                        xyz = torch.from_numpy(grid[250000 * i :]).to(DEVICE)
 
-                    if decoder.use_positional_encoding:
-                        freqs = 2.0 ** torch.arange(decoder.pos_enc_dim)
-                        x_proj = [xyz]
-                        for freq in freqs:
-                            x_proj.append(torch.sin(freq * xyz / 100))
-                            x_proj.append(torch.cos(freq * xyz / 100))
-                        xyz = torch.cat(x_proj, dim=1)
+                    xyz *= decoder_input_scale
 
                     batch_vecs = latent.expand(xyz.shape[0], -1)
 
@@ -413,10 +414,20 @@ def run(
             # ==================================================== #
             if decoder.out_dim == 3:
                 # assume sdf is distance from epicardium, left endocardium, right endocardium                        
-                sdfs_pred = {
+                sdf_grid_pred = {
                         "epicardium": sdf_pred[:, 0],
                         "la_endo": sdf_pred[:, 1],
                         "ra_endo": sdf_pred[:, 2]
+                    }
+                
+                data_ = np.load( coords_and_sdf_file )
+
+                points_all_in_scene = data_[:,:3] # they have to be in the same scale I create grid on which I interpolate the SDF !
+
+                sdfs_all_gt = {
+                        "epicardium": data_[:, 0 + 3],
+                        "la_endo": data_[:, 1 + 3],
+                        "ra_endo": data_[:, 2 + 3]
                     }
 
                 thresholds = {}
@@ -426,129 +437,203 @@ def run(
                 for i,organ in enumerate(organs_to_process):
 
                     logger.info(f"Processing {organ} surface ")
+                    
+                    # now I compute chamfer without needing the reconstructed mesh, so I do it only when needed
+                    if save_reconstructed_mesh or show_reconstruction_images or save_reconstruction_images or compute_lddmm:
+                        logger.info("Running marching cubes ...")
+
+                        threshold = 0.0 
+
+                        #TODO: optionally minimize for each surface with differential evolution
+                        thresholds[organ] = threshold
+                                            
+                        try: # mesh is now in the same scale of the grid points I reconstructed it on !!
+                            mesh_reconstructed = isosurface_from_sdf( x, y, z, sdf_pred=sdf_grid_pred[organ], level = threshold, box_lim = box_lim )
+                        except:
+                            logger.warning( f"Version {version}: skipping {organ} isosurface extraction: not found for current isovalue")
+                            if i == len(organs_to_process)-1:
+                                return
+                            else:
+                                continue
+
+                        if save_reconstructed_mesh:
+                            logger.info("Saving vtp file")
+                            if reconstruct_from == "all":
+                                fname = f"{version}-{patient_name}-{organ}.vtp"
+                            if reconstruct_from == "la":
+                                fname = f"{version}-{patient_name}-{organ}-from_la_only.vtp"
+
+                            mesh_reconstructed.save(RECONSTRUCTED_MESHES_DIR / fname )
+
+                        patient_dir = PATIENT_MESHES_DIR / patient_name
+                        mesh_file = next( patient_dir.rglob(f"{organ}-processed.vtp"), None) # !!! these are assumed to be standardized, unit scale already.
+                        mesh_gt = pv.read(mesh_file)
                         
-                    threshold = 0.0 
+                        ## !!! NOW BOTH MESHES ARE AT THE UNIT SCALE !!! 
 
-                    #TODO: optionally minimize for each surface with differential evolution
-                    thresholds[organ] = threshold
-                                           
-                    try:
-                        mesh_reconstructed = isosurface_from_sdf( x, y, z, sdf_pred=sdfs_pred[organ], level = threshold, box_lim = box_lim )
-                    except:
-                        logger.warning( f"Version {version}: skipping {organ} isosurface extraction: not found for current isovalue")
-                        if i == len(organs_to_process)-1:
-                            return
-                        else:
-                            continue
+                        # ======= region PLOTS ======= # 
+                        if show_reconstruction_images or save_reconstruction_images:
+                            # copy meshes so I don't modify originals, less of a pain to keep track of
+                            mesh_gt_show = mesh_gt.copy()
+                            mesh_reconstructed_show = mesh_reconstructed.copy()
 
-                    if save_reconstructed_mesh:
-                        logger.info("Saving vtp file")
-                        if reconstruct_from == "all":
-                            fname = f"{version}-{patient_name}-{organ}.vtp"
-                        if reconstruct_from == "la":
-                            fname = f"{version}-{patient_name}-{organ}-from_la_only.vtp"
+                            # bring to original range for visualization
+                            scale = mesh_gt.field_data["scale-tooriginalrange"]
+                            mesh_gt_show.points *= scale
+                            mesh_reconstructed_show.points *= scale
 
-                        mesh_reconstructed.save(RECONSTRUCTED_MESHES_DIR / fname )
+                            # ==== compute (signed!) distances of points on the predicted surface from the nearest spot on the original surface ==== #               
+                            implicit_distance = vtkImplicitPolyDataDistance()
+                            implicit_distance.SetInput(mesh_gt_show)
+                            points_pred = mesh_reconstructed_show.points
+                            signed_distances = np.array([implicit_distance.EvaluateFunction(p) for p in points_pred]) # relies on normal orientation, less accurate maybe than libigl, but I'm using it just for plots ...
+                            mesh_reconstructed_show.point_data['error'] = signed_distances # save as point data in the predicted mesh
 
-                    patient_dir = PATIENT_MESHES_DIR / patient_name
-                    mesh_file = next( patient_dir.rglob(f"{organ}-processed.vtp"), None) # !!! these are assumed to be standardized, unit scale already.
-                    mesh_gt = pv.read(mesh_file)
-                    # bring reconstructed at the same scale 
-                    # the training and fitting points are sampled from these meshes, then multiplied as input to the network optionally
-                    #  --> remove decoder scale from the reconstructed mesh
-                    mesh_reconstructed.points /= decoder_input_scale 
+                            last_cam_pos = None
+                            if show_reconstruction_images:
+                                plotter = plot_gt_vs_reconstructed_with_error(
+                                    mesh_gt_show, mesh_reconstructed_show, patient_name, signed_distances, off_screen = False
+                                    )
+                                plotter.show(interactive=True)
+                                last_cam_pos = plotter.camera_position
+                                plotter.close()
 
-                    ## !!! NOW BOTH MESHES ARE AT THE UNIT SCALE !!! 
-
-
-                    if show_reconstruction_images or save_reconstruction_images:
-                        # copy meshes so I don't modify originals, less of a pain to keep track of
-                        mesh_gt_show = mesh_gt.copy()
-                        mesh_reconstructed_show = mesh_reconstructed.copy()
-
-                        # bring to original range for visualization
-                        scale = mesh_gt.field_data["scale-tooriginalrange"]
-                        mesh_gt_show.points *= scale
-                        mesh_reconstructed_show.points *= scale
-
-                        # ==== compute (signed!) distances of points on the predicted surface from the nearest spot on the original surface ==== #               
-                        implicit_distance = vtkImplicitPolyDataDistance()
-                        implicit_distance.SetInput(mesh_gt_show)
-                        points_pred = mesh_reconstructed_show.points
-                        signed_distances = np.array([implicit_distance.EvaluateFunction(p) for p in points_pred]) # relies on normal orientation, less accurate maybe than libigl, but I'm using it just for plots ...
-                        mesh_reconstructed_show.point_data['error'] = signed_distances # save as point data in the predicted mesh
-
-                        last_cam_pos = None
-                        if show_reconstruction_images:
-                            plotter = plot_gt_vs_reconstructed_with_error(
-                                mesh_gt_show, mesh_reconstructed_show, patient_name, signed_distances, off_screen = False
+                            if save_reconstruction_images:
+                                logger.info("Saving plot screenshot")
+                                save_fname = patient_name + f"_{organ}_gt_vs_reconstructed_with_error_" + version + ".png"
+                                save_fname = IMAGES_DIR / save_fname
+                                plotter = plot_gt_vs_reconstructed_with_error(
+                                    mesh_gt_show, mesh_reconstructed_show, patient_name, signed_distances, off_screen=True 
                                 )
-                            plotter.show(interactive=True)
-                            last_cam_pos = plotter.camera_position
-                            plotter.close()
-
-                        if save_reconstruction_images:
-                            logger.info("Saving plot screenshot")
-                            save_fname = patient_name + f"_{organ}_gt_vs_reconstructed_with_error_" + version + ".png"
-                            save_fname = IMAGES_DIR / save_fname
-                            plotter = plot_gt_vs_reconstructed_with_error(
-                                mesh_gt_show, mesh_reconstructed_show, patient_name, signed_distances, off_screen=True 
-                            )
-                            if last_cam_pos is not None: plotter.camera_position = last_cam_pos
-                            plotter.screenshot(save_fname, transparent_background=True)
-                            pv.close_all()
-
+                                if last_cam_pos is not None: plotter.camera_position = last_cam_pos
+                                plotter.screenshot(save_fname, transparent_background=True)
+                                pv.close_all()
+                        
+                    # ======= region METRICS ======= # 
                     if compute_chamfer or compute_haussdorff or compute_lddmm: 
-                        # ======= COMPUTE METRICS ======= # 
-                        # use meshes in UNIT scale !!!, remeshed at the same resolution
-                        # check if already present in mesh directory and load, so I save a little bit of time instead of remeshing always the original ones
-                        mesh_gt_remeshed_file = next( patient_dir.rglob(f"{organ}-processed-remeshed.vtp"), None)
-                        if mesh_gt_remeshed_file is not None:
-                            mesh_gt = pv.read(mesh_gt_remeshed_file)
-                        else:
-                            mesh_gt = remesh(mesh_gt, n_points=50000) 
-
-                        mesh_reconstructed = remesh(mesh_reconstructed, n_points=50000)
-
+                        
                         if compute_chamfer or compute_haussdorff:
-                            logger.info("Sampling points ...")
-                            samples_orig = make_trimesh_from_pv(mesh_gt).sample(count=100000)
-                            samples_rec = make_trimesh_from_pv(mesh_reconstructed).sample(count=100000)
+                            # logger.info("Sampling points ...")
+                            # samples_orig = make_trimesh_from_pv(mesh_gt).sample(count=100000)
+                            # samples_rec = make_trimesh_from_pv(mesh_reconstructed).sample(count=100000)
 
-                            if compute_chamfer:
+                            # Compute chamfer in another way: interpolate gt sdf values onto the same grid as prediction,
+                            # threshold SDF values and compute chamfer on the resulting point clouds.
+                            # OSS: If I used clamping in training, the SDF will be worse outside the clamp value !!
+                            # so when deciding the shell width in mm, if it correspond at the unit scale to a shell wider 
+                            # than the clamp value, the predicted SDFs are not faithful to the real SDF, so when thresholding points in
+                            # that region, I might get pointclouds with many more or many less points than the real gt shell has, 
+                            # this may bias the chamfer distance. 
+                            # 
+                            # (This happens when shell_threshold = shell_thick_mm / scale_mm becomes larger than clamp value used in training)
+                            # 
+                            # What I am computing here is basically how close the shells are to one
+                            # another, but larger point clouds may lower the chamfer, when in reality the predicted shell is not "better" per say
+                            # so choose shell_thick_mm low enough. 
+                            # --> OR, train without clamp to regress the SDF correctly in more space around the surface
+
+                            # here grid and SDF values are at the unit-sphere scale.
+                            # Interpolate GT SDF onto same grid points --> use the all the original available points
+                            sdf_grid_gt_organ = griddata(
+                                points_all_in_scene,
+                                sdfs_all_gt[organ],
+                                grid,
+                                method='linear'   
+                            )
+
+                            # select points: SDF in a shell around the surface: make it meaningful in millimeters !
+                            # but still I want to compute chamfer at standardized scale for stability
+                            # Chamfer decreases as shell widens, not because reconstruction is better, 
+                            # but because more points farther from high-error regions dilute the average.
+
+                            patient_dir = PATIENT_MESHES_DIR / patient_name
+                            mesh_file = next( patient_dir.rglob(f"{organ}-processed.vtp"), None) # !!! these are assumed to be standardized, unit scale already.
+                            mesh_gt = pv.read(mesh_file)
+                            scale = mesh_gt.field_data["scale-tooriginalrange"] # this rescales the standardized mesh to its original scale, in micrometers
+                            scale_mm = scale * 0.001
+
+                            shell_thick_mm = 0.5 # this means the points AT MILLIMETERS SCALE will be thresholded where their distance to the surface is less than shell_thick_mm mm 
+                            shell_threshold = shell_thick_mm / scale_mm # pick this to be used at the unit scale, but so that the samples rescaled at mm scale are in fact in a shell of thickness 2*shell_thick_mm around the surface
+
+                            print("shell_threshold : ", shell_threshold)
+
+                            # now grid is still at the standardized scale, where I compute chamfer
+                            samples_gt = grid[ np.where( np.abs(sdf_grid_gt_organ) <= shell_threshold) ]
+
+                            samples_pred = grid[ np.where( np.abs(sdf_grid_pred[organ]) <= shell_threshold) ]
+
+                            print(samples_gt.shape)
+                            print(samples_pred.shape)
+
+                            # resample to same number of points : uniform
+                            num_points = 20000
+                            if samples_gt.shape[0] > num_points:
+                                samples_gt = samples_gt[np.random.choice(samples_gt.shape[0], num_points, replace=False)]
+                            if samples_pred.shape[0] > num_points:
+                                samples_pred = samples_pred[np.random.choice(samples_pred.shape[0], num_points, replace=False)]
+
+                            points = pv.PolyData(samples_gt)
+                            plotter = pv.Plotter()
+                            plotter.add_points(points, render_points_as_spheres=True)
+                            plotter.add_title(f"Num points : {len(samples_gt)}")
+                            plotter.show_grid()
+                            plotter.show()
+
+                            points = pv.PolyData(samples_pred)
+                            plotter = pv.Plotter()
+                            plotter.add_points(points, render_points_as_spheres=True)
+                            plotter.add_title(f"Num points : {len(samples_pred)}")
+                            plotter.show_grid()
+                            plotter.show()
+
+                            if compute_chamfer: # average nearest-neighbor distances in millimeters
                                 logger.info(f"Computing chamfer")
-                                chamfer_dists[patient_name][organ] = chamfer_distance_L2(samples_orig, samples_rec)
+                                chamfer_dists[patient_name][organ] = chamfer_distance_L2(samples_gt, samples_pred) * scale_mm # compute at unit scale, rescale to mm
                         
                             if compute_haussdorff:
                                 logger.info(f"Computing Haussdorff")
-                                haussdorff_dists[patient_name][organ] = haussdorff(samples_orig, samples_rec)
+                                haussdorff_dists[patient_name][organ] = haussdorff(samples_gt, samples_pred) * scale_mm 
 
                         if compute_lddmm:
                             logger.info(f"Computing LDDMM")
+
+                            # check if already present in mesh directory and load, so I save a little bit of time instead of remeshing always the original ones
+                            mesh_gt_remeshed_file = next( patient_dir.rglob(f"{organ}-processed-remeshed.vtp"), None)
+                            if mesh_gt_remeshed_file is not None:
+                                mesh_gt = pv.read(mesh_gt_remeshed_file)
+                            else:
+                                mesh_gt = remesh(mesh_gt, n_points=50000) 
+
+                            mesh_reconstructed = remesh(mesh_reconstructed, n_points=50000)
+
                             # # pick gamma based on mesh size, so loss doesn't over or underflow IF I compute it on meshes at huge scales like micrometers
                             # typical_distance = utils.metrics.estimate_typical_distance(mesh1) # both meshes are remeshed to same resolution, so doesn't matter which I use
                             # gamma = 1.0 / typical_distance**2
+
+                            # compute LDDMM at STANDARDIZED scale for stability, otherwise gamma should be probably picked differently
                             LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False, gamma = 1.0, device = DEVICE)
     
-    if compute_chamfer:
-        exp_name = experiment_name.split("/")[-1]
-        save_metrics_csv("chamfer", exp_name, version, which_shapes, chamfer_dists)
-        logger.info("Saved chamfer distances")
+    print(chamfer_dists)
 
-    if compute_haussdorff:
-        exp_name = experiment_name.split("/")[-1]
-        save_metrics_csv("haussdorff", exp_name, version, which_shapes, haussdorff_dists)
-        logger.info("Saved haussdorff distances")
+    # if compute_chamfer:
+    #     exp_name = experiment_name.split("/")[-1]
+    #     save_metrics_csv("chamfer", exp_name, version, which_shapes, chamfer_dists)
+    #     logger.info("Saved chamfer distances")
 
-    if compute_lddmm:
-        exp_name = experiment_name.split("/")[-1]
-        save_metrics_csv("LDDMM", exp_name, version, which_shapes, LDDMM_losses)
-        logger.info("Saved LDDMM distances")
+    # if compute_haussdorff:
+    #     exp_name = experiment_name.split("/")[-1]
+    #     save_metrics_csv("haussdorff", exp_name, version, which_shapes, haussdorff_dists)
+    #     logger.info("Saved haussdorff distances")
 
-    if save_latent_codes:
-        fname = f"{exp_name}-{version}-latent_codes_{len(latent_codes.keys())}_{which_shapes}_patients-codereg={code_reg_lambda:.6f}-epochs={num_epochs}.npz"
-        logger.info(f"Saving fitted latents: {fname}")
-        np.savez(LATENTS_DIR / fname, **latent_codes)
+    # if compute_lddmm:
+    #     exp_name = experiment_name.split("/")[-1]
+    #     save_metrics_csv("LDDMM", exp_name, version, which_shapes, LDDMM_losses)
+    #     logger.info("Saved LDDMM distances")
+
+    # if save_latent_codes:
+    #     fname = f"{exp_name}-{version}-latent_codes_{len(latent_codes.keys())}_{which_shapes}_patients-codereg={code_reg_lambda:.6f}-epochs={num_epochs}.npz"
+    #     logger.info(f"Saving fitted latents: {fname}")
+    #     np.savez(LATENTS_DIR / fname, **latent_codes)
 
     logger.info("Done.")
 
@@ -583,7 +668,7 @@ if __name__ == "__main__":
     
     exp_name = args.experiment_name
     vers = args.version
-    test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "test/AF009_P2R-LEU_NORM_F004.json" # "train/data_fnames_train-20patients.json"
+    test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "test/LEU_NORM_F004.json" # "test/AF009_P2R-LEU_NORM_F004.json" # "train/data_fnames_train-20patients.json"
     mode = args.mode 
     # num_epochs_fit_latent = 250
     # latent_reg_factor = 2e-4
