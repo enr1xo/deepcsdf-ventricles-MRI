@@ -255,7 +255,12 @@ def run(
     elif initialize_latent_from == "normal":
         print(f"    - Latent code initialized from random normal, mean = 0, std = {1.0 / math.sqrt(decoder.latent_size)}")
     elif initialize_latent_from == "empirical":
-            print(f"    - Latent code initialized by sampling trained latents distribution")
+        print(f"    - Latent code initialized by sampling trained latents distribution")
+    if use_mahalanobis_loss:
+        print(f"    - Using mahalanobis regularization")
+    else:
+        print(f"    - Using L2 squared regularization")
+
     print(f"\n")
 
     for shape_idx in range( len(dataset) ): # --> the dataloader already returns scenes with specs["num_samp_per_scene"] points each. I call it here only ONE time per shape, so latents are effectively fitted using only these points
@@ -311,7 +316,7 @@ def run(
             if trained_latents_file is None:
                 raise ValueError(f"Requested initialize_latent_from_mean_empirical=True, but trained latents file latents.npy not found in version dir {version_dir}.")
         
-            trained_latents = np.load(trained_latents_file)
+            trained_latents = torch.from_numpy( np.load(trained_latents_file)).to(device=DEVICE)
             mean_code = torch.mean(trained_latents, axis=0)
             cov = torch.cov(trained_latents.T)
             cov_inv = cov.inverse()
@@ -381,9 +386,9 @@ def run(
     
         latent.requires_grad = False    
 
-        # import matplotlib.pyplot as plt
-        # plt.plot(np.arange(len(losses)), losses)
-        # plt.show()
+        import matplotlib.pyplot as plt
+        plt.plot(np.arange(len(losses)), losses)
+        plt.show()
 
 
         if save_latent_codes:
@@ -624,7 +629,7 @@ def run(
                             # compute LDDMM at STANDARDIZED scale for stability, otherwise gamma should be probably picked differently
                             LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False, gamma = 1.0, device = DEVICE)
     
-    print(chamfer_dists)
+    print("\n Chamfer dists: ", chamfer_dists)
 
     # if compute_chamfer:
     #     exp_name = experiment_name.split("/")[-1]
@@ -681,7 +686,7 @@ if __name__ == "__main__":
     
     exp_name = args.experiment_name
     vers = args.version
-    test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "test/LEU_NORM_F004.json" # "test/AF009_P2R-LEU_NORM_F004.json" # "train/data_fnames_train-20patients.json"
+    test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "test/AF009_P2R-LEU_NORM_F004.json" # "train/data_fnames_train-20patients.json"
     mode = args.mode 
 
     kwargs = {
