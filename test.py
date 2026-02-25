@@ -2,8 +2,8 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0" 
 import json
 from pathlib import Path
-from loguru import logger
 import torch
+from torch.distributions.multivariate_normal import MultivariateNormal
 import numpy as np
 import pyvista as pv
 from model.deepsdf_decoder import Decoder, DeepSDF
@@ -157,7 +157,8 @@ def run(
     num_epochs_fit_latent = 250,
     latent_reg_factor = None,
     lr_fit_latent = 5e-3,
-    initialize_latent_from_zero=True,
+    initialize_latent_from = "zero",
+    use_mahalanobis_loss=False,
     reconstruct_surface = True,
     reconstruct_from = "all",
     show_reconstruction_images = True,
@@ -169,8 +170,6 @@ def run(
     save_latent_codes = True
 ):
 
-    logger.info(f"Experiment: {experiment_name}")
-
     # region specs: get specifics for the wanted run
     version_dir = EXPERIMENTS_DIR / experiment_name / version
 
@@ -179,13 +178,16 @@ def run(
 
     specs = json.load( open(hparams_file) )
 
-    pprint(specs)
-    
     # region manual test dataset
     if override_with_dataset is not None:
         specs["TestSplit"] = override_with_dataset
 
-    logger.info(f"Loaded specs from: {version_dir.name}")
+    print(f"\n\n")
+    print(f"Experiment: {experiment_name}")
+    print(f"Version: {version}")
+    print("Specs:")
+    pprint(specs)
+    print(f"\n")
 
     # region decoder
     # rebuild trained decoder and model: I do it with specs that contain everything alerady, no need for checkpoints now
@@ -193,9 +195,9 @@ def run(
 
     decoder = Decoder(**decoder_params)
 
-    print("\n")
-    print(decoder.description())
-    print("\n")
+    # print("\n")
+    # print(decoder.description())
+    # print("\n")
     
     # get trained model parameters
     decoder_weights_path = version_dir / "decoder_weights.pth"
@@ -203,20 +205,16 @@ def run(
         state_dict = torch.load(decoder_weights_path)
         decoder.load_state_dict(state_dict)
     else:
-        logger.warning(f"Decoder weights .pth file not found in {version_dir}")
-        return
+        raise FileNotFoundError(f"Decoder weights .pth file not found in {version_dir}")
 
     decoder.to(DEVICE)
 
-    # this I just need to build automatically the same loss function I used in training, could be dropped and built here explicitelys
     model = DeepSDF(decoder=decoder, specs=specs) 
 
     # region load dataset
     # optionally set num of subsamples to use --> the dataloader will return scenes with specs["num_samp_per_scene"] points !!!
     if num_samp_per_scene_for_fit is not None:
         specs["num_samp_per_scene"] = num_samp_per_scene_for_fit
-
-    logger.warning(f"Will use {specs['num_samp_per_scene']} samples per scene to fit latents")
 
     dataloader = SDFDataModule(specs = specs)
 
@@ -237,6 +235,8 @@ def run(
     if latent_reg_factor is None:
         latent_reg_factor = specs["code_reg_lambda"]
 
+    loss_fn = torch.nn.MSELoss(reduction="sum")
+
     chamfer_dists = {}
 
     LDDMM_losses = {}
@@ -244,20 +244,33 @@ def run(
     haussdorff_dists = {}
 
     latent_codes = {}
-        
+
+    print(f"\n")
+    print("RECONSTRUCTION PARAMETERS")
+    print(f"    - {specs['num_samp_per_scene']} samples per scene to fit latents")
+    if reconstruct_from == "la":
+        print(f"    - Fitting latent code using only points near left atrium")        
+    if initialize_latent_from == "zero":
+        print(f"    - Latent code initialized from zero")
+    elif initialize_latent_from == "normal":
+        print(f"    - Latent code initialized from random normal, mean = 0, std = {1.0 / math.sqrt(decoder.latent_size)}")
+    elif initialize_latent_from == "empirical":
+            print(f"    - Latent code initialized by sampling trained latents distribution")
+    print(f"\n")
+
     for shape_idx in range( len(dataset) ): # --> the dataloader already returns scenes with specs["num_samp_per_scene"] points each. I call it here only ONE time per shape, so latents are effectively fitted using only these points
 
         patient_name = patient_names[shape_idx] # careful
 
         # print(f"##### ===== PATIENT {patient_name} : {shape_idx}/{len(dataset)} ===== #####")
-        print("\033[48;2;30;30;30;0;38;2;255;200;0m" + f"##### ===== PATIENT {patient_name} : {shape_idx+1}/{len(dataset)} ===== #####" + "\033[0m")
-
+        print("\n \033[48;2;30;30;30;0;38;2;255;200;0m" + f"# {'='*10} PATIENT {patient_name} : {shape_idx+1}/{len(dataset)} {'='*10} #" + "\033[0m")
+        
         coords_and_sdf_file = next( PATIENTS_NPY_DATA_DIR.glob(f"{patient_name}*.npy"), None )
         if coords_and_sdf_file is None:
             raise FileNotFoundError(f"Tried to load original points and sdf data from directory \
                                     {PATIENTS_NPY_DATA_DIR} for patient {patient_name}, found None. \
                                     These should be used for chamfer distance computations.")
-        
+    
         chamfer_dists[patient_name] = {}
 
         haussdorff_dists[patient_name] = {}
@@ -275,8 +288,7 @@ def run(
             near_la = np.where(np.abs(sdf_gt[:,1]) <=  0.005)
             xyz_gt = xyz_gt[near_la]
             sdf_gt = sdf_gt[near_la]
-            logger.warning(f"Fitting latent code using only points near left atrium, keeping  {len(xyz_gt)}")
-
+            
         xyz_gt = xyz_gt.reshape(-1, 3) * decoder_input_scale
 
         sdf_gt = sdf_gt.reshape(-1, decoder.out_dim)
@@ -292,20 +304,31 @@ def run(
         # TODO: add option to start from somewhere else (from mean of loaded latents, random sample, ...)
         latent_size = decoder.latent_size
 
-        if initialize_latent_from_zero:
-            latent = torch.zeros(latent_size, device=DEVICE)  
-        else:
-            latent = torch.randn(latent_size, device=DEVICE) * ( 1.0 / math.sqrt(latent_size) ) # same std as in training 
+        # retrieve trained latents to use in loss and/or to initialize latent code
+        if use_mahalanobis_loss or initialize_latent_from == "empirical":
+            trained_latents_file = next( version_dir.glob("latents.npy"), None)
+
+            if trained_latents_file is None:
+                raise ValueError(f"Requested initialize_latent_from_mean_empirical=True, but trained latents file latents.npy not found in version dir {version_dir}.")
         
+            trained_latents = np.load(trained_latents_file)
+            mean_code = torch.mean(trained_latents, axis=0)
+            cov = torch.cov(trained_latents.T)
+            cov_inv = cov.inverse()
+
+        if initialize_latent_from == "zero":
+            latent = torch.zeros(latent_size, device=DEVICE)  
+        elif initialize_latent_from == "normal":
+            latent = torch.randn(latent_size, device=DEVICE) * ( 1.0 / math.sqrt(latent_size) ) # same std as in training 
+        elif initialize_latent_from == "empirical":
+            distrib = MultivariateNormal(loc=mean_code, covariance_matrix=cov)
+            latent = distrib.rsample()
+
         latent.requires_grad = True
         
-        loss_fn = model.loss_fn
-
         code_reg_lambda = latent_reg_factor 
 
         beta = 100 * find_pointcloud_noise(decoder, model, xyz, sdf_gt, code_reg_lambda=code_reg_lambda, num_epochs_fit_latent=250, lr_fit_latent=0.005)
-
-        print(f"Code reg factor : {beta * code_reg_lambda}")
 
         num_epochs = num_epochs_fit_latent
 
@@ -322,6 +345,8 @@ def run(
         # ==================================================== #
         # region fit latent
         # ==================================================== #
+        print(f"\n Fitting code ... \n")
+
         for i in tqdm(range(num_epochs)):
             
             decoder.eval()
@@ -335,12 +360,14 @@ def run(
             sdf_pred = decoder(input_)
             if enforce_minmax:
                 sdf_pred = torch.clamp(sdf_pred, min = -clamp_distance, max = clamp_distance)
-                
-            # mahalanobis to train codes distribution
+            
+            if use_mahalanobis_loss:    
+                diff = latent - mean_code
+                reg_loss = diff @ cov_inv @ diff # mahalanobis to train codes distribution
+            else:                       
+                reg_loss = latent.pow(2).sum()   # vanilla loss : same loss as in training (pow avoids creating intermediate tensors when doing like latents ** 2)
 
-            # vanilla loss : same loss as in training
-            reg_loss = torch.linalg.norm(latent) ** 2 
-            chunk_loss = loss_fn(sdf_pred, sdf_gt) / num_samp_per_scene
+            chunk_loss = loss_fn(sdf_pred, sdf_gt) / (num_samp_per_scene * decoder.out_dim)
 
             loss = chunk_loss + beta * code_reg_lambda * reg_loss
 
@@ -367,12 +394,13 @@ def run(
             # ==================================================== #
             # region reconstruct surface from predicted sdf
             # ==================================================== #
+    
             resolution = 128
             box_lim = 1.1
 
             with torch.no_grad():
                 
-                logger.info("Computing SDF on grid for reconstruction")
+                print("\n Computing prediction on grid ...")
 
                 decoder.eval()
 
@@ -436,11 +464,11 @@ def run(
 
                 for i,organ in enumerate(organs_to_process):
 
-                    logger.info(f"Processing {organ} surface ")
+                    print(f"\n > > > Processing {organ} surface ")
                     
                     # now I compute chamfer without needing the reconstructed mesh, so I do it only when needed
                     if save_reconstructed_mesh or show_reconstruction_images or save_reconstruction_images or compute_lddmm:
-                        logger.info("Running marching cubes ...")
+                        print("\n Running marching cubes to reconstruct surface ...")
 
                         threshold = 0.0 
 
@@ -450,20 +478,21 @@ def run(
                         try: # mesh is now in the same scale of the grid points I reconstructed it on !!
                             mesh_reconstructed = isosurface_from_sdf( x, y, z, sdf_pred=sdf_grid_pred[organ], level = threshold, box_lim = box_lim )
                         except:
-                            logger.warning( f"Version {version}: skipping {organ} isosurface extraction: not found for current isovalue")
+                            print( f" ##### Version {version}: skipping {organ} isosurface extraction: not found for current isovalue !!!")
                             if i == len(organs_to_process)-1:
                                 return
                             else:
                                 continue
 
                         if save_reconstructed_mesh:
-                            logger.info("Saving vtp file")
                             if reconstruct_from == "all":
                                 fname = f"{version}-{patient_name}-{organ}.vtp"
                             if reconstruct_from == "la":
                                 fname = f"{version}-{patient_name}-{organ}-from_la_only.vtp"
 
                             mesh_reconstructed.save(RECONSTRUCTED_MESHES_DIR / fname )
+
+                            print("\n Saved reconstructed mesh file")
 
                         patient_dir = PATIENT_MESHES_DIR / patient_name
                         mesh_file = next( patient_dir.rglob(f"{organ}-processed.vtp"), None) # !!! these are assumed to be standardized, unit scale already.
@@ -499,7 +528,6 @@ def run(
                                 plotter.close()
 
                             if save_reconstruction_images:
-                                logger.info("Saving plot screenshot")
                                 save_fname = patient_name + f"_{organ}_gt_vs_reconstructed_with_error_" + version + ".png"
                                 save_fname = IMAGES_DIR / save_fname
                                 plotter = plot_gt_vs_reconstructed_with_error(
@@ -508,12 +536,14 @@ def run(
                                 if last_cam_pos is not None: plotter.camera_position = last_cam_pos
                                 plotter.screenshot(save_fname, transparent_background=True)
                                 pv.close_all()
+                                print("\n Saved plot screenshot")
                         
                     # ======= region METRICS ======= # 
                     if compute_chamfer or compute_haussdorff or compute_lddmm: 
                         
                         if compute_chamfer or compute_haussdorff:
-                            # logger.info("Sampling points ...")
+                            print("\n Retrieving point clouds for metrics computation ... ")
+                            # print("Sampling points ...")
                             # samples_orig = make_trimesh_from_pv(mesh_gt).sample(count=100000)
                             # samples_rec = make_trimesh_from_pv(mesh_reconstructed).sample(count=100000)
 
@@ -555,15 +585,10 @@ def run(
                             shell_thick_mm = 0.5 # this means the points AT MILLIMETERS SCALE will be thresholded where their distance to the surface is less than shell_thick_mm mm 
                             shell_threshold = shell_thick_mm / scale_mm # pick this to be used at the unit scale, but so that the samples rescaled at mm scale are in fact in a shell of thickness 2*shell_thick_mm around the surface
 
-                            print("shell_threshold : ", shell_threshold)
-
                             # now grid is still at the standardized scale, where I compute chamfer
                             samples_gt = grid[ np.where( np.abs(sdf_grid_gt_organ) <= shell_threshold) ]
 
                             samples_pred = grid[ np.where( np.abs(sdf_grid_pred[organ]) <= shell_threshold) ]
-
-                            print(samples_gt.shape)
-                            print(samples_pred.shape)
 
                             # resample to same number of points : uniform
                             num_points = 20000
@@ -572,30 +597,16 @@ def run(
                             if samples_pred.shape[0] > num_points:
                                 samples_pred = samples_pred[np.random.choice(samples_pred.shape[0], num_points, replace=False)]
 
-                            points = pv.PolyData(samples_gt)
-                            plotter = pv.Plotter()
-                            plotter.add_points(points, render_points_as_spheres=True)
-                            plotter.add_title(f"Num points : {len(samples_gt)}")
-                            plotter.show_grid()
-                            plotter.show()
-
-                            points = pv.PolyData(samples_pred)
-                            plotter = pv.Plotter()
-                            plotter.add_points(points, render_points_as_spheres=True)
-                            plotter.add_title(f"Num points : {len(samples_pred)}")
-                            plotter.show_grid()
-                            plotter.show()
-
                             if compute_chamfer: # average nearest-neighbor distances in millimeters
-                                logger.info(f"Computing chamfer")
+                                print("\n Computing chamfer")
                                 chamfer_dists[patient_name][organ] = chamfer_distance_L2(samples_gt, samples_pred) * scale_mm # compute at unit scale, rescale to mm
                         
                             if compute_haussdorff:
-                                logger.info(f"Computing Haussdorff")
+                                print("\n Computing Haussdorff")
                                 haussdorff_dists[patient_name][organ] = haussdorff(samples_gt, samples_pred) * scale_mm 
 
                         if compute_lddmm:
-                            logger.info(f"Computing LDDMM")
+                            print("\n Computing LDDMM")
 
                             # check if already present in mesh directory and load, so I save a little bit of time instead of remeshing always the original ones
                             mesh_gt_remeshed_file = next( patient_dir.rglob(f"{organ}-processed-remeshed.vtp"), None)
@@ -618,24 +629,24 @@ def run(
     # if compute_chamfer:
     #     exp_name = experiment_name.split("/")[-1]
     #     save_metrics_csv("chamfer", exp_name, version, which_shapes, chamfer_dists)
-    #     logger.info("Saved chamfer distances")
+    #     print("Saved chamfer distances")
 
     # if compute_haussdorff:
     #     exp_name = experiment_name.split("/")[-1]
     #     save_metrics_csv("haussdorff", exp_name, version, which_shapes, haussdorff_dists)
-    #     logger.info("Saved haussdorff distances")
+    #     print("Saved haussdorff distances")
 
     # if compute_lddmm:
     #     exp_name = experiment_name.split("/")[-1]
     #     save_metrics_csv("LDDMM", exp_name, version, which_shapes, LDDMM_losses)
-    #     logger.info("Saved LDDMM distances")
+    #     print("Saved LDDMM distances")
 
     # if save_latent_codes:
     #     fname = f"{exp_name}-{version}-latent_codes_{len(latent_codes.keys())}_{which_shapes}_patients-codereg={code_reg_lambda:.6f}-epochs={num_epochs}.npz"
-    #     logger.info(f"Saving fitted latents: {fname}")
+    #     print(f"Saving fitted latents: {fname}")
     #     np.savez(LATENTS_DIR / fname, **latent_codes)
 
-    logger.info("Done.")
+    print("Done.")
 
     return
 
@@ -657,6 +668,8 @@ if __name__ == "__main__":
     parser.add_argument("--num_epochs", "-N", type=int, default=250)
     parser.add_argument("--latent_reg_factor", "-lreg", type=float, default=None)
     parser.add_argument("--lr", type=float, default=0.005)
+    parser.add_argument("--init_latent_from", type=str, default="zero", choices=["zero", "normal", "empirical"])
+    parser.add_argument("--use_mahalanobis_loss", "-maha_loss", action="store_true")
     parser.add_argument("--save_latent_codes", "-sc", action="store_true")
     parser.add_argument("--interactive_images", "-i", action="store_true")
     parser.add_argument("--save_images", "-si", action="store_true")
@@ -670,9 +683,6 @@ if __name__ == "__main__":
     vers = args.version
     test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "test/LEU_NORM_F004.json" # "test/AF009_P2R-LEU_NORM_F004.json" # "train/data_fnames_train-20patients.json"
     mode = args.mode 
-    # num_epochs_fit_latent = 250
-    # latent_reg_factor = 2e-4
-    # lr_fit_latent = 5e-3
 
     kwargs = {
         "experiment_name" : exp_name,
@@ -682,6 +692,7 @@ if __name__ == "__main__":
         "num_epochs_fit_latent" : args.num_epochs,
         "latent_reg_factor" : args.latent_reg_factor,
         "lr_fit_latent" : args.lr,
+        "initialize_latent_from" : args.init_latent_from
     }
 
     match mode:
