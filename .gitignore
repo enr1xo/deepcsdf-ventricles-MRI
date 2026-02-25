@@ -76,6 +76,7 @@ specs_files/*
 !train.py
 !test.py
 !atria_data_preparing.py
+!process_metrics_per_experiment.py
 
 # ===============================
 # Temporary / scratch
