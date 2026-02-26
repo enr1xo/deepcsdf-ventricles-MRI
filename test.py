@@ -63,7 +63,13 @@ def save_metrics_csv(metric_name, experiment_name, version, which_shapes, metric
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
 
-    
+def save_latents_npz(experiment_name, version, which_shapes, code_reg_lambda, num_epochs, init_from, loss_type, latent_codes : dict):
+    fname = f"{exp_name}-{version}-latents_{len( set(latent_codes.keys()) )}_{which_shapes}_patients-codereg={code_reg_lambda:.0e}-epochs={num_epochs}-init={init_from}-loss={loss_type}.npz"
+    output_path = LATENTS_DIR / experiment_name / fname
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(output_path, **latent_codes)
+
+
 def find_pointcloud_noise(
         decoder: Decoder,
         model: DeepSDF,
@@ -119,7 +125,7 @@ def find_pointcloud_noise(
             if model.enforce_minmax:
                 sdf_pred = torch.clamp(sdf_pred, min = -model.clamp_distance, max = model.clamp_distance)
         
-            # vanilla loss : same loss as in training
+            # vanilla loss
             reg_loss = torch.linalg.norm(latent) ** 2 
             recon_loss = loss_fn(sdf_pred, sdf_gt) 
             chunk_loss = recon_loss / num_samp_per_scene
@@ -303,10 +309,6 @@ def run(
         sdf_gt = sdf_gt.to(DEVICE)
         xyz = xyz_gt.to(DEVICE)
 
-        # starting point for optimization: zero
-        # I could also save initial vectors when training and start with empirical mean and covariance,
-        # sampling a latent using MultivariateNormal and rsample()
-        # TODO: add option to start from somewhere else (from mean of loaded latents, random sample, ...)
         latent_size = decoder.latent_size
 
         # retrieve trained latents to use in loss and/or to initialize latent code
@@ -321,6 +323,7 @@ def run(
             cov = torch.cov(trained_latents.T)
             cov_inv = cov.inverse()
 
+        # initialize latent
         if initialize_latent_from == "zero":
             latent = torch.zeros(latent_size, device=DEVICE)  
         elif initialize_latent_from == "normal":
@@ -386,9 +389,9 @@ def run(
     
         latent.requires_grad = False    
 
-        import matplotlib.pyplot as plt
-        plt.plot(np.arange(len(losses)), losses)
-        plt.show()
+        # import matplotlib.pyplot as plt
+        # plt.plot(np.arange(len(losses)), losses)
+        # plt.show()
 
 
         if save_latent_codes:
@@ -629,27 +632,31 @@ def run(
                             # compute LDDMM at STANDARDIZED scale for stability, otherwise gamma should be probably picked differently
                             LDDMM_losses[patient_name][organ] = LDDMM_loss(mesh_gt, mesh_reconstructed, remeshing=False, gamma = 1.0, device = DEVICE)
     
-    print("\n Chamfer dists: ", chamfer_dists)
 
-    # if compute_chamfer:
-    #     exp_name = experiment_name.split("/")[-1]
-    #     save_metrics_csv("chamfer", exp_name, version, which_shapes, chamfer_dists)
-    #     print("Saved chamfer distances")
+    if compute_chamfer:
+        exp_name = experiment_name.split("/")[-1]
+        save_metrics_csv("chamfer", exp_name, version, which_shapes, chamfer_dists)
+        print("Saved chamfer distances.")
 
-    # if compute_haussdorff:
-    #     exp_name = experiment_name.split("/")[-1]
-    #     save_metrics_csv("haussdorff", exp_name, version, which_shapes, haussdorff_dists)
-    #     print("Saved haussdorff distances")
+    if compute_haussdorff:
+        exp_name = experiment_name.split("/")[-1]
+        save_metrics_csv("haussdorff", exp_name, version, which_shapes, haussdorff_dists)
+        print("Saved haussdorff distances.")
 
-    # if compute_lddmm:
-    #     exp_name = experiment_name.split("/")[-1]
-    #     save_metrics_csv("LDDMM", exp_name, version, which_shapes, LDDMM_losses)
-    #     print("Saved LDDMM distances")
+    if compute_lddmm:
+        exp_name = experiment_name.split("/")[-1]
+        save_metrics_csv("LDDMM", exp_name, version, which_shapes, LDDMM_losses)
+        print("Saved LDDMM distances.")
 
-    # if save_latent_codes:
-    #     fname = f"{exp_name}-{version}-latent_codes_{len(latent_codes.keys())}_{which_shapes}_patients-codereg={code_reg_lambda:.6f}-epochs={num_epochs}.npz"
-    #     print(f"Saving fitted latents: {fname}")
-    #     np.savez(LATENTS_DIR / fname, **latent_codes)
+    if save_latent_codes:
+        loss_type = "L2" if not use_mahalanobis_loss else "Maha"
+        save_latents_npz(
+            exp_name, version, which_shapes,
+            code_reg_lambda, num_epochs, initialize_latent_from,
+            loss_type,
+            latent_codes
+        )
+        print("Saved fitted latents.")
 
     print("Done.")
 
