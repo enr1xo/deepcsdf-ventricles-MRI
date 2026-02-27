@@ -9,7 +9,7 @@ This sets paths for directories containing meshes files for each patient, traini
 
 
 #### Experiments runs
-Each training run is organized under an "experiment" and "version" directory. Training only results in the creation of `.pth` files storing the trained model weights, and an `hparams.json` file recording the specifics used for that run. Model checkpoints during training can be also saved.
+Each training run is organized under an "experiment" and "version" directory. Training results in the creation of `.pth` files storing the trained model weights, an `hparams.json` file recording the specifics used for that run, and an events.out file recording metrics logged during training. Model checkpoints during training can be also saved under a checkpoints/ directory for each run.
 
 The only file that is required to start training (or testing) is a `.json` under the specification files directory path, which sets the hyperparameters, network architecture, and data files to be used for the experiment.
 
