@@ -52,8 +52,8 @@ def parse_value(x):
 def build_dataframe_from_versions_metrics(
     metrics_directory,
     experiment_name,
-    add_column_name_1, add_column_name_2,
-    get_specs_flatkey1: str, get_specs_flatkey2: str,
+    add_column_names,
+    get_specs_flatkeys,
     search_csv_regex = "*.csv"
 )-> Tuple[pd.DataFrame, pd.DataFrame]:
     
@@ -79,9 +79,9 @@ def build_dataframe_from_versions_metrics(
 
         specs = flatten_dict_keys(specs)
 
-        df[add_column_name_1] = str( specs[get_specs_flatkey1] )
-        df[add_column_name_2] = str( specs[get_specs_flatkey2] )
-
+        for add_column, flatkey in zip( add_column_names, get_specs_flatkeys):
+            df[add_column] = str( specs[flatkey] )
+        
         if "train" in str(file_path.name):    
             dfs_train.append(df)
         elif "test" in file_path.name:
