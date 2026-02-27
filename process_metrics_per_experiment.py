@@ -52,18 +52,18 @@ def parse_value(x):
 def build_dataframe_from_versions_metrics(
     metrics_directory,
     experiment_name,
-    search_csv_regex,
     add_column_name_1, add_column_name_2,
-    get_specs_flatkey1: str, get_specs_flatkey2: str
+    get_specs_flatkey1: str, get_specs_flatkey2: str,
+    search_csv_regex = "*.csv"
 )-> Tuple[pd.DataFrame, pd.DataFrame]:
     
-    metrics_dir = Path("results/metrics") # Path(metrics_directory)
+    metrics_directory = Path(metrics_directory) / experiment_name
 
     dfs_train = []
     dfs_test = []
 
     # for these experiments, names are just like {experiment_name}-{version}-{metric}-{which_shapes}.csv
-    for file_path in list( metrics_dir.glob(search_csv_regex) ):
+    for file_path in list( metrics_directory.glob(search_csv_regex) ):
 
         # go fetch the specs file to add columns I need to differentiate versions
         pattern = r"version_\w+"
@@ -92,17 +92,28 @@ def build_dataframe_from_versions_metrics(
         df_all_train["value"] = df_all_train["value"].apply(parse_value)
     else:
         df_all_train = None
+        print("Dataset for train files empty !!")
 
     if len(dfs_test) > 0:
         df_all_test = pd.concat(dfs_test, ignore_index=True)
         df_all_test["value"] = df_all_test["value"].apply(parse_value)
     else:
         df_all_test = None
+        print("Dataset for test files empty !!")
+
+    # check dataset loaded consistency
+    if set( df_all_train["version"].unique() ) != set( df_all_test["version"].unique() ):
+        print("WARNING: Train dataframe and test dataframe do not contain exactly same version numbers !")
 
     return df_all_train, df_all_test
 
+def groupby_and_agg(df : pd.DataFrame, groupby_columns: list[str], grouby_value: str, agg_args={'mean': "mean", 'std': "std"}):
 
+    df_grouped = df.groupby(groupby_columns)[grouby_value].agg( 
+        **agg_args
+    ).reset_index()
 
+    return df_grouped
 
 
 
