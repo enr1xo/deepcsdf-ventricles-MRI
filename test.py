@@ -1,5 +1,5 @@
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0" 
+# import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0" 
 import json
 from pathlib import Path
 import torch
@@ -681,7 +681,7 @@ if __name__ == "__main__":
     parser.add_argument("--latent_reg_factor", "-lreg", type=float, default=None)
     parser.add_argument("--lr", type=float, default=0.005)
     parser.add_argument("--init_latent_from", type=str, default="zero", choices=["zero", "normal", "empirical"])
-    parser.add_argument("--use_mahalanobis_loss", "-maha_loss", action="store_true")
+    parser.add_argument("--use_mahalanobis_loss", "-maha", action="store_true")
     parser.add_argument("--save_latent_codes", "-sc", action="store_true")
     parser.add_argument("--interactive_images", "-i", action="store_true")
     parser.add_argument("--save_images", "-si", action="store_true")
@@ -704,7 +704,8 @@ if __name__ == "__main__":
         "num_epochs_fit_latent" : args.num_epochs,
         "latent_reg_factor" : args.latent_reg_factor,
         "lr_fit_latent" : args.lr,
-        "initialize_latent_from" : args.init_latent_from
+        "initialize_latent_from" : args.init_latent_from,
+        "use_mahalanobis_loss" : args.use_mahalanobis_loss
     }
 
     match mode:
