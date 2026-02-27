@@ -68,6 +68,7 @@ specs_files/*
 # scripts
 # ===============================
 *.py
+*.sh
 
 !utils/
 !utils/*.py
