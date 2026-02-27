@@ -13,53 +13,7 @@ Each training run is organized under an "experiment" and "version" directory. Tr
 
 The only file that is required to start training (or testing) is a `.json` under the specification files directory path, which sets the hyperparameters, network architecture, and data files to be used for the experiment.
 
-Example of a specs file:
-```python
-{
-    "TrainSplit" : "train/data_fnames_train.json",
-
-    "TestSplit" : "test/data_fnames_test.json",
-
-    "Network_specs" : {
-        "latent_size" : 64,
-        "out_dim" : 3,
-        "dims" : [256,256,256,256,256],
-        "latent_in" : [2],
-        "positional_encoding" : false,
-        "pos_enc_dim" : 4,   
-        "lipschitz_layers" : [2,3,4],
-        "regularize_layers" : [-1],
-        "activation" : "SiLU",
-        "last_tanh" : false,
-        "norm_layers" : [-1],
-        "batch_norm" : false,
-        "dropout_prob" : 0.2,
-        "dropout_layers" : [-1]       
-    },
-    
-    "NumEpochs": 50000,
-    "lr_weights": 0.001,
-    "lr_latents": 0.005,
-    "num_samp_per_scene": 4096,
-    "sampling_scene_method": "random",
-    "balance_pos_neg" : false,
-    "batch_size": 16,
-    "scale_spatial_inputs_by": 100,
-    "enforce_minmax": false,
-    "clamp_distance": 0.2,
-    "use_loss": "SmoothL1",
-    "use_lipreg_loss": false,
-    "lipschitz_alpha": 2e-06,
-    "code_reg_lambda": 2e-05,
-    "use_lr_scheduler": true,
-    "lr_weights_final": 1e-05,
-    "lr_latents_final": 5e-05,
-    "lr_decay_time_max": 100000,
-    "log_every_n_epochs" : 100,
-    "checkpoint_every_n_epochs": 20001,
-    "resume_training_from_version": "-"
-}
-```
+Example of a specs file can be found in `specs_files/specs_deepsdfatria.json`.
 
 ## How to use
 
