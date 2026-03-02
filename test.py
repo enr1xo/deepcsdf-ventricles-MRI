@@ -649,6 +649,7 @@ def run(
         print("Saved LDDMM distances.")
 
     if save_latent_codes:
+        exp_name = experiment_name.split("/")[-1]
         loss_type = "L2" if not use_mahalanobis_loss else "Maha"
         save_latents_npz(
             exp_name, version, which_shapes,
@@ -674,6 +675,7 @@ if __name__ == "__main__":
     parser.add_argument("--experiment_name", "-e", type=str, default = "training_sweeps/LipAndAct")
     parser.add_argument("--version", "-v", type=str, default = "version_0")
     parser.add_argument("--override_with_dataset", "-od", type=str, default=None)
+    parser.add_argument("--override_with_patients_list", "-opl", type=str, nargs="+", default=None, help="List of patient IDs to process")
     parser.add_argument("--mode", "-m", type=int, default=1, choices=[1, 2])
     parser.add_argument("--reconstruct_from", "-r", type=str, default="all", choices=["la","ra","all"])
     parser.add_argument("--num_samp_per_scene_for_fit", "-nsamp", type=int, default=None)
@@ -691,9 +693,21 @@ if __name__ == "__main__":
     parser.add_argument("--compute_haussdorff", "-hauss", action="store_true")
     args = parser.parse_args()
     
+
+    json_file = None
+    if args.override_with_patients_list:
+        # Build temporary json with the wanted patients, delete it at the end
+        # for now, I build by hand the file names I KNOW are in PATIENTS_NUMPY_DATA_DIR ... just to test this
+        names = [f"{p}-epi_la_ra_100000_coords_and_sdf.npy" for p in args.override_with_patients_list]
+        test_datafnames = "patients_list_temp.json"
+        json_file = Path(f"data/{test_datafnames}")
+        with json_file.open("w") as f:
+            json.dump(names, f)
+    else:
+        test_datafnames = args.override_with_dataset or "test/AF009_P2R-LEU_NORM_F004.json"
+
     exp_name = args.experiment_name
     vers = args.version
-    test_datafnames = args.override_with_dataset if args.override_with_dataset is not None else "test/AF009_P2R-LEU_NORM_F004.json" # "train/data_fnames_train-20patients.json"
     mode = args.mode 
 
     kwargs = {
@@ -739,3 +753,6 @@ if __name__ == "__main__":
             }
 
     run(**run_kwargs)
+
+    if json_file and json_file.exists():
+        json_file.unlink()
