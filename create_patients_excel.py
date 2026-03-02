@@ -11,40 +11,39 @@ from pathlib import Path
 import pandas as pd
 
 
-desease_list = ["AF", "yrm", "S", "VT"] 
+desease_list = ["AF", "yrm", "S", "VT", "LEU_BBB", "LEU_NORM"] 
 
-for disease in desease_list:
+cohort_list = ["AF", "sicvalves", "2017_ilearnHeart", "VT_cases", "leu_BBB_cases", "leu_normal_cases"]
 
-    print(f"\n Creatin execel file for {disease}.\n")
+for cohort in cohort_list:
+
+    print(f"\n Creatin execel file for {cohort}.\n")
     
-    original_patients_path = Path(f"/mnt/c/Users/e.rizzardi/OneDrive/Desktop/SDF_patients/{disease}_patients")
+    original_patients_path = Path(f"/home/rizzardi/Schreibtisch/SDF_original_patients/{cohort}/{cohort}")
 
-    if disease == "yrm":
-        original_patients_path = Path(f"/mnt/c/Users/e.rizzardi/OneDrive/Desktop/SDF_patients/SickValve_patients")
-    
-    elif disease == "S":
-        original_patients_path = Path(f"/mnt/c/Users/e.rizzardi/OneDrive/Desktop/SDF_patients/2017_ilearnHeart")
+    processed_patients_path = Path(f"/home/rizzardi/Schreibtisch/SDF_processed_patients/{cohort}_processed//{cohort}_processed/")
 
-    elif disease == "VT":
-        original_patients_path = Path(f"/mnt/c/Users/e.rizzardi/OneDrive/Desktop/SDF_patients/{disease}_cases")
-
-    processed_patients_path = Path("/mnt/c/Users/e.rizzardi/OneDrive/Desktop/biv_deepsdf/biv_deepsdf/AF-and-sicvalves")
-
-    output_base_path = Path("/mnt/c/Users/e.rizzardi/OneDrive/Desktop/biv_deepsdf/biv_deepsdf")
+    output_base_path = Path(f"/home/rizzardi/Schreibtisch/processed_patients_cohort_report")
 
 
     # the original cohort, andiamo a cercare in original_aptients_apth tutti quelli che iniziano con desease
-    original_coort = {
-        p.name for p in original_patients_path.iterdir() 
-        if p.is_dir() and p.name.startswith(disease)
-    }
-    
-    # andiamo a cercare in processed patients tutti quelli che hanno nome "disease"
-    
-    processed_coort = {
-        p.name for p in processed_patients_path.iterdir()
-        if p.is_dir() and p.name.startswith(disease)
-    }
+    for disease in desease_list:
+        original_coort = {
+            p.name for p in original_patients_path.iterdir() 
+            if p.is_dir() and p.name.startswith(disease)
+        }
+
+        
+        # andiamo a cercare in processed patients tutti quelli che hanno nome "disease"
+        
+        processed_coort = {
+            p.name for p in processed_patients_path.iterdir()
+            if p.is_dir() and p.name.startswith(disease)
+        }
+
+        if len(original_coort) > 1 and len(processed_coort) > 1:
+            break
+        
 
     # print(original_coort)
     # print(processed_coort)

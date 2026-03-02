@@ -6,12 +6,12 @@ import math
 from pathlib import Path
 import pyvista as pv
 
-def visualize_vtk_in_batches(folder_path, batch_size=16):
+def visualize_epi_in_batches(folder_path, batch_size=24):
     folder = Path(folder_path)
     epi_files = sorted(folder.rglob("*epicardium-processed.vtp"))
 
     if not epi_files:
-        print("Nessun file .vtk trovato.")
+        print("Nessun file epicardium-processed trovato.")
         return
 
     print(f"Trovati {len(epi_files)} file di epi")
@@ -47,4 +47,10 @@ def visualize_vtk_in_batches(folder_path, batch_size=16):
 
 
 # -------- USO --------
-visualize_vtk_in_batches("/mnt/c/Users/e.rizzardi/OneDrive/Desktop/biv_deepsdf/biv_deepsdf/AF-and-sicvalves")
+# leu_bbb_path = "/home/rizzardi/Schreibtisch/SDF_processed_patients/leu_BBB_cases_processed/leu_BBB_cases_processed"
+# leu_normal_path = "/home/rizzardi/Schreibtisch/SDF_processed_patients/leu_normal_cases_processed/leu_normal_cases_processed"
+# af_path = "/home/rizzardi/Schreibtisch/SDF_processed_patients/AF_processed/AF_processed"
+# sv_path = "/home/rizzardi/Schreibtisch/SDF_processed_patients/sicvalves_processed/sicvalves_processed"
+# ilearnHeart_path = "/home/rizzardi/Schreibtisch/SDF_processed_patients/2017_ilearnHeart_prcessed/2017_ilearnHeart_prcessed"
+vt_path = "/home/rizzardi/Schreibtisch/SDF_processed_patients/VT_cases_processed/VT_cases_processed"
+visualize_epi_in_batches(vt_path)

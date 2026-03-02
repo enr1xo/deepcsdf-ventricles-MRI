@@ -68,6 +68,13 @@ def ensure_vtu_exists(patient_root: Path, out_dir: Path | None = None) -> Path:
 
     # 1.1) se c'è il .vtk, cra il vtu da questo
     vtk_files = [p for p in patient_root.rglob("*.vtk") if "processed" not in p.stem.lower()]
+    # debug
+    l = [p for p in patient_root.rglob("*.vtk")]
+    print("PATIETTNT ROOT", l)
+    print(vtk_files)
+    print(patient_root)
+    #
+
     if vtk_files:
         vtk_path = vtk_files[0]
         mesh = pv.read(vtk_path)
@@ -507,8 +514,7 @@ def extract_processed_ventricle_surfaces(patient_name, reference_name, reference
 def _create_processed_surfaces_meshes(
     source_dir = PATIENT_MESHES_DIR,
     save_to_dir = PATIENT_MESHES_DIR,
-    reference_patient = "AF001"
-):
+    reference_patient = "AF001"):
     """
         Helper to only create all processed meshes first
     """
@@ -639,7 +645,7 @@ def _create_deepsdf_data_npy(
     # ------------------------------------------
     if create_processed_meshes:
         ref_dir = source_dir / reference_patient
-        # print(f"reference directory: {ref_dir}") #############################################################################################################
+        print(f"reference directory: {ref_dir}") #############################################################################################################
         ref_vtu_path = ensure_vtu_exists(ref_dir)
         reference_mesh = pv.read(ref_vtu_path)
 
@@ -668,6 +674,10 @@ def _create_deepsdf_data_npy(
             continue
 
         patient_name = patient_dir.name
+
+         # DEBUG
+        if patient_name == "AF070" or patient_name == "S66":
+            continue
 
         if patient_name == "single_patients_100000pts_npy" or "single_patients_100000pts" in patient_name:
             continue
@@ -877,25 +887,31 @@ if __name__ == "__main__":
     #     reference_patient="AF069"
     # )
 
-    sickness_list = ["AF", "SV"]
-    reference_patient_lis = ["AF001", "yrm0342_v1"]
+    sickness_list = ["AF", "SV", "2017", "VT"]
+    reference_patient_lis = ["AF001", "yrm0342_v1", "S62", "VT001_MUG1"]
 
-    sickness = "AF"
+    sickness = "VT"
 
     if sickness == sickness_list[0]:
         reference_patient = reference_patient_lis[0]
 
     elif sickness == sickness_list[1]:
         reference_patient = reference_patient_lis[1]
+    
+    elif sickness == sickness_list[2]:
+        reference_patient = reference_patient_lis[2]
+    
+    elif sickness == sickness_list[3]:
+        reference_patient = reference_patient_lis[3]
 
-    num_epi_samples = 15000
-    num_lendo_samples = 17500
-    num_rendo_samples = 17500
+    num_epi_samples = 30000
+    num_lendo_samples = 35000
+    num_rendo_samples = 35000
     num = num_epi_samples + num_lendo_samples + num_rendo_samples
 
     _create_deepsdf_data_npy(
         source_dir=PATIENT_MESHES_DIR,
-        save_to_dir= PATIENTS_COORDS_AND_SDFS_DIR / f"single_patients_{num}pts_npy",
+        save_to_dir= PATIENTS_COORDS_AND_SDFS_DIR / f"single_VT_{num}pts_npy",
         reference_patient=reference_patient,
         num_epi_samples=num_epi_samples,
         num_lendo_samples=num_lendo_samples,
