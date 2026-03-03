@@ -251,6 +251,32 @@ def mahalanobis(latents):
 
     return mahl
 
+def plot_embedding(ax, x, y, title, colors_af_norm, colors_train_test):
+
+    # Aura (Train/Test)
+    ax.scatter(x, y,
+               s=350,
+               c=colors_train_test,
+               alpha=0.6,
+               edgecolor='none')
+
+    # Main point (AF/NORM)
+    ax.scatter(x, y,
+               s=80,
+               c=colors_af_norm,
+               edgecolors='black',
+               linewidth=0.5)
+
+    pad_x = 0.1 * (x.max() - x.min())
+    pad_y = 0.1 * (y.max() - y.min())
+
+    ax.set_xlim(x.min() - pad_x, x.max() + pad_x)
+    ax.set_ylim(y.min() - pad_y, y.max() + pad_y)
+
+    ax.set_title(title, fontsize=18)
+    ax.set_aspect('equal')
+    ax.set_box_aspect(1)
+
 
 if __name__ == "__main__":
 
@@ -262,6 +288,157 @@ if __name__ == "__main__":
 
     # Now can import config
     from config import DATA_DIR
+
+    expname = "LipLayersAndCodeReg"
+    vnum = 16
+
+    LATENTS_DIR = Path(f"results/fitted_latents/{expname}")
+
+    latents_file = next(LATENTS_DIR.glob(f"{expname}-version_{vnum}-latents_23_test*"), None)
+    latents_dict = np.load(latents_file)
+
+    latents_fitted = []
+    test_patients = []
+    for patient, code in latents_dict.items():
+        #if patient != "LEU_NORM_0194":
+            test_patients.append(patient)
+            latents_fitted.append(code)
+    latents_fitted = np.array(latents_fitted)
+
+    latents_file = next(LATENTS_DIR.glob(f"{expname}-version_{vnum}-latents_89_train*"), None)
+    latents_dict = np.load(latents_file)
+
+    latents_trained = []
+    train_patients = []
+    for patient, code in latents_dict.items():
+        train_patients.append(patient)
+        latents_trained.append(code)
+    latents_trained = np.array(latents_trained)
+
+    latents_all = np.vstack([latents_trained, latents_fitted])
+
+    patient_names = train_patients + test_patients
+
+    colors_train_test = [ COLORS_PALETTE["pastel_orange"] if i < len(train_patients) else "plum" for i in range(len(patient_names))]
+
+    colors_af_norm = [ COLORS_PALETTE["neon_red"] if "AF" in name else COLORS_PALETTE["neon_green"] for name in patient_names ]
+
+
+    fig, axes = plt.subplot_mosaic(
+        [["PCA", "explained_var"],
+        ["tSNE", "UMAP"]],
+        constrained_layout=True,
+        figsize=(10,10)
+    )
+
+    pca_full = PCA()
+    pca_full.fit(latents_all)
+
+    explained = np.cumsum(pca_full.explained_variance_ratio_)
+    effective_dim = np.argmax(explained >= 0.95) + 1 
+
+    axes["explained_var"].plot(explained, c=COLORS_PALETTE["coral"], marker='o')
+    axes["explained_var"].axvline(effective_dim, color='r', linestyle='--', label=f'95% variance: {effective_dim} dims')
+    axes["explained_var"].set_title("PCA Explained Variance", fontsize=18)
+    axes["explained_var"].grid(True)
+    axes["explained_var"].set_xlabel("Components")
+    axes["explained_var"].set_ylabel("Cumulative Variance")
+    axes["explained_var"].set_ylim(0, 1.05)
+    axes["explained_var"].set_box_aspect(1) 
+
+    pca = PCA(n_components=2)
+    latents_embedded = pca.fit_transform(latents_all)
+
+    plot_embedding(
+        axes["PCA"],
+        latents_embedded[:, 0],
+        latents_embedded[:, 1],
+        "PCA",
+        colors_af_norm,
+        colors_train_test
+    )
+
+
+    tsne = TSNE(
+        n_components=2,
+        perplexity=15,
+        learning_rate=150,
+        max_iter=1000,
+        random_state=42
+    )
+
+    latents_embedded = tsne.fit_transform(latents_all)
+
+    plot_embedding(
+        axes["tSNE"],
+        latents_embedded[:, 0],
+        latents_embedded[:, 1],
+        "t-SNE",
+        colors_af_norm,
+        colors_train_test
+    )
+
+
+    umap_embedder = umap.UMAP(
+        n_neighbors=15,
+        min_dist=0.01,
+        n_components=2,
+        random_state=42
+    )
+
+    latents_embedded = umap_embedder.fit_transform(latents_all)
+
+    plot_embedding(
+        axes["UMAP"],
+        latents_embedded[:, 0],
+        latents_embedded[:, 1],
+        "UMAP",
+        colors_af_norm,
+        colors_train_test
+    )
+
+    import matplotlib.patches as mpatches
+
+    legend_elements = [
+        mpatches.Patch(facecolor=COLORS_PALETTE["neon_red"], edgecolor='black', label='AF'),
+        mpatches.Patch(facecolor=COLORS_PALETTE["neon_green"], edgecolor='black', label='NORM'),
+        mpatches.Patch(facecolor=COLORS_PALETTE["pastel_orange"], edgecolor='black', label='Train'),
+        mpatches.Patch(facecolor="plum", edgecolor='black', label='Test')
+    ]
+
+    fig.legend(
+        handles=legend_elements,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.07),  # center horizontally, slightly below
+        ncol=4,
+        fontsize=16,
+        frameon=True
+    )
+
+    save_fname = IMAGES_DIR / f"{expname}/{expname}-version_{vnum}-latents-all-embeddings_combined.pdf"
+    plt.savefig(save_fname, dpi=300, bbox_inches="tight")
+
+    save_fname = IMAGES_DIR / f"{expname}/{expname}-version_{vnum}-latents-all-embeddings_combined.svg"
+    plt.savefig(save_fname, dpi=300, bbox_inches="tight")
+
+    plt.show()
+    plt.close()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
     # LATENTS_DIR = Path("experiments/training_sweeps/RegLambda/version_3")
@@ -293,9 +470,9 @@ if __name__ == "__main__":
 
 
 
-    version_dir = Path("/home/navarri/AtriaProject/deepcsdf-atria/experiments/training_sweeps/RegLambda/version_0")
+    # version_dir = Path("/home/navarri/AtriaProject/deepcsdf-atria/experiments/training_sweeps/RegLambda/version_0")
 
-    latents, patient_names = associate_trained_embeddings_with_patients(version_dir)
+    # latents, patient_names = associate_trained_embeddings_with_patients(version_dir)
 
     # colors = map_categories(patient_names)
 
