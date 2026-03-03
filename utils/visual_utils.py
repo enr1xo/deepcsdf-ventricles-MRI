@@ -184,7 +184,7 @@ def plot_experiment_runs_events(
     grid: bool = True,
     fontsize: int = 14,
     save_fname=None
-):
+    ):
     """
     Args:
         `log_dir` : Path to the experiment folder containing all version folders (where events.out.tfevents.* files are)
@@ -384,58 +384,157 @@ def plot_gt_vs_reconstructed_with_error(
 
     return plotter
 
+def render_mesh_offscreen(
+    mesh,
+    scalars=None,
+    clim=None,
+    cmap="jet_r",
+    camera_position="xy",
+    image_size=(1200, 1200),
+):
+    """
+    Render a mesh off-screen and return RGB image array.
+    """
+    plotter = pv.Plotter(off_screen=True, window_size=image_size)
+    plotter.set_background("white")
+
+    if scalars is not None:
+        plotter.add_mesh(
+            mesh,
+            scalars=scalars,
+            cmap=cmap,
+            clim=clim,
+            show_scalar_bar=False,
+        )
+    else:
+        plotter.add_mesh(
+            mesh,
+            color="lightgray"
+        )  
+
+    plotter.camera_position = camera_position
+    img = plotter.screenshot(return_img=True)
+    plotter.close()
+
+    return img
+
+def plot_two_gt_vs_reconstructed_publication_style(
+    mesh_gt_1, mesh_pred_1, patient_name_1,
+    mesh_gt_2, mesh_pred_2, patient_name_2,
+    signed_distances_1=None,
+    signed_distances_2=None,
+    cam_pos_1="xy", cam_pos_2="xy",
+    output_path="figure.png",
+    dpi=600,
+):
+    """
+    Render publication-ready 2x2 figure with shared colorbar.
+    """
+
+    # ---------------- Compute signed distances ----------------
+    def compute_signed_distances(mesh_gt, mesh_pred, signed_distances):
+        if signed_distances is None:
+            implicit_distance = vtkImplicitPolyDataDistance()
+            implicit_distance.SetInput(mesh_gt)
+            signed_distances = np.array(
+                [implicit_distance.EvaluateFunction(p) for p in mesh_pred.points]
+            )
+        return signed_distances
+
+    signed_distances_1 = compute_signed_distances(
+        mesh_gt_1, mesh_pred_1, signed_distances_1
+    )
+    signed_distances_2 = compute_signed_distances(
+        mesh_gt_2, mesh_pred_2, signed_distances_2
+    )
+
+    # ---------------- Global color limits ----------------
+    global_min = min(signed_distances_1.min(), signed_distances_2.min())
+    global_max = max(signed_distances_1.max(), signed_distances_2.max())
+    global_clim = [global_min, global_max]
+
+    # Copy meshes
+    mesh_pred_1 = mesh_pred_1.copy()
+    mesh_pred_2 = mesh_pred_2.copy()
+    mesh_pred_1["error"] = signed_distances_1
+    mesh_pred_2["error"] = signed_distances_2
+
+    # ---------------- Render images ----------------
+    print("Rendering meshes off-screen...")
+
+    img_gt_1 = render_mesh_offscreen(mesh_gt_1, camera_position=cam_pos_1)
+    img_err_1 = render_mesh_offscreen(
+        mesh_pred_1, scalars="error", clim=global_clim, camera_position=cam_pos_1
+    )
+
+    img_gt_2 = render_mesh_offscreen(mesh_gt_2, camera_position=cam_pos_2)
+    img_err_2 = render_mesh_offscreen(
+        mesh_pred_2, scalars="error", clim=global_clim, camera_position=cam_pos_2
+    )
+
+    # ---------------- Matplotlib Layout ----------------
+    plt.rcParams.update({
+        "font.family": "serif", # nice style !!
+        "font.size": 12,
+    })
+
+    fig = plt.figure(figsize=(8, 8))
+    gs = fig.add_gridspec(
+        2, 3, 
+        width_ratios=[1, 1, 0.06], # the last colum is for legend !!
+        wspace=0.02,
+        hspace=0.02
+    )
+
+    # Row 1
+    ax = fig.add_subplot(gs[0, 0])
+    ax.imshow(img_gt_1)
+    ax.set_title(f"{patient_name_1} – Ground Truth", fontsize=12)
+    ax.axis("off")
+
+    ax = fig.add_subplot(gs[0, 1])
+    ax.imshow(img_err_1)
+    ax.set_title(f"{patient_name_1} – Reconstructed", fontsize=12)
+    ax.axis("off")
+
+    # Row 2
+    ax = fig.add_subplot(gs[1, 0])
+    ax.imshow(img_gt_2)
+    ax.set_title(f"{patient_name_2} – Ground Truth", fontsize=12)
+    ax.axis("off")
+
+    ax = fig.add_subplot(gs[1, 1])
+    ax.imshow(img_err_2)
+    ax.set_title(f"{patient_name_2} – Reconstructed", fontsize=12)
+    ax.axis("off")
+
+    # ---------------- Shared Colorbar ----------------
+    norm = mplcolors.Normalize(vmin=global_clim[0], vmax=global_clim[1])
+    sm = mplcm.ScalarMappable(norm=norm, cmap="jet_r")
+
+    cax = fig.add_subplot(gs[:, 2])
+
+    # # automatic color bar 
+    # cbar = fig.colorbar(sm, cax=cax)
+    # set number and spacing of ticks instead
+    ticks = np.linspace(global_clim[0], global_clim[1], 7)
+    cbar = fig.colorbar(sm, cax=cax, ticks=ticks)
+
+    cbar.set_label("Signed distance (mm)", fontsize=14)
+    cbar.ax.tick_params(labelsize=12)
+
+    # consistent numeric formatting
+    cbar.ax.set_yticklabels([f"{t:.2f}" for t in ticks])
+
+
+    # ---------------- Save ----------------
+    plt.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+
+    print(f"Saved publication figure to {output_path}")
 
 
 if __name__ == "__main__":
 
     from pathlib import Path
-
-    # PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/navarri/AtriaProject/DATASETS/AtriaPointsAndSDF")
-
-    # PATIENTS_NPY_DATA_DIR =  PATIENTS_COORDS_AND_SDFS_DIR / "single_patients_100000pts_npy"
-
-    # visually_check_sdfs_distribution(PATIENTS_NPY_DATA_DIR)
     
-    # PATIENT_MESHES_DIR = Path("/home/davidenava_linux/DATASETS/AtrialGeometries")
-
-    # # visually_check_all_surfaces(PATIENT_MESHES_DIR)
-
-
-    # # # # find "best" learning rate
-    # # for lr in [50,80,100,150]:
-    # #     tsne = TSNE(n_components=2, perplexity=15, learning_rate=lr, max_iter=1000, random_state=42)
-
-    # #     # Fit and transform
-    # #     latents_embedded = tsne.fit_transform(latent_codes)
-
-    # #     T = trustworthiness(
-    # #         latent_codes,      # original high-D data (n_samples, n_features)
-    # #         latents_embedded,      # embedding (n_samples, n_components)
-    # #         n_neighbors=15
-    # #     )
-
-    # #     print(f"lr = {lr} --> T = {T}")
-
-    # # for min_dist in [0.001, 0.05, 0.1, 0.5]:
-    # #     umap_embedder = umap.UMAP(
-    # #         n_neighbors=15,  # controls local vs global
-    # #         min_dist=min_dist,    # tightness of clusters
-    # #         n_components=2,  # output dims
-    # #         random_state=42  # reproducibility
-    # #     )
-
-    # #     # Fit & transform data
-    # #     latents_embedded = umap_embedder.fit_transform(latent_codes)  # X = your high-dimensional data
-
-    # #     T = trustworthiness(
-    # #         latent_codes,      # original high-D data (n_samples, n_features)
-    # #         latents_embedded,      # embedding (n_samples, n_components)
-    # #         n_neighbors=15
-    # #     )
-
-    # #     print(f"min_dist = {min_dist} --> T = {T}")
-
-
-
-
-
