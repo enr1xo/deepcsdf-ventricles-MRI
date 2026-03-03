@@ -11,6 +11,37 @@ from pathlib import Path
 from deel.torchlip.modules.linear import SpectralLinear
 import numpy as np
 
+# # ---- to reconstruct surface for validation ---- #
+# from skimage import measure
+# import pyvista as pv
+
+# def isosurface_from_sdf(x, y, z, sdf_pred, level, box_lim = 105):
+    
+#     D = sdf_pred.reshape((len(x), len(y), len(z)))
+
+#     D = np.transpose(D, (1, 0, 2))
+
+#     # Run marching cubes
+#     verts, faces, normals, values = measure.marching_cubes(
+#         D,
+#         level=level,
+#         spacing=(x[1] - x[0], y[1] - y[0], z[1] - z[0])
+#     )
+
+#     # Adjust vertices
+#     # my volume is in [-105,105] cube but marching cubes assumes a vertex is in (0,0,0), so I need to traslate it back to my real coordinates
+#     verts = verts - box_lim  
+
+#     # Convert faces for PyVista
+#     faces_pv = np.hstack([np.full((faces.shape[0], 1), 3), faces]).astype(np.int32)
+
+#     # Create PyVista mesh
+#     mesh = pv.PolyData(verts, faces_pv)
+
+#     return mesh
+
+
+
 act_fn = {
     "ReLU": nn.ReLU(), "Tanh" : nn.Tanh(), 
     "Softplus": nn.Softplus(), 
@@ -20,6 +51,33 @@ act_fn = {
 }
 
 
+
+
+class LipschitzNormLinear(nn.Linear):
+    """
+        Lipschitz scaled layer, as in learning smooth neural functions via lip reg paper
+    """
+    def __init__(self, in_features, out_features, bias=True, init_c=0.0):
+        super().__init__(in_features, out_features, bias=bias)
+
+        self.c = nn.Parameter(torch.ones(1) * init_c)  # Learnable Lipschitz scaling parameter (scalar per layer)
+
+    def forward(self, x):
+        # Compute row-wise absolute sum of the weight
+        absrowsum = self.weight.abs().sum(dim=1, keepdim=True) + 1e-12
+
+        # Compute row-wise scaling factor
+        scale = torch.clamp(F.softplus(self.c) / absrowsum, max=1.0)
+
+        # Scale the weight row-wise
+        W_scaled = self.weight * scale
+
+        # Linear forward (like nn.Linear)
+        return F.linear(x, W_scaled, self.bias)
+
+    def lipschitz_bound(self): # this is so I can just get it when computing the loss in training
+        return F.softplus(self.c)
+    
 class Decoder(nn.Module):
 
     def __init__(self, **specs): # unpacks given keyword args into specs dictionary, so I can use .get() and have default instead of errors if the key isn't there
@@ -34,6 +92,8 @@ class Decoder(nn.Module):
         self.pos_enc_dim = specs.get("pos_enc_dim", 10)
 
         self.latent_in = specs.get("latent_in", [-1])
+
+        self.actual_concatenation = specs.get("actual_skip_concatenation", False)
         
         self.norm_layers = specs.get("norm_layers", [-1])
         
@@ -46,6 +106,8 @@ class Decoder(nn.Module):
         self.batch_norm = specs.get("batch_norm", False)
 
         self.lipschitz_layers = specs.get("lipschitz_layers", [-1]) # these are SpectralLinear layers, enforced to be lipschitz
+
+        self.use_lipschitz_normalized_layers = specs.get("use_lipschitz_normalized_layers", False) # these are weight normalized layers, with learnable lipschitz bounds (...)
 
         self.hidden_dims = specs.get("dims", [])
         
@@ -61,14 +123,18 @@ class Decoder(nn.Module):
         # .float() Converts all the parameters and buffers in that layer to double precision instead of default float32
         for layer in range(0, self.num_layers - 1): 
             if layer + 1 in self.latent_in:
+                if self.actual_concatenation:
+                    self.dims[layer + 1] += self.dims[0]
                 out_dim_ = self.dims[layer + 1] - self.dims[0] # if using positional encoding, this might be 0 if first layer becomes too big --> cannot use very large positional encoding !!!
             else:
                 out_dim_ = self.dims[layer + 1]
 
             if layer in self.norm_layers:
                 lin = nn.utils.weight_norm(nn.Linear(self.dims[layer], out_dim_)).float()
-            elif layer in self.lipschitz_layers:
+            elif layer in self.lipschitz_layers and not self.use_lipschitz_normalized_layers:
                 lin = SpectralLinear(self.dims[layer], out_dim_).float()
+            elif self.use_lipschitz_normalized_layers:
+                lin = LipschitzNormLinear( self.dims[layer], out_dim_ ).float()
             else:
                 lin = nn.Linear(self.dims[layer], out_dim_).float()
 
@@ -79,7 +145,9 @@ class Decoder(nn.Module):
         self.last_tanh = specs.get("last_tanh", False)
 
         # TODO: check specs and decoder validity
-    
+        # - if lipschitz_layers is not -1 but also use_lipschitz_normalized_layers is True, warn that the latter will override SpectraLinear layers !!
+        # - check dimensions requested can be build with wanted skip connection, + pos enc
+
     def forward(self, input_):
         x = input_
 
@@ -106,18 +174,31 @@ class Decoder(nn.Module):
     def description(self):
         desc = f"Decoder network:"
 
-        f = f" \n {self.num_layers} layers with channels {self.dims} "
-        if self.lipschitz_layers != [-1]:
-            f = f + f"\n Using Lipschitz constrained linear layers in {[i+1 for i in self.lipschitz_layers]}"
+        f = f" \n {self.num_layers} layers with channels {self.dims} :"
+
+        for layer in range(0, self.num_layers - 1):
+            lin = getattr(self, f"lin{layer}")
+            f += f"\n  layer {layer}:  {lin.__class__.__name__}, shape {lin.weight.shape[0], lin.weight.shape[1]}"
+
+        # if self.lipschitz_layers != [-1]:
+        #     f = f + f"\n Using Lipschitz constrained linear layers in {[i+1 for i in self.lipschitz_layers]}"
+
+        # if self.use_lipschitz_normalized_layers:
+        #     f = f + f"\n Using Lipschitz normalized linear layers"
+
         if self.use_positional_encoding:
             f = f + f"\n Using positional encoding of dimension {self.pos_enc_dim} on input."
+
         if self.latent_in != [-1]:
-            f = f + f"\n Shortcut connection of input to hidden layer {self.latent_in[0]}"
+            f = f + f"\n Shortcut connection of input to layer {self.latent_in[0]}"
+
         f = f + f"\n Using latent dimension {self.latent_size}."
+
         f = f + f"\n Activations: {self.activation}"
+
         if self.last_tanh:
-            f = f + ", tanh on output."
-        
+            f = f + ", tanh on output. \n"
+
         return desc + f
 
 class DeepSDF(pl.LightningModule):
@@ -157,7 +238,7 @@ class DeepSDF(pl.LightningModule):
         elif self.use_loss == "SmoothL1":
             self.loss_fn = torch.nn.SmoothL1Loss(reduction="sum") 
 
-        self.use_lipreg_loss = specs.get("use_lipreg_loss", False)
+        self.use_lipreg_loss = self.decoder.use_lipschitz_normalized_layers
 
         self.lipschitz_alpha = specs.get("lipschitz_alpha", 2e-6)
 
@@ -167,7 +248,9 @@ class DeepSDF(pl.LightningModule):
 
         self.Cs = specs.get("scale_spatial_inputs_by", 100)
 
-        self.log_every_n_epochs = specs.get("log_every_n_epochs", 1)
+        self.log_every_n_epochs = specs.get("log_every_n_epochs", 1000)
+
+        self.log_val_every_n_epochs = specs.get("log_val_every_n_epochs", None)
 
     def set_embedding(self, num_scenes = None, embedding=None):
         if num_scenes is None:
@@ -246,22 +329,6 @@ class DeepSDF(pl.LightningModule):
         # move manually latents on the device to be sure it's on the same device as data when fitting the model
         self.lat_vecs["trainable"].to(self.device)
         return super().on_fit_start()
-    
-    def on_train_start(self):
-        # d = flatten_dict_for_logging(self.specs)
-        # self.logger.log_hyperparams(d)
-        # self.logger.log_hyperparams({"hparams_json": json.dumps(self.specs)}) # --> only for mlflow
-        if self.logger is not None: # manually save the specs
-            json_path = Path(self.logger.log_dir) / "hparams.json"
-            with open(json_path, "w") as f:
-                json.dump(self.specs, f, indent=4)
-
-    def on_train_end(self):
-        # for now, save as numpy data
-        if self.logger is not None:
-            npy_path = Path(self.logger.log_dir) / "latents.npy"
-            embeddings = self.lat_vecs["trainable"].weight.data.cpu().numpy()
-            np.save(npy_path, embeddings)
 
     def training_step(self, batch, batch_idx):
 
@@ -304,27 +371,21 @@ class DeepSDF(pl.LightningModule):
         latents = self.lat_vecs["trainable"]( torch.unique(indices) )
         reg_loss = torch.mean( torch.linalg.norm(latents, dim=1) ** 2 )
 
-        # if self.normalize_reg_loss: #TODO
-        #     pass
-
         if self.anneal_reg_loss: # self.global_step is the total optimizer steps so far (across all epochs), self.current_epoch is the actual epoch
             code_reg_lambda = self.anneal_latent_reg()
         else:
             code_reg_lambda =  self.code_reg_lambda
 
-        # LIPSCHITZ PENALTY
         lipschitz_loss = 0.0
-        if self.use_lipreg_loss: # compute product of spectral norms for all layers !
-            # compute product of spectral norms as sum in log space for stability
-            # lipschitz_loss = torch.exp(log_prod) # normalized by depth:  torch.exp(log_prod / self.decoder.num_layers)
-            # do not exponentiate for stabilty, for training it is unnecessary ( still get the same minimizer)
+        if self.use_lipreg_loss:
             for i in range(self.decoder.num_layers - 1):
-                W = getattr(self.decoder, f"lin{i}").weight  
-                norm = torch.linalg.matrix_norm(W, ord=float('inf'))  
-                softplus_norm = F.softplus(norm)
-                lipschitz_loss += torch.log(softplus_norm + 1e-12) 
+                layer = getattr(self.decoder, f"lin{i}")
+                softplus_ci = layer.lipschitz_bound()
+                lipschitz_loss += torch.log( softplus_ci ) 
+            lipschitz_loss = torch.exp(lipschitz_loss)
 
         training_loss = chunk_loss + code_reg_lambda * reg_loss + self.lipschitz_alpha * lipschitz_loss
+
 
         if self.logger is not None and (self.current_epoch + 1) % self.log_every_n_epochs == 0:
             
@@ -336,10 +397,10 @@ class DeepSDF(pl.LightningModule):
             self.log_dict(
                 {
                     "latents_mean_L2_squared": reg_loss.detach().cpu(),
-                    "lipschitz_penalty": lipschitz_loss.detach().cpu(),
-                    "regression_loss": chunk_loss.detach().cpu(),
-                    "train_loss" : training_loss.detach().cpu(),
-                    "code_reg_lambda" : code_reg_lambda,
+                    "lipschitz_penalty": lipschitz_loss.detach().cpu() if self.use_lipreg_loss else torch.tensor(0.0, device="cpu"),
+                    "prediction_loss": chunk_loss.detach().cpu(),
+                    "training_loss" : training_loss.detach().cpu(),
+                    "code_reg_factor" : code_reg_lambda,
                     # "lr_weights" : lr_weights,
                     # "lr_latents" : lr_latents
                 },
@@ -351,65 +412,171 @@ class DeepSDF(pl.LightningModule):
 
         return training_loss
 
+    def validation_step(self, batch, batch_idx):
 
+        data = batch[0]
+
+        batch_size = data["coords"].shape[0]  # batch size
+        num_samp_per_scene = data["coords"].shape[1]  # points per scene
+
+        xyz_gt = data["coords"].to(self.device)
+        sdf_gt = data["sdf"].to(self.device)
+
+        xyz_gt = xyz_gt.reshape(-1, 3) * self.Cs
+        sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim)
+        if self.enforce_minmax:
+            sdf_gt = torch.clamp(sdf_gt, min=-self.clamp_distance, max=self.clamp_distance)
+
+        num_sdf_samples = sdf_gt.shape[0]
+
+        xyz_gt.requires_grad = False
+        sdf_gt.requires_grad = False
+
+        # starting point for optimization: zero
+        # I could also save initial vectors when training and start with empirical mean and covariance,
+        # sampling a latent using MultivariateNormal and rsample()
+        # TODO: add option to start from somewhere else (from mean of loaded latents, random sample, ...)
+
+        latents = torch.zeros(batch_size, self.latent_size, device=self.device, requires_grad=True)
+            
+        optimizer = torch.optim.Adam(params=[latents], lr=0.005)
+        
+        # ==================================================== #
+        # region fit latent
+        # ==================================================== #
+        with torch.enable_grad(): # I want them during validation, they are disabled automatically
+            
+            for i in range(250):
+                
+                self.decoder.eval()
+                
+                optimizer.zero_grad()
+
+                batch_vecs = latents.unsqueeze(1).expand(batch_size, num_samp_per_scene, self.latent_size).reshape(batch_size*num_samp_per_scene, self.latent_size)
+                input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
+
+                sdf_pred = self.decoder(input_)
+                if self.enforce_minmax:
+                    sdf_pred = torch.clamp(sdf_pred, min = -self.clamp_distance, max=self.clamp_distance)
+                    
+                # mahalanobis to train codes distribution
+
+                # vanilla loss : same loss as in training
+                reg_loss = torch.sum(latents ** 2, dim=1).mean() 
+
+                chunk_loss = self.loss_fn(sdf_pred, sdf_gt) / (num_sdf_samples *  self.decoder.out_dim)
+
+                loss = chunk_loss + self.code_reg_lambda * reg_loss
+
+                loss.backward()
+
+                optimizer.step()
+
+        regression_loss = chunk_loss
+
+        # # ==================================================== #
+        # # region reconstruct surface from predicted sdf
+        # # ==================================================== #
+        # latent.requires_grad = False    
+        # resolution = 128
+        # box_lim = self.Cs * 1.05
+
+        # with torch.no_grad():
+            
+        #     self.decoder.eval()
+
+        #     #region SDF ON GRID FOR RECONSTRUCTION
+        #     x = np.linspace(-box_lim, box_lim, resolution)
+        #     y = np.linspace(-box_lim, box_lim, resolution)
+        #     z = np.linspace(-box_lim, box_lim, resolution)
+        #     xx, yy, zz = np.meshgrid(x, y, z)
+
+        #     grid = np.c_[xx.ravel(), yy.ravel(), zz.ravel()]
+        #     xyz_raw = grid
+
+        #     n_points = 500000
+        #     n_batches = len(xyz_raw) // n_points
+
+        #     sdf_preds = []
+
+        #     for i in range(n_batches + 1):
+        #         if i < n_batches:
+        #             xyz = torch.from_numpy(xyz_raw[n_points * i : n_points * (i + 1)]).to(self.device)
+        #         else:
+        #             xyz = torch.from_numpy(xyz_raw[n_points * i :]).to(self.device)
+
+        #         batch_vecs = latent.expand(xyz.shape[0], -1)
+
+        #         input_ = torch.cat([batch_vecs, xyz], dim=1)
+
+        #         sdf_pred_batch = self.decoder(input_.to(torch.float32)).cpu().data.numpy() 
+
+        #         sdf_preds.append(sdf_pred_batch)
+            
+        # sdf_pred = np.concatenate(sdf_preds, axis=0)
+
+        # # ==================================================== #
+        # # region compute some metric to track
+        # # ==================================================== #
+
+        # sdfs_pred = {
+        #     "epicardium": sdf_pred[:, 0],
+        #     "la_endo": sdf_pred[:, 1],
+        #     "ra_endo": sdf_pred[:, 2]
+        # }
+
+        # organs_to_process = ["epicardium", "la_endo", "ra_endo"]
+
+        # for i,organ in enumerate(organs_to_process):
+
+        #     threshold = 0.0 
+                                    
+        #     try:
+        #         mesh_reconstructed = isosurface_from_sdf( x, y, z, sdf_pred=sdfs_pred[organ], level = threshold, box_lim = box_lim )
+        #     except:
+        #         logger.warning( f"Version {version}: skipping {organ} isosurface extraction: not found for current isovalue")
+        #         if i == len(organs_to_process)-1:
+        #             return
+        #         else:
+        #             continue
+
+        self.log_dict(
+            {
+                "sdf_regression_loss_on_test_shapes": regression_loss.detach().cpu()
+            },
+            logger=True,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False
+        )
+
+        return loss
 
 
 
 
 if __name__ == "__main__":
 
+    specs = {
+        "latent_size" : 64,
+        "out_dim" : 3,
+        "dims" : [256,256,256,256,256],
+        "latent_in" : [3],
+        "actual_skip_concatenation" : True,
+        "positional_encoding" : False,
+        "pos_enc_dim" : 4,   
+        "lipschitz_layers" : [-1],
+        "use_lipschitz_normalized_layers" : False,
+        "activation" : "SiLU",
+        "last_tanh" : False,
+        "norm_layers" : [-1],
+        "batch_norm" : False,
+        "dropout_prob" : 0.2,
+        "dropout_layers" : [-1]       
+    }
+
+    decoder = Decoder(**specs)
+
+    print(decoder.description())
+
     pass
-
-""" --> old setup
-        # # REGULARIZATION LOSS  # was: reg_loss = torch.sum( torch.linalg.norm(batch_vecs, dim=1) ) / num_sdf_samples
-        # reg_loss = torch.sum( torch.linalg.norm(batch_vecs, dim=1) ** 2 ) / num_sdf_samples
-
-        # # if self.normalize_reg_loss:
-        # #     pass
-
-
-        # # # LIPSCHITZ PENALTY
-        # # if self.use_lipreg_loss:
-        # #     lipschitz_loss = 1.0
-        # #     for layer in range(self.decoder.num_layers):
-        # #         weight = self.decoder.__getattr__("lin" + str(layer)).weight
-        # #         norm = torch.linalg.matrix_norm(weight, ord=float("inf")) # TODO: bound this so it doesn't explode
-        # #         lipschitz_loss *= F.softplus(norm)
-        # #     lipschitz_loss = self.lipschitz_alpha * lipschitz_loss
-        # # else:
-        # #     lipschitz_loss = 0.0
-
-        # # # LIPSCHITZ PENALTY
-        # lipschitz_loss = 0.0
-        # if self.use_lipreg_loss: # compute product of spectral norms for all layers !
-        #     Ws = torch.stack([getattr(self.decoder, f"lin{i}").weight for i in range(self.decoder.num_layers)])
-        #     # Compute norms for all layers at once
-        #     norms = torch.linalg.matrix_norm(Ws, ord=float('inf'), dim=(1,2))  # shape: (num_layers,)
-        #     softplus_norms = F.softplus(norms)
-        #     # compute product of spectral norms as sum in log space for stability
-        #     log_prod = torch.sum(torch.log(softplus_norms + 1e-12))  # add eps for stability
-        #     # lipschitz_loss = torch.exp(log_prod) # normalized by depth:  torch.exp(log_prod / self.decoder.num_layers)
-        #     # do not exponentiate for stabilty, for training it is unnecessary ( still get the same minimizer)
-        #     lipschitz_loss = log_prod 
-
-        # training_loss = chunk_loss + self.code_reg_lambda * reg_loss + self.lipschitz_alpha * lipschitz_loss
-
-        # if self.logger is not None and (self.current_epoch + 1) % self.log_every_n_epochs == 0:
-
-        #     self.log_dict(
-        #         {
-        #             "latent_reg_loss": reg_loss,
-        #             "prediction_loss": chunk_loss,
-        #         },
-        #         logger=True
-        #     )
-
-        #     self.log(
-        #         "train_loss",
-        #         training_loss,
-        #         on_step=False,
-        #         on_epoch=True,
-        #         prog_bar=True,
-        #         logger=True
-        #     )
-"""

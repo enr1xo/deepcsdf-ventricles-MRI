@@ -1,67 +1,93 @@
-# Ignore all __pycache__ folders
-**/__pycache__/
-
-# Ignore all .ipynb files
-*.ipynb
-# Except some notebook 
-!summarize_experiment_performance.ipynb
-
-#Ignore all text files
-*.txt
-!requirements.txt
-
-#Ignore specific files
-temp.py
-useful_stuff.py
-model/atria_deepsdf_decoder-playground.py
-model/atria_dataloader-playground.py
-
-# Ignore all files inside subfolders, but keep the top-level folder
-# But un-ignore all directories (keep folder structure)
-# experiments/
-# results/
-experiments/training_sweeps/RegLambdaAndAnneal
-experiments/training_sweeps/RegLambdaAndCs
-experiments/training_sweeps/LipPenaltyAndAct
-experiments/deepsdf_atria_training_local
-experiments/logs-*
-experiments/trained
-data/**/*
-!data/**/
-
-# experiments/
-# data/
-# results/
-specs_files_concurrent/**
-
-# Keep folder structure for other folders even if empty
-!*/
-
-# # -----------------------
-# # Python artifacts
-# # -----------------------
+# ===============================
+# Python
+# ===============================
 __pycache__/
-# *.pyc
-# *.pyo
-# *.pyd
-# *.py[cod]
-# *.egg
-# *.egg-info/
-# dist/
-# build/
-# *.so
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+build/
+dist/
+.eggs/
 
-# -----------------------
-# Data & outputs
-# -----------------------
-*.ckpt
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ===============================
+# Jupyter
+# ===============================
+.ipynb_checkpoints/
+*.ipynb
+!summarize_experiment_performance.ipynb  # keep only this notebook tracked
+
+# ===============================
+# Environment / local config
+# ===============================
+config.py
+environment.yml
+*.env
+.env
+*.toml
+*.md
+!README.md
+
+# ===============================
+# Data (usually should NOT be versioned)
+# ===============================
+data/
+datasets/
+*.csv
+*.h5
+*.npz
+
+# ===============================
+# Training outputs / experiments
+# ===============================
+experiments/
 results/
+logs/
+runs/
 cache/
+checkpoints/
+*.ckpt
+*.pt
+*.pth
 
+launch_training_slurm/
+launch_training_bash/
+launched_slurm/
+launch_bash/
 
-# -----------------------
-# Optional: temporary / scratch
-# -----------------------
+specs_files/*
+!specs_files/specs_deepsdfatria.json
+
+# ===============================
+# scripts
+# ===============================
+*.py
+*.sh
+
+!utils/
+!utils/*.py
+!model/
+!model/*.py
+!train.py
+!test.py
+!atria_data_preparing.py
+!process_metrics_per_experiment.py
+
+# ===============================
+# Temporary / scratch
+# ===============================
 tmp/
 temp/
 *.log
+
+# ===============================
+# OS junk
+# ===============================
+.DS_Store
+Thumbs.db

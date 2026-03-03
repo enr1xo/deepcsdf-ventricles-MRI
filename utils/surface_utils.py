@@ -89,6 +89,46 @@ def sample_uniform_points_in_unit_sphere(amount):
     else:
         return unit_sphere_points[:amount, :]
 
+def subsample_points_simil_lhs(points, num_points, num_bins, seed=None):
+    if len(points) <= num_points:
+        return points
+
+    rng = np.random.default_rng(seed)
+
+    # normalize to [0,1]^3
+    mins = points.min(axis=0)
+    maxs = points.max(axis=0)
+    norm_points = (points - mins) / (maxs - mins)
+
+    N = len(norm_points)
+    dim = 3
+
+    # divide each dimension into num_bins bins
+    bins = np.linspace(0, 1, num_bins + 1)
+
+    # compute bin index for each point
+    bin_indices = np.zeros((N, dim), dtype=int)
+    for d in range(dim):
+        # np.digitize returns indices 1..num_points, shift to 0..num_bins-1
+        bin_indices[:, d] = np.digitize(norm_points[:, d], bins) - 1
+
+    # pick one random point per bin along each dimension
+    selected_mask = np.zeros(N, dtype=bool)
+    for d in range(dim):
+        for b in range(num_bins):
+            candidates = np.where(bin_indices[:, d] == b)[0]
+            if len(candidates) > 0:
+                idx = rng.choice(candidates)
+                selected_mask[idx] = True
+
+    subsampled_points = points[selected_mask]
+
+    # if still too many points, randomly downsample to exact num_points
+    if len(subsampled_points) > num_points:
+        subsampled_points = subsampled_points[rng.choice(len(subsampled_points), num_points, replace=False)]
+
+    return subsampled_points
+    
 def make_trimesh_from_pv(mesh: pv.UnstructuredGrid | pv.PolyData | trimesh.Trimesh ):
     if not isinstance(mesh, trimesh.Trimesh):
         surface = mesh.extract_surface()
@@ -221,15 +261,16 @@ def compute_signed_distance_libigl(mesh: pv.PolyData, query_points):
     )
 
     # assumes the mesh is consistently oriented !!!
+    # 0 --> OUTSIDE 1 --> INSIDE (or -1 if not oriented properly, but tresholding then takes care of this)
     w = igl.fast_winding_number(V = vertices, F = faces, Q = query_points.astype(np.float64))
 
-    sdf = np.sqrt(sq_d) * np.sign(w - 0.5)
+    sdf = np.sqrt(sq_d) * np.sign( 0.5 - np.abs(w) )
 
     # heuristic: pick a point I know it's outside, flip sign if needed
     bbox_max = mesh.bounds[1::2]  # xmax, ymax, zmax
     outside_point = np.array([bbox_max[0] + 100.0, bbox_max[1] + 100.0, bbox_max[2] + 100.0])[None, :]  # shape (1,3)
     w_out = igl.fast_winding_number(V = vertices, F = faces, Q = outside_point)[0]
-    if np.sign(w_out - 0.5) < 0:
+    if np.sign( 0.5 - np.abs(w_out) ) < 0:
         sdf *= -1
 
     return sdf

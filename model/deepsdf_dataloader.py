@@ -1,6 +1,4 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0" # this should be the RTX #TODO: do not put this here, maybe export in environment, or config
-
 import torch
 try:
     import lightning as pl # pyright: ignore[reportMissingImports]
@@ -10,7 +8,6 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import json
 from pathlib import Path
-from loguru import logger
 
 from config_v import DATA_DIR, PATIENTS_NPY_DATA_DIR
 
@@ -45,6 +42,8 @@ class SDFSamples(Dataset):
         self.train_fname = DATA_DIR / specs.get("TrainSplit", None) # I don't like DATA_DIR hardcoded actually
 
         self.test_fname = DATA_DIR / specs.get("TestSplit", None)
+
+        self.val_fname = DATA_DIR / specs.get("ValSplit", self.test_fname)
 
         self.data_file = ""
 
@@ -204,7 +203,7 @@ class SDFDataModule(pl.LightningDataModule):
     def __init__(
         self,
         specs: dict,
-        num_workers = 6,
+        num_workers = 0,
         shuffle=True,
         drop_last=True
     ):
@@ -222,7 +221,7 @@ class SDFDataModule(pl.LightningDataModule):
 
         self.batch_size = self.specs.get("batch_size", 2)
 
-        self.num_samples_per_scene = self.specs.get("num_samp_per_scene", 4096)
+        self.val_batch_size = self.specs.get("val_batch_size", 2)
 
         self.sampling_method = self.specs.get("sampling_scene_method", "random_seed")
 
@@ -244,7 +243,21 @@ class SDFDataModule(pl.LightningDataModule):
 
             self.num_fit_scenes = len(self.sdf_train)
 
-        if stage in ["test", "predict"]:
+            self.num_samples_per_scene = self.sdf_train.num_samp_per_scene
+
+            sdf_dataset = SDFSamples( 
+                specs = self.specs,
+                stage="test"
+            ) 
+            sdf_dataset._read_data()
+
+            self.sdf_val = sdf_dataset
+
+            self.num_fit_scenes_val = len(self.sdf_val)
+
+            self.num_samples_per_scene_val = self.sdf_val.num_samp_per_scene
+
+        if stage in ["test"]:
             #TODO: add loading partial files like h5 option
             sdf_dataset = SDFSamples( 
                 specs = self.specs,
@@ -256,12 +269,14 @@ class SDFDataModule(pl.LightningDataModule):
 
             self.num_test_scenes = len(self.sdf_test)
 
+            self.num_samples_per_scene = self.sdf_test.num_samp_per_scene
+
     def train_dataloader(self):
         if self.sdf_train.balance_pos_neg:
             opt = f"Using balanced pos/neg scenes in training"
         else:
             opt=""
-        logger.info(f"TRAIN DATA LOADED: {len(self.sdf_train)} scenes." + opt)
+        print(f"TRAIN DATA LOADED: {len(self.sdf_train)} scenes. num_samp_per_scene = {self.num_samples_per_scene}. " + opt)
         return DataLoader(
             self.sdf_train,
             batch_size=self.batch_size,
@@ -271,13 +286,22 @@ class SDFDataModule(pl.LightningDataModule):
         )
 
     def test_dataloader(self):
-        logger.info(f"TEST DATA LOADED: {len(self.sdf_test)} scenes.")
+        print(f"TEST DATA LOADED: {len(self.sdf_test)} scenes. Default num_samp_per_scene = {self.num_samples_per_scene}.")
         return DataLoader(
             self.sdf_test,
             batch_size=1, # hard coded for now !!
             shuffle=False,
         )
 
+    def val_dataloader(self):
+        print(f"VALIDATION DATA LOADED: {len(self.sdf_val)} scenes. Default num_samp_per_scene = {self.num_samples_per_scene_val}.")
+        return DataLoader(
+            self.sdf_val,
+            batch_size=self.val_batch_size, 
+            shuffle=False, # I get always the same scene 
+            num_workers=0,
+            drop_last=True,
+        )
 
 
 
