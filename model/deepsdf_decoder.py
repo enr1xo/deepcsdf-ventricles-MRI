@@ -126,10 +126,12 @@ class Decoder(nn.Module):
         for layer in range(0, self.num_layers - 1): 
             in_dim = self.dims[layer]
 
-            if layer + 1 in self.latent_in:
-                if self.conditioning in ["concat_input", "concat_latent"]:
+            if layer + 1 in self.latent_in and layer + 1 != self.num_layers - 1: # never allow concat to last layer
+                if self.conditioning in ["concat_input"]:
                     # DeepSDF-style skip connection, the width of the network stays as it's been set in dims
                     out_dim_ = self.dims[layer + 1] - self.dims[0]
+                elif self.conditioning in ["concat_latent"]:
+                    out_dim_ = self.dims[layer + 1] - self.latent_size
             else:
                 out_dim_ = self.dims[layer + 1]
 
@@ -214,7 +216,12 @@ class Decoder(nn.Module):
             f = f + f"\n Using positional encoding of dimension {self.pos_enc_dim} on input."
 
         if self.latent_in != [-1]:
-            f = f + f"\n Shortcut connection of input to layer {self.latent_in[0]}"
+            if self.conditioning == "concat_input":
+                f = f + f"\n Concatenation of whole input to layer {self.latent_in[0]}."
+            elif self.conditioning == "concat_latent":
+                f = f + f"\n Concatenation of latent to layer {self.latent_in[0]}."
+            elif self.conditioning == "film":
+                f = f + f"\n FiLM modulations of latent to layer {self.latent_in[0]}."
 
         f = f + f"\n Using latent dimension {self.latent_size}."
 
