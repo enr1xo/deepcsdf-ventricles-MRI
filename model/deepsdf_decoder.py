@@ -237,7 +237,9 @@ class DeepSDF(pl.LightningModule):
         elif self.use_loss == "MSE":
             self.loss_fn = torch.nn.MSELoss(reduction="sum")
         elif self.use_loss == "SmoothL1":
-            self.loss_fn = torch.nn.SmoothL1Loss(reduction="sum") 
+            self.loss_fn = torch.nn.SmoothL1Loss(reduction="sum")
+        else:
+            raise ValueError(f"Specified loss function not recognized, expected 'L1' or 'MSE' or 'SmoothL1', got {self.use_loss}")
 
         self.use_lipreg_loss = self.decoder.use_lipschitz_normalized_layers
 
