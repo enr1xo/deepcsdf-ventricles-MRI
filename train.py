@@ -230,7 +230,7 @@ if __name__ == "__main__":
                         help="Becomes the directory name in which checkpoints and logs are saved, under version_x folder for each run."
     )
     parser.add_argument("--specs_file_path", "-s", type=str, default = "specs_deepsdfatria.json")
-    parser.add_argument("--train_mode", type=str, default="use_specs_file")
+    parser.add_argument("--train_mode", type=str, default="use_specs_file", choices=["use_specs_file", "compose_specs_from_override"])
     parser.add_argument("--override_specs", type=str, default=None)
     parser.add_argument("--num_workers_dataloader", type=int, default=0)
     parser.add_argument("--show_progress", action="store_true")
@@ -251,7 +251,7 @@ if __name__ == "__main__":
                 show_progress = args.show_progress
             )
 
-        case "compose_specs_from_options":
+        case "compose_specs_from_override":
 
             if args.experiment_name is not None:
                 EXPERIMENT_NAME = str(args.experiment_name)
