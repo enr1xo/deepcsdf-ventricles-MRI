@@ -78,7 +78,7 @@ class LipschitzNormLinear(nn.Linear):
 
     def lipschitz_bound(self): # this is so I can just get it when computing the loss in training
         return F.softplus(self.c)
-    
+
 class Decoder(nn.Module):
 
     def __init__(self, **specs): # unpacks given keyword args into specs dictionary, so I can use .get() and have default instead of errors if the key isn't there
@@ -94,7 +94,8 @@ class Decoder(nn.Module):
 
         self.latent_in = specs.get("latent_in", [-1])
 
-        self.actual_concatenation = specs.get("actual_skip_concatenation", False)
+        # define what happens at layers in latent_in: for now I concatenate the whole input again.
+        self.conditioning = specs.get("conditioning", "concat_input") # either concat_input, concat_latent or film, it is applied to layers specified in latent_in
         
         self.norm_layers = specs.get("norm_layers", [-1])
         
@@ -123,21 +124,33 @@ class Decoder(nn.Module):
 
         # .float() Converts all the parameters and buffers in that layer to double precision instead of default float32
         for layer in range(0, self.num_layers - 1): 
+            in_dim = self.dims[layer]
+
             if layer + 1 in self.latent_in:
-                if self.actual_concatenation:
-                    self.dims[layer + 1] += self.dims[0]
-                out_dim_ = self.dims[layer + 1] - self.dims[0] # if using positional encoding, this might be 0 if first layer becomes too big --> cannot use very large positional encoding !!!
+                if self.conditioning in ["concat_input", "concat_latent"]:
+                    # DeepSDF-style skip connection, the width of the network stays as it's been set in dims
+                    out_dim_ = self.dims[layer + 1] - self.dims[0]
             else:
                 out_dim_ = self.dims[layer + 1]
 
             if layer in self.norm_layers:
-                lin = nn.utils.weight_norm(nn.Linear(self.dims[layer], out_dim_)).float()
+                lin = nn.utils.weight_norm(nn.Linear(in_dim, out_dim_)).float()
             elif layer in self.lipschitz_layers and not self.use_lipschitz_normalized_layers:
-                lin = SpectralLinear(self.dims[layer], out_dim_).float()
+                lin = SpectralLinear(in_dim, out_dim_).float()
             elif self.use_lipschitz_normalized_layers:
-                lin = LipschitzNormLinear( self.dims[layer], out_dim_ ).float()
+                lin = LipschitzNormLinear(in_dim, out_dim_ ).float()
             else:
-                lin = nn.Linear(self.dims[layer], out_dim_).float()
+                lin = nn.Linear(in_dim, out_dim_).float()
+
+            if self.conditioning == "film" and (layer in self.latent_in):
+                gamma = nn.Linear(self.latent_size, out_dim_)
+                beta  = nn.Linear(self.latent_size, out_dim_)
+                nn.init.zeros_(gamma.weight)
+                nn.init.ones_(gamma.bias)
+                nn.init.zeros_(beta.weight)
+                nn.init.zeros_(beta.bias)
+                setattr(self, f"film_gamma{layer}", gamma)
+                setattr(self, f"film_beta{layer}", beta)
 
             setattr(self, f"lin{layer}", lin)
 
@@ -150,22 +163,32 @@ class Decoder(nn.Module):
         # - check dimensions requested can be build with wanted skip connection, + pos enc
 
     def forward(self, input_):
+        z = input_[:, :self.latent_size]
         x = input_
 
         for layer in range(0, self.num_layers - 1):
             lin = getattr(self, "lin" + str(layer))
+
             if layer in self.latent_in:
-                x = torch.cat([x, input_], 1) # concatenating whole input? not only latent code?
+                if self.conditioning == "concat_input": # concatenating whole input
+                    x = torch.cat([x, input_], 1) 
+                elif self.conditioning == "concat_latent": # concatenating only latent code
+                    x = torch.cat([x, z], 1)
+
             x = lin(x)
 
-            # last layer Tanh
+            if self.conditioning == "film" and layer in self.latent_in: # Multiplicative modulation of hidden features
+                gamma = getattr(self, f"film_gamma{layer}")(z)
+                beta  = getattr(self, f"film_beta{layer}")(z)
+                x = gamma * x + beta # film after linear layer, before activation function
+
             if layer < self.num_layers - 2:
-                if self.batch_norm:
-                    bn = getattr(self, "bn" + str(layer))
-                    x = bn(x)
+                # if self.batch_norm:
+                #     bn = getattr(self, "bn" + str(layer))
+                #     x = bn(x)
                 x = self.act(x)
-                if layer in self.dropout:
-                    x = F.dropout(x, p=self.dropout_prob, training=self.training)
+                # if layer in self.dropout:
+                #     x = F.dropout(x, p=self.dropout_prob, training=self.training)
 
         if self.last_tanh:
             x = torch.tanh(x)
