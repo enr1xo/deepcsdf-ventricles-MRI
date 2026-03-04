@@ -70,85 +70,85 @@ def save_latents_npz(experiment_name, version, which_shapes, code_reg_lambda, nu
     np.savez(output_path, **latent_codes)
 
 
-def find_pointcloud_noise(
-        decoder: Decoder,
-        model: DeepSDF,
-        xyz_gt,
-        sdf_gt,
-        num_epochs_fit_latent,
-        lr_fit_latent,
-        code_reg_lambda,
-        max_iter = 10
-    ):
-    """
-    Find noise of input point cloud as in ShapeOfMyHeart, to define regularization strength in reconstruction loss
-    """
+# def find_pointcloud_noise(
+#         decoder: Decoder,
+#         model: DeepSDF,
+#         xyz_gt,
+#         sdf_gt,
+#         num_epochs_fit_latent,
+#         lr_fit_latent,
+#         code_reg_lambda,
+#         max_iter = 10
+#     ):
+#     """
+#     Find noise of input point cloud as in ShapeOfMyHeart, to define regularization strength in reconstruction loss
+#     """
 
-    latent_size = decoder.latent_size
-    mean_code = torch.zeros(latent_size, device=DEVICE)  
-    latent = mean_code
+#     latent_size = decoder.latent_size
+#     mean_code = torch.zeros(latent_size, device=DEVICE)  
+#     latent = mean_code
 
-    latent.requires_grad = True
+#     latent.requires_grad = True
 
-    loss_fn = torch.nn.MSELoss(reduction="sum")
+#     loss_fn = torch.nn.MSELoss(reduction="sum")
 
-    num_epochs = num_epochs_fit_latent
+#     num_epochs = num_epochs_fit_latent
 
-    optimizer = torch.optim.Adam(params=[latent], lr=lr_fit_latent)
+#     optimizer = torch.optim.Adam(params=[latent], lr=lr_fit_latent)
     
-    num_samp_per_scene = sdf_gt.shape[0]
+#     num_samp_per_scene = sdf_gt.shape[0]
 
-    epsilon = 0.0
+#     epsilon = 0.0
 
-    epsilons = [epsilon]
+#     epsilons = [epsilon]
 
-    # find variance of the noise iteratively
-    for it in range(max_iter):
+#     # find variance of the noise iteratively
+#     for it in range(max_iter):
 
-        mean_code = torch.zeros(latent_size, device=DEVICE, requires_grad=True)
-        latent = mean_code
+#         mean_code = torch.zeros(latent_size, device=DEVICE, requires_grad=True)
+#         latent = mean_code
 
-        optimizer = torch.optim.Adam(params=[latent], lr=lr_fit_latent)
+#         optimizer = torch.optim.Adam(params=[latent], lr=lr_fit_latent)
 
-        # reconstruct
-        for i in range(num_epochs):
+#         # reconstruct
+#         for i in range(num_epochs):
             
-            decoder.eval()
+#             decoder.eval()
             
-            optimizer.zero_grad()
+#             optimizer.zero_grad()
 
-            batch_vecs = latent.expand(num_samp_per_scene, -1)
+#             batch_vecs = latent.expand(num_samp_per_scene, -1)
             
-            input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
+#             input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
 
-            sdf_pred = decoder(input_)
-            if model.enforce_minmax:
-                sdf_pred = torch.clamp(sdf_pred, min = -model.clamp_distance, max = model.clamp_distance)
+#             sdf_pred = decoder(input_)
+#             if model.enforce_minmax:
+#                 sdf_pred = torch.clamp(sdf_pred, min = -model.clamp_distance, max = model.clamp_distance)
         
-            # vanilla loss
-            reg_loss = torch.linalg.norm(latent) ** 2 
-            recon_loss = loss_fn(sdf_pred, sdf_gt) 
-            chunk_loss = recon_loss / num_samp_per_scene
+#             # vanilla loss
+#             reg_loss = torch.linalg.norm(latent) ** 2 
+#             recon_loss = loss_fn(sdf_pred, sdf_gt) 
+#             chunk_loss = recon_loss / num_samp_per_scene
 
-            loss = chunk_loss + 100 * epsilon * code_reg_lambda * reg_loss
+#             loss = chunk_loss + 100 * epsilon * code_reg_lambda * reg_loss
 
-            loss.backward()
+#             loss.backward()
 
-            optimizer.step()
+#             optimizer.step()
         
-            if i == num_epochs - 1: # last epoch
-                epsilon = np.sqrt( recon_loss.detach().item() / (num_samp_per_scene - 1) ) # detach or on the next epoch it is still attached to the computational graph, instead like this is just a scalar to be reused
-                epsilons.append(epsilon)
+#             if i == num_epochs - 1: # last epoch
+#                 epsilon = np.sqrt( recon_loss.detach().item() / (num_samp_per_scene - 1) ) # detach or on the next epoch it is still attached to the computational graph, instead like this is just a scalar to be reused
+#                 epsilons.append(epsilon)
 
-        # stopping criterion   ...
-        tol = 1e-7 
-        if abs(epsilons[-1]**2 - epsilons[-2]**2) < tol:
-            break
+#         # stopping criterion   ...
+#         tol = 1e-7 
+#         if abs(epsilons[-1]**2 - epsilons[-2]**2) < tol:
+#             break
     
-    # for i,ep in enumerate(epsilons):
-    #     print(f"eps_{i} = ", ep)
+#     # for i,ep in enumerate(epsilons):
+#     #     print(f"eps_{i} = ", ep)
 
-    return epsilons[-1]
+#     return epsilons[-1]
 
 
 # ======================== #
@@ -336,7 +336,7 @@ def run(
         
         code_reg_lambda = latent_reg_factor 
 
-        beta = 100 * find_pointcloud_noise(decoder, model, xyz, sdf_gt, code_reg_lambda=code_reg_lambda, num_epochs_fit_latent=250, lr_fit_latent=0.005)
+        # beta = 100 * find_pointcloud_noise(decoder, model, xyz, sdf_gt, code_reg_lambda=code_reg_lambda, num_epochs_fit_latent=250, lr_fit_latent=0.005)
 
         num_epochs = num_epochs_fit_latent
 
@@ -377,7 +377,7 @@ def run(
 
             chunk_loss = loss_fn(sdf_pred, sdf_gt) / (num_samp_per_scene * decoder.out_dim)
 
-            loss = chunk_loss + beta * code_reg_lambda * reg_loss
+            loss = chunk_loss + code_reg_lambda * reg_loss
 
             loss.backward()
 
@@ -697,8 +697,15 @@ if __name__ == "__main__":
     json_file = None
     if args.override_with_patients_list:
         # Build temporary json with the wanted patients, delete it at the end
-        # for now, I build by hand the file names I KNOW are in PATIENTS_NUMPY_DATA_DIR ... just to test this
-        names = [f"{p}-epi_la_ra_100000_coords_and_sdf.npy" for p in args.override_with_patients_list]
+        # I was doing names = [f"{p}-epi_la_ra_100000_coords_and_sdf.npy" for p in args.override_with_patients_list]
+
+        patients_npy_files = list( PATIENTS_NPY_DATA_DIR.glob("*.npy") )
+        names = []
+        for file in patients_npy_files: # patient files are always supposed to be <patient_name>-<...>.npy
+            patient_name = file.name.split("-")[0]
+            if patient_name in args.override_with_patients_list:
+                names.append(file.name)
+
         test_datafnames = "patients_list_temp.json"
         json_file = Path(f"data/{test_datafnames}")
         with json_file.open("w") as f:
