@@ -49,16 +49,16 @@ Then the script `train.py` can be executed combining optional features:
 - `--specs_file_path`, `-s` *(str)*  
   File name of the `.json` specs file defining training hyperparameters, network architecture, and data paths. This will be loaded constructing the full path prepending the `SPECS_FILES_DIR` path in `config.py`.
 
-<!-- - `--train_mode` *(str)*  
+- `--train_mode` *(str)*  
   Training mode selector (default: `use_specs_file`). If passed as `compose_specs_from_options` then overwrites fields in the original specs files with new ones  
 
-- `--override_specs` *(str)*  
-  Path to an alternative specs file. Overrides values defined in the default specs file. It can also just contain the specific fields to override, with the same names as in the original specs. -->
+- `--override_specs` *(str, "use_specs_file", "compose_specs_from_override)*  
+  Json style string, overrides values defined in the default specs file passed indicated with `--specs_file_path`. It can just contain some specific fields to override, with the same names as in the original specs.
 
 - `--show_progress`  
   Optionally display training progress bar.
 
-<!-- A folder `experiment` will be created as a directory under the `EXPERIMENTS_DIR` path specified in `config.py`. The training creates a `.pth` file storing the model weights, records the specs used in a `hparams.json` file, and records the trainer logs in an `events.out` type file readable with tensorboard. Each run with the same experiment name will be saved under `version_x` folders under the same experiment directory.  -->
+A folder under the specified experiment name will be created as a directory under the `EXPERIMENTS_DIR` path specified in `config.py`. The training creates a `.pth` file storing the model weights, records the specs used in a `hparams.json` file, and records the trainer logs in an `events.out` type file readable with tensorboard. Each run with the same experiment name will be saved under `version_x` folders under the same experiment directory automatically.
 
 
 ### Testing and Results
@@ -72,6 +72,9 @@ The script `test.py` can be executed with additional flags specifying the traine
 
 - `--override_with_test_dataset`, , `-od` *(str)*  
   path to `.json` file indicating which data file names of anatomies to process, overrides the one specified in specs `TestSplit`. This again is a file storing paths to `.npy` files storing coords and sdf for each anatomy.
+
+- `--override_with_patients_list`, , `-opl` *(str1, str2, ...)*  
+  sequence of one or more specific patient names to process. 
 
 - `--mode`, `-m` *(int, {1,2})*  
   `1`: fit latent codes to reconstruct surfaces, optionally visualize / compute metrics / save  
@@ -116,15 +119,20 @@ Then one can specify further inference options:
   
 This will process all the anatomies (patients) specified in the test split.
 
-**Example** : reconstruct and save surfaces, then save screenshot of plots off screen and computed chamfer distance values. All the latent inference parameters have defaults.
+**Example** : For patients AF057 and LEU_NORM_0194, fit latents by initializing them from trained empirical distribution and using mahalanobis loss for regularization, use defaults for the other inference parameters. Then reconstruct and save surfaces, save screenshot of plots off screen, compute chamfer and LDDMM distance values. Save also the fitted latent codes. 
 ```bash
 python test.py \
   --experiment_name deepsdf_atria_training \
-  --version version_114 \
+  --version version_0 \
   --mode 1 \
+  --override_with_patients_list AF057 LEU_NORM_0194 \
+  --init_latent_from "empirical" \
+  --use_mahalanobis_loss \
+  --save_latent_codes \
   --save_images \
   --save_reconstructed_meshes \
-  --compute_haussdorff
+  --compute_haussdorff \
+  --compute_lddmm
 ```
 
 <!-- Generally, test SDF sampling strategy and regularization could affect the quality of the test reconstructions. For example, sampling aggressively near the surface could provide accurate surface details but might leave under-sampled space unconstrained, and using high L2 regularization coefficient could result in perceptually better but quantitatively worse test reconstructions. -->
