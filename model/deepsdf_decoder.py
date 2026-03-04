@@ -46,6 +46,7 @@ act_fn = {
     "ReLU": nn.ReLU(), "Tanh" : nn.Tanh(), 
     "Softplus": nn.Softplus(), 
     "SiLU": nn.SiLU(),
+    "ELU": nn.ELU(),
     "GELU" : nn.GELU(), 
     "GELUApprox": nn.GELU(approximate="tanh")
 }
@@ -101,7 +102,7 @@ class Decoder(nn.Module):
         
         self.dropout = specs.get("dropout_layers", [-1])
 
-        self.activation = specs.get("activation", "ReLU")
+        self.activation = specs.get("activation", "SiLU")
 
         self.batch_norm = specs.get("batch_norm", False)
 
@@ -140,7 +141,7 @@ class Decoder(nn.Module):
 
             setattr(self, f"lin{layer}", lin)
 
-        self.act = act_fn.get(self.activation, "Softplus")
+        self.act = act_fn.get(self.activation)
 
         self.last_tanh = specs.get("last_tanh", False)
 
