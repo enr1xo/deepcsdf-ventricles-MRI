@@ -21,16 +21,16 @@ from model.deepsdf_dataloader import SDFDataModule
 from model.deepsdf_decoder import Decoder, DeepSDF 
 
 
-# =========== setup for H100 / A100 / L40S GPU =========== #
-torch.set_float32_matmul_precision("high")   # "medium" if instability (NaNs / loss spikes) appear, "high" is ignored by L40S
-PRECISION = "bf16-mixed"
-# next flags ignored by L40S
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
+# # =========== setup for H100 / A100 / L40S GPU =========== #
+# torch.set_float32_matmul_precision("high")   # "medium" if instability (NaNs / loss spikes) appear, "high" is ignored by L40S
+# PRECISION = "bf16-mixed"
+# # next flags ignored by L40S
+# torch.backends.cuda.matmul.allow_tf32 = True
+# torch.backends.cudnn.allow_tf32 = True
 
-# # =========== setup for RTX 3090 GPU =========== #
-# torch.set_float32_matmul_precision("medium") # "medium" if instability (NaNs / loss spikes) appear
-# PRECISION = "16-mixed"
+# =========== setup for RTX 3090 GPU =========== #
+torch.set_float32_matmul_precision("medium") # "medium" if instability (NaNs / loss spikes) appear
+PRECISION = "16-mixed"
 
 # # # =========== setup for GTX 1050 GPU =========== #
 # PRECISION = "32"
@@ -117,19 +117,119 @@ class SaveEmbeddingsCallback(pl.Callback):
         embeddings = pl_module.lat_vecs["trainable"].weight.data.cpu().numpy()
         np.save(npy_path, embeddings)
 
-# class FinalPlotCallback(pl.Callback):
-#     def on_train_end(self, trainer, pl_module):
-#         fig, ax = plt.subplots()
-#         ax.plot([1,2,3], [0.1, 0.2, 0.3])
-#         ax.set_title("Custom Plot")
-#         if trainer.logger is not None:
-#             trainer.logger.experiment.add_figure("Custom/ExamplePlot", fig, global_step=0)
+class MonitorLatentChannelsCallback(pl.Callback):
+    def __init__(self, log_every_n_epochs=2000):
+        super().__init__()
+        self.log_every_n_epochs = log_every_n_epochs
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        if self.log_every_n_epochs is not None:
+            epoch = trainer.current_epoch
+            if (epoch + 1) % self.log_every_n_epochs != 0:
+                return
+
+            decoder = pl_module.decoder
+            latent_size = decoder.latent_size
+
+            # ----- latent input channels weights
+            layer = getattr(decoder, f"lin0")
+            W = layer.weight   # assuming shape: (out_dim, latent_size + 3) (i.e. input is [code, xyz])
+
+            latent_weights = W[:, :latent_size].detach().cpu()
+            xyz_weights = W[:, latent_size:latent_size+3].detach().cpu()
+
+            norm_metrics = {
+                "latent_layer0_norm" : latent_weights.norm().item(),
+                "xyz_layer0_norm" : xyz_weights.norm().item(),
+                "layer0_norm_z_over_x_ratio" : latent_weights.norm().item() / xyz_weights.norm().item()
+            }
+
+            pl_module.log_dict(norm_metrics, logger=True, on_step=False, on_epoch=True)
+        return
+    
+class MonitorInputGradNormsCallback(pl.Callback):
+    def __init__(self, log_every_n_epochs=2000):
+        super().__init__()
+        self.log_every_n_epochs = log_every_n_epochs
+        if self.log_every_n_epochs is not None:
+            box_lim = 1.05
+            resolution = 64
+            x = np.linspace(-box_lim, box_lim, resolution)
+            y = np.linspace(-box_lim, box_lim, resolution)
+            z = np.linspace(-box_lim, box_lim, resolution)
+            xx, yy, zz = np.meshgrid(x, y, z)
+            xyz = np.c_[xx.ravel(), yy.ravel(), zz.ravel()]
+            self.xyz = torch.from_numpy(xyz).float()
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        if self.log_every_n_epochs is not None:
+            epoch = trainer.current_epoch
+            if (epoch + 1) % self.log_every_n_epochs != 0:
+                return
+
+            decoder = pl_module.decoder
+            device = next(decoder.parameters()).device
+
+            code = pl_module.lat_vecs["trainable"](torch.tensor([0], device=device))
+            xyz = self.xyz.to(device)
+
+            # ----- gradients norm
+            N = xyz.shape[0]
+            code_exp = code.repeat(N, 1)  # (N, latent_dim)
+
+            xyz.requires_grad_(True)
+            code_exp.requires_grad_(True)
+
+            # freeze decoder params
+            for p in decoder.parameters():
+                p.requires_grad_(False)
+
+            input_ = torch.cat([code_exp, xyz], dim=1)
+            prediction = decoder(input_)
+
+            grad_x, grad_z = torch.autograd.grad(
+                prediction,
+                [xyz, code_exp],
+                grad_outputs=torch.ones_like(prediction),
+                retain_graph=False,
+                create_graph=False,
+            )
+
+            grad_x_norm = grad_x.norm(dim=1).mean()
+            grad_z_norm = grad_z.norm() / N
+
+            grad_metrics = {
+                "grad_x": grad_x_norm.item(),
+                "grad_z": grad_z_norm.item(),
+                "grad_z_over_x_ratio": grad_z_norm.item() / (grad_x_norm.item() + 1e-12)
+            }
+
+            # unfreeze decoder params
+            for p in decoder.parameters():
+                p.requires_grad_(True)
+
+            pl_module.log_dict(grad_metrics, logger=True, on_step=False, on_epoch=True)
+        return
+
+
+
+
+
+
+
 
 
 # ============================== #
 # TRAINING
 # ============================== #
-def train(specs: dict, experiment_name, num_workers = 0, show_progress = False):
+def train(
+    specs: dict,
+    experiment_name,
+    num_workers = 0,
+    log_weights_norm_every_n_epochs = None,
+    log_grad_norms_every_n_epochs = None,
+    show_progress = False
+):
 
     # region LOAD DATA 
     datamodule = SDFDataModule(
@@ -153,8 +253,7 @@ def train(specs: dict, experiment_name, num_workers = 0, show_progress = False):
 
     model.set_embedding( num_scenes = NumScenes )
 
-    # region CHECKPOINTS and LOGS 
-
+    # region LOGS
     # experiment logger
     logger_tb = TensorBoardLogger(
         save_dir = EXPERIMENTS_DIR, # All experiment folders (named by name/version) will be created inside this directory.
@@ -177,20 +276,34 @@ def train(specs: dict, experiment_name, num_workers = 0, show_progress = False):
         else:
             raise ValueError(f"Found directory for checkpoints for wanted version: {load_version}, but contained no .ckpt files")  
 
-    checkpoint_callback = ModelCheckpoint(
-        dirpath=checkpoint_dir,
-        filename="epoch_{epoch}",
-        auto_insert_metric_name=False,
-        every_n_epochs= specs.get("checkpoint_every_n_epochs", 1000000),
-        save_top_k=-1,
-    )
+    # region CALLBACKS
+    callbacks = [
+            SaveDecoderCallback(),
+            SaveSpecsCallback(),
+            SaveEmbeddingsCallback()
+    ]
 
+    # callbacks.append(  ModelCheckpoint(
+    #         dirpath=checkpoint_dir,
+    #         filename="epoch_{epoch}",
+    #         auto_insert_metric_name=False,
+    #         every_n_epochs= specs.get("checkpoint_every_n_epochs", 1000000),
+    #         save_top_k=-1,
+    #   )
+    # )
+    
+    if log_weights_norm_every_n_epochs is not None:
+            callbacks.append( MonitorLatentChannelsCallback(log_every_n_epochs=log_weights_norm_every_n_epochs) )
+    if log_grad_norms_every_n_epochs is not None:
+            callbacks.append( MonitorInputGradNormsCallback(log_every_n_epochs=log_grad_norms_every_n_epochs) )
+    
     # region TRAIN
     NumEpochs = specs.get("NumEpochs", 5)
 
     logger_tb.log_hyperparams(specs)
 
     trainer = pl.Trainer(
+        # strategy=None,   # for VSC5, otherwise it sets ntasks and errors, ...
         accelerator="gpu",     
         devices=1,             
         max_epochs= NumEpochs, 
@@ -198,15 +311,10 @@ def train(specs: dict, experiment_name, num_workers = 0, show_progress = False):
         enable_model_summary=False,  
         enable_progress_bar=show_progress,
         log_every_n_steps=1,
-        check_val_every_n_epoch=model.log_val_every_n_epochs,  # run validation
+        check_val_every_n_epoch=model.log_val_every_n_epochs if model.log_val_every_n_epochs <= 0 else None,  # run validation
         logger=logger_tb,
         enable_checkpointing=True,
-        callbacks = [
-            SaveDecoderCallback(),
-            SaveSpecsCallback(),
-            SaveEmbeddingsCallback(),
-            checkpoint_callback
-        ]
+        callbacks = callbacks
     )
 
     tic = time()
@@ -233,8 +341,13 @@ if __name__ == "__main__":
     parser.add_argument("--train_mode", type=str, default="use_specs_file", choices=["use_specs_file", "compose_specs_from_override"])
     parser.add_argument("--override_specs", type=str, default=None)
     parser.add_argument("--num_workers_dataloader", type=int, default=0)
+    parser.add_argument("--log_weights_norm_every", type=int, default=None)
+    parser.add_argument("--log_grad_norms_every", type=int, default=None)
     parser.add_argument("--show_progress", action="store_true")
     args = parser.parse_args()
+
+    log_weights_norm_every_n_epochs = args.log_weights_norm_every
+    log_grad_norms_every_n_epochs = args.log_grad_norms_every
 
     match args.train_mode:
 
@@ -248,7 +361,9 @@ if __name__ == "__main__":
                 specs = json.load(open(specs_file)),
                 experiment_name = EXPERIMENT_NAME,
                 num_workers=args.num_workers_dataloader,
-                show_progress = args.show_progress
+                show_progress = args.show_progress,
+                log_weights_norm_every_n_epochs=log_weights_norm_every_n_epochs,
+                log_grad_norms_every_n_epochs=log_grad_norms_every_n_epochs
             )
 
         case "compose_specs_from_override":
@@ -271,7 +386,10 @@ if __name__ == "__main__":
                 specs = specs,
                 experiment_name=EXPERIMENT_NAME,
                 num_workers=args.num_workers_dataloader,
-                show_progress = args.show_progress )
+                show_progress = args.show_progress,
+                log_weights_norm_every_n_epochs=log_weights_norm_every_n_epochs,
+                log_grad_norms_every_n_epochs=log_grad_norms_every_n_epochs
+            )
 
     # this is to then be captured from a bash file and retrieve the version that has been trained to send myself an email
     print(f"TRAINING_DONE_VERSION={version}", flush=True)
