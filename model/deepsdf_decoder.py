@@ -132,6 +132,8 @@ class Decoder(nn.Module):
                     out_dim_ = self.dims[layer + 1] - self.dims[0]
                 elif self.conditioning in ["concat_latent"]:
                     out_dim_ = self.dims[layer + 1] - self.latent_size
+                else:
+                    out_dim_ = self.dims[layer + 1]
             else:
                 out_dim_ = self.dims[layer + 1]
 
