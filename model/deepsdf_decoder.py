@@ -206,22 +206,22 @@ class Decoder(nn.Module):
             lin = getattr(self, f"lin{layer}")
             f += f"\n  layer {layer}:  {lin.__class__.__name__}, shape {lin.weight.shape[0], lin.weight.shape[1]}"
 
-        # if self.lipschitz_layers != [-1]:
-        #     f = f + f"\n Using Lipschitz constrained linear layers in {[i+1 for i in self.lipschitz_layers]}"
+        if self.lipschitz_layers != [-1]:
+            f = f + f"\n Using Lipschitz constrained linear layers in {[i+1 for i in self.lipschitz_layers]}"
 
-        # if self.use_lipschitz_normalized_layers:
-        #     f = f + f"\n Using Lipschitz normalized linear layers"
+        if self.use_lipschitz_normalized_layers:
+            f = f + f"\n Using Lipschitz normalized linear layers"
 
         if self.use_positional_encoding:
             f = f + f"\n Using positional encoding of dimension {self.pos_enc_dim} on input."
 
         if self.latent_in != [-1]:
             if self.conditioning == "concat_input":
-                f = f + f"\n Concatenation of whole input to layer {self.latent_in[0]}."
+                f = f + f"\n Concatenation of whole input to layer(s) {self.latent_in}."
             elif self.conditioning == "concat_latent":
-                f = f + f"\n Concatenation of latent to layer {self.latent_in[0]}."
+                f = f + f"\n Concatenation of latent to layer(s) {self.latent_in}."
             elif self.conditioning == "film":
-                f = f + f"\n FiLM modulations of latent to layer {self.latent_in[0]}."
+                f = f + f"\n FiLM modulations of latent to layer(s) {self.latent_in}."
 
         f = f + f"\n Using latent dimension {self.latent_size}."
 
@@ -445,171 +445,149 @@ class DeepSDF(pl.LightningModule):
 
         return training_loss
 
-    def validation_step(self, batch, batch_idx):
+    # def validation_step(self, batch, batch_idx):
 
-        data = batch[0]
+    #     data = batch[0]
 
-        batch_size = data["coords"].shape[0]  # batch size
-        num_samp_per_scene = data["coords"].shape[1]  # points per scene
+    #     batch_size = data["coords"].shape[0]  # batch size
+    #     num_samp_per_scene = data["coords"].shape[1]  # points per scene
 
-        xyz_gt = data["coords"].to(self.device)
-        sdf_gt = data["sdf"].to(self.device)
+    #     xyz_gt = data["coords"].to(self.device)
+    #     sdf_gt = data["sdf"].to(self.device)
 
-        xyz_gt = xyz_gt.reshape(-1, 3) * self.Cs
-        sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim)
-        if self.enforce_minmax:
-            sdf_gt = torch.clamp(sdf_gt, min=-self.clamp_distance, max=self.clamp_distance)
+    #     xyz_gt = xyz_gt.reshape(-1, 3) * self.Cs
+    #     sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim)
+    #     if self.enforce_minmax:
+    #         sdf_gt = torch.clamp(sdf_gt, min=-self.clamp_distance, max=self.clamp_distance)
 
-        num_sdf_samples = sdf_gt.shape[0]
+    #     num_sdf_samples = sdf_gt.shape[0]
 
-        xyz_gt.requires_grad = False
-        sdf_gt.requires_grad = False
+    #     xyz_gt.requires_grad = False
+    #     sdf_gt.requires_grad = False
 
-        # starting point for optimization: zero
-        # I could also save initial vectors when training and start with empirical mean and covariance,
-        # sampling a latent using MultivariateNormal and rsample()
-        # TODO: add option to start from somewhere else (from mean of loaded latents, random sample, ...)
+    #     # starting point for optimization: zero
+    #     # I could also save initial vectors when training and start with empirical mean and covariance,
+    #     # sampling a latent using MultivariateNormal and rsample()
+    #     # TODO: add option to start from somewhere else (from mean of loaded latents, random sample, ...)
 
-        latents = torch.zeros(batch_size, self.latent_size, device=self.device, requires_grad=True)
+    #     latents = torch.zeros(batch_size, self.latent_size, device=self.device, requires_grad=True)
             
-        optimizer = torch.optim.Adam(params=[latents], lr=0.005)
+    #     optimizer = torch.optim.Adam(params=[latents], lr=0.005)
         
-        # ==================================================== #
-        # region fit latent
-        # ==================================================== #
-        with torch.enable_grad(): # I want them during validation, they are disabled automatically
+    #     # ==================================================== #
+    #     # region fit latent
+    #     # ==================================================== #
+    #     with torch.enable_grad(): # I want them during validation, they are disabled automatically
             
-            for i in range(250):
+    #         for i in range(250):
                 
-                self.decoder.eval()
+    #             self.decoder.eval()
                 
-                optimizer.zero_grad()
+    #             optimizer.zero_grad()
 
-                batch_vecs = latents.unsqueeze(1).expand(batch_size, num_samp_per_scene, self.latent_size).reshape(batch_size*num_samp_per_scene, self.latent_size)
-                input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
+    #             batch_vecs = latents.unsqueeze(1).expand(batch_size, num_samp_per_scene, self.latent_size).reshape(batch_size*num_samp_per_scene, self.latent_size)
+    #             input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
 
-                sdf_pred = self.decoder(input_)
-                if self.enforce_minmax:
-                    sdf_pred = torch.clamp(sdf_pred, min = -self.clamp_distance, max=self.clamp_distance)
+    #             sdf_pred = self.decoder(input_)
+    #             if self.enforce_minmax:
+    #                 sdf_pred = torch.clamp(sdf_pred, min = -self.clamp_distance, max=self.clamp_distance)
                     
-                # mahalanobis to train codes distribution
+    #             # mahalanobis to train codes distribution
 
-                # vanilla loss : same loss as in training
-                reg_loss = torch.sum(latents ** 2, dim=1).mean() 
+    #             # vanilla loss : same loss as in training
+    #             reg_loss = torch.sum(latents ** 2, dim=1).mean() 
 
-                chunk_loss = self.loss_fn(sdf_pred, sdf_gt) / (num_sdf_samples *  self.decoder.out_dim)
+    #             chunk_loss = self.loss_fn(sdf_pred, sdf_gt) / (num_sdf_samples *  self.decoder.out_dim)
 
-                loss = chunk_loss + self.code_reg_lambda * reg_loss
+    #             loss = chunk_loss + self.code_reg_lambda * reg_loss
 
-                loss.backward()
+    #             loss.backward()
 
-                optimizer.step()
+    #             optimizer.step()
 
-        regression_loss = chunk_loss
+    #     regression_loss = chunk_loss
 
-        # # ==================================================== #
-        # # region reconstruct surface from predicted sdf
-        # # ==================================================== #
-        # latent.requires_grad = False    
-        # resolution = 128
-        # box_lim = self.Cs * 1.05
+    #     # # ==================================================== #
+    #     # # region reconstruct surface from predicted sdf
+    #     # # ==================================================== #
+    #     # latent.requires_grad = False    
+    #     # resolution = 128
+    #     # box_lim = self.Cs * 1.05
 
-        # with torch.no_grad():
+    #     # with torch.no_grad():
             
-        #     self.decoder.eval()
+    #     #     self.decoder.eval()
 
-        #     #region SDF ON GRID FOR RECONSTRUCTION
-        #     x = np.linspace(-box_lim, box_lim, resolution)
-        #     y = np.linspace(-box_lim, box_lim, resolution)
-        #     z = np.linspace(-box_lim, box_lim, resolution)
-        #     xx, yy, zz = np.meshgrid(x, y, z)
+    #     #     #region SDF ON GRID FOR RECONSTRUCTION
+    #     #     x = np.linspace(-box_lim, box_lim, resolution)
+    #     #     y = np.linspace(-box_lim, box_lim, resolution)
+    #     #     z = np.linspace(-box_lim, box_lim, resolution)
+    #     #     xx, yy, zz = np.meshgrid(x, y, z)
 
-        #     grid = np.c_[xx.ravel(), yy.ravel(), zz.ravel()]
-        #     xyz_raw = grid
+    #     #     grid = np.c_[xx.ravel(), yy.ravel(), zz.ravel()]
+    #     #     xyz_raw = grid
 
-        #     n_points = 500000
-        #     n_batches = len(xyz_raw) // n_points
+    #     #     n_points = 500000
+    #     #     n_batches = len(xyz_raw) // n_points
 
-        #     sdf_preds = []
+    #     #     sdf_preds = []
 
-        #     for i in range(n_batches + 1):
-        #         if i < n_batches:
-        #             xyz = torch.from_numpy(xyz_raw[n_points * i : n_points * (i + 1)]).to(self.device)
-        #         else:
-        #             xyz = torch.from_numpy(xyz_raw[n_points * i :]).to(self.device)
+    #     #     for i in range(n_batches + 1):
+    #     #         if i < n_batches:
+    #     #             xyz = torch.from_numpy(xyz_raw[n_points * i : n_points * (i + 1)]).to(self.device)
+    #     #         else:
+    #     #             xyz = torch.from_numpy(xyz_raw[n_points * i :]).to(self.device)
 
-        #         batch_vecs = latent.expand(xyz.shape[0], -1)
+    #     #         batch_vecs = latent.expand(xyz.shape[0], -1)
 
-        #         input_ = torch.cat([batch_vecs, xyz], dim=1)
+    #     #         input_ = torch.cat([batch_vecs, xyz], dim=1)
 
-        #         sdf_pred_batch = self.decoder(input_.to(torch.float32)).cpu().data.numpy() 
+    #     #         sdf_pred_batch = self.decoder(input_.to(torch.float32)).cpu().data.numpy() 
 
-        #         sdf_preds.append(sdf_pred_batch)
+    #     #         sdf_preds.append(sdf_pred_batch)
             
-        # sdf_pred = np.concatenate(sdf_preds, axis=0)
+    #     # sdf_pred = np.concatenate(sdf_preds, axis=0)
 
-        # # ==================================================== #
-        # # region compute some metric to track
-        # # ==================================================== #
+    #     # # ==================================================== #
+    #     # # region compute some metric to track
+    #     # # ==================================================== #
 
-        # sdfs_pred = {
-        #     "epicardium": sdf_pred[:, 0],
-        #     "la_endo": sdf_pred[:, 1],
-        #     "ra_endo": sdf_pred[:, 2]
-        # }
+    #     # sdfs_pred = {
+    #     #     "epicardium": sdf_pred[:, 0],
+    #     #     "la_endo": sdf_pred[:, 1],
+    #     #     "ra_endo": sdf_pred[:, 2]
+    #     # }
 
-        # organs_to_process = ["epicardium", "la_endo", "ra_endo"]
+    #     # organs_to_process = ["epicardium", "la_endo", "ra_endo"]
 
-        # for i,organ in enumerate(organs_to_process):
+    #     # for i,organ in enumerate(organs_to_process):
 
-        #     threshold = 0.0 
+    #     #     threshold = 0.0 
                                     
-        #     try:
-        #         mesh_reconstructed = isosurface_from_sdf( x, y, z, sdf_pred=sdfs_pred[organ], level = threshold, box_lim = box_lim )
-        #     except:
-        #         logger.warning( f"Version {version}: skipping {organ} isosurface extraction: not found for current isovalue")
-        #         if i == len(organs_to_process)-1:
-        #             return
-        #         else:
-        #             continue
+    #     #     try:
+    #     #         mesh_reconstructed = isosurface_from_sdf( x, y, z, sdf_pred=sdfs_pred[organ], level = threshold, box_lim = box_lim )
+    #     #     except:
+    #     #         logger.warning( f"Version {version}: skipping {organ} isosurface extraction: not found for current isovalue")
+    #     #         if i == len(organs_to_process)-1:
+    #     #             return
+    #     #         else:
+    #     #             continue
 
-        self.log_dict(
-            {
-                "sdf_regression_loss_on_test_shapes": regression_loss.detach().cpu()
-            },
-            logger=True,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=False
-        )
+    #     self.log_dict(
+    #         {
+    #             "sdf_regression_loss_on_test_shapes": regression_loss.detach().cpu()
+    #         },
+    #         logger=True,
+    #         on_step=False,
+    #         on_epoch=True,
+    #         prog_bar=False
+    #     )
 
-        return loss
+    #     return loss
 
 
 
 
 if __name__ == "__main__":
-
-    specs = {
-        "latent_size" : 64,
-        "out_dim" : 3,
-        "dims" : [256,256,256,256,256],
-        "latent_in" : [3],
-        "actual_skip_concatenation" : True,
-        "positional_encoding" : False,
-        "pos_enc_dim" : 4,   
-        "lipschitz_layers" : [-1],
-        "use_lipschitz_normalized_layers" : False,
-        "activation" : "SiLU",
-        "last_tanh" : False,
-        "norm_layers" : [-1],
-        "batch_norm" : False,
-        "dropout_prob" : 0.2,
-        "dropout_layers" : [-1]       
-    }
-
-    decoder = Decoder(**specs)
-
-    print(decoder.description())
 
     pass
