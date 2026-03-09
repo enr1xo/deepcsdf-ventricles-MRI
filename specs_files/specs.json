@@ -5,6 +5,8 @@
 
     "TestSplit": "test/data_fnames_test.json",
 
+    "ValSplit": "val/data_fnames_val_5patients.json",
+
     "Network_specs": {
         "latent_size": 64,
         "out_dim": 3,
@@ -14,7 +16,7 @@
         "positional_encoding": false,
         "pos_enc_dim": 4,
         "lipschitz_layers": [-1],
-        "use_lipschitz_normalized_layers": false,
+        "use_lipschitz_normalized_layers": true,
         "activation": "SiLU",
         "last_tanh": false,
         "norm_layers": [-1],
@@ -23,7 +25,7 @@
         "dropout_layers": [-1]
     },
 
-    "NumEpochs": 50000,
+    "NumEpochs": 1000,
     "lr_weights": 0.001,
     "lr_latents": 0.005,
     "num_samp_per_scene": 4096,
@@ -34,17 +36,21 @@
     "enforce_minmax": true,
     "clamp_distance": 0.1,
     "use_loss": "SmoothL1",
-    "lipschitz_alpha": 1e-06,
-    "code_reg_lambda": 1e-04,
+    "lipschitz_alpha": 1e-07,
+    "code_reg_lambda": 1e-06,
     "anneal_reg_loss": true,
     "code_reg_anneal_warmup_epochs": 2500,
     "use_lr_scheduler": true,
     "lr_weights_final": 0.0001,
     "lr_latents_final": 0.0005,
     "lr_decay_time_max": 40000,
+
+    "val_batch_size": 5,
+    "NumEpochsFit": 500,
+    "w_post": 1e-04,
+
     "log_every_n_epochs": 100,
-    "log_val_every_n_epochs": 100000000,
-    "val_batch_size": 23,
-    "checkpoint_every_n_epochs": 20000,
+    "log_val_every_n_epochs": 100,
+    "checkpoint_every_n_epochs": 2000000,
     "resume_training_from_version": "-"
 }
