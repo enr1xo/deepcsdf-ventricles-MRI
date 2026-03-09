@@ -11,36 +11,6 @@ from pathlib import Path
 from deel.torchlip.modules.linear import SpectralLinear
 import numpy as np
 
-# # ---- to reconstruct surface for validation ---- #
-# from skimage import measure
-# import pyvista as pv
-
-# def isosurface_from_sdf(x, y, z, sdf_pred, level, box_lim = 105):
-    
-#     D = sdf_pred.reshape((len(x), len(y), len(z)))
-
-#     D = np.transpose(D, (1, 0, 2))
-
-#     # Run marching cubes
-#     verts, faces, normals, values = measure.marching_cubes(
-#         D,
-#         level=level,
-#         spacing=(x[1] - x[0], y[1] - y[0], z[1] - z[0])
-#     )
-
-#     # Adjust vertices
-#     # my volume is in [-105,105] cube but marching cubes assumes a vertex is in (0,0,0), so I need to traslate it back to my real coordinates
-#     verts = verts - box_lim  
-
-#     # Convert faces for PyVista
-#     faces_pv = np.hstack([np.full((faces.shape[0], 1), 3), faces]).astype(np.int32)
-
-#     # Create PyVista mesh
-#     mesh = pv.PolyData(verts, faces_pv)
-
-#     return mesh
-
-
 
 act_fn = {
     "ReLU": nn.ReLU(), "Tanh" : nn.Tanh(), 
@@ -256,7 +226,11 @@ class DeepSDF(pl.LightningModule):
 
         self.lat_vecs = {"trainable": nn.Embedding}
 
-        self.code_reg_lambda = specs.get("code_reg_lambda", 1e-4)
+        self.w_prior = specs.get("code_reg_lambda", 1e-4)
+
+        self.w_post = specs.get("w_post", self.w_prior)
+
+        self.num_epochs_fit = specs.get("NumEpochsFit", 1000)
 
         self.anneal_reg_loss = specs.get("anneal_reg_loss", False)
 
@@ -281,7 +255,7 @@ class DeepSDF(pl.LightningModule):
 
         self.clamp_distance = specs.get("clamp_distance", 0.1)
 
-        self.Cs = specs.get("scale_spatial_inputs_by", 100)
+        self.Cs = specs.get("scale_spatial_inputs_by", 1.0)
 
         self.log_every_n_epochs = specs.get("log_every_n_epochs", 1000)
 
@@ -358,7 +332,7 @@ class DeepSDF(pl.LightningModule):
     def anneal_latent_reg(self):
         if "trainable" in self.lat_vecs.keys():
             # linear annealing for now self.current_epoch, self.anneal_warmup_epochs
-            return self.code_reg_lambda * min(  self.current_epoch /  self.anneal_warmup_epochs, 1.0 )   
+            return self.w_prior * min(  self.current_epoch /  self.anneal_warmup_epochs, 1.0 )   
 
     def on_fit_start(self):
         # move manually latents on the device to be sure it's on the same device as data when fitting the model
@@ -407,9 +381,9 @@ class DeepSDF(pl.LightningModule):
         reg_loss = torch.mean( torch.linalg.norm(latents, dim=1) ** 2 )
 
         if self.anneal_reg_loss: # self.global_step is the total optimizer steps so far (across all epochs), self.current_epoch is the actual epoch
-            code_reg_lambda = self.anneal_latent_reg()
+            w_prior = self.anneal_latent_reg()
         else:
-            code_reg_lambda =  self.code_reg_lambda
+            w_prior =  self.w_prior
 
         lipschitz_loss = 0.0
         if self.use_lipreg_loss:
@@ -419,7 +393,7 @@ class DeepSDF(pl.LightningModule):
                 lipschitz_loss += torch.log( softplus_ci ) 
             lipschitz_loss = torch.exp(lipschitz_loss)
 
-        training_loss = chunk_loss + code_reg_lambda * reg_loss + self.lipschitz_alpha * lipschitz_loss
+        training_loss = chunk_loss + w_prior * reg_loss + self.lipschitz_alpha * lipschitz_loss
 
 
         if self.logger is not None and (self.current_epoch + 1) % self.log_every_n_epochs == 0:
@@ -435,7 +409,7 @@ class DeepSDF(pl.LightningModule):
                     "lipschitz_penalty": lipschitz_loss.detach().cpu() if self.use_lipreg_loss else torch.tensor(0.0, device="cpu"),
                     "prediction_loss": chunk_loss.detach().cpu(),
                     "training_loss" : training_loss.detach().cpu(),
-                    "code_reg_factor" : code_reg_lambda,
+                    "code_reg_factor" : w_prior,
                     # "lr_weights" : lr_weights,
                     # "lr_latents" : lr_latents
                 },
@@ -447,145 +421,100 @@ class DeepSDF(pl.LightningModule):
 
         return training_loss
 
-    # def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, batch_idx):
 
-    #     data = batch[0]
+        data = batch[0]
 
-    #     batch_size = data["coords"].shape[0]  # batch size
-    #     num_samp_per_scene = data["coords"].shape[1]  # points per scene
+        batch_size = data["coords"].shape[0]  # batch size
+        num_samp_per_scene = data["coords"].shape[1]  # points per scene
 
-    #     xyz_gt = data["coords"].to(self.device)
-    #     sdf_gt = data["sdf"].to(self.device)
+        xyz_gt = data["coords"].to(self.device)
+        sdf_gt = data["sdf"].to(self.device)
 
-    #     xyz_gt = xyz_gt.reshape(-1, 3) * self.Cs
-    #     sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim)
-    #     if self.enforce_minmax:
-    #         sdf_gt = torch.clamp(sdf_gt, min=-self.clamp_distance, max=self.clamp_distance)
+        xyz_gt = xyz_gt.reshape(-1, 3) * self.Cs
+        sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim)
+        if self.enforce_minmax:
+            sdf_gt = torch.clamp(sdf_gt, min=-self.clamp_distance, max=self.clamp_distance)
 
-    #     num_sdf_samples = sdf_gt.shape[0]
+        num_sdf_samples = sdf_gt.shape[0]
 
-    #     xyz_gt.requires_grad = False
-    #     sdf_gt.requires_grad = False
-
-    #     # starting point for optimization: zero
-    #     # I could also save initial vectors when training and start with empirical mean and covariance,
-    #     # sampling a latent using MultivariateNormal and rsample()
-    #     # TODO: add option to start from somewhere else (from mean of loaded latents, random sample, ...)
-
-    #     latents = torch.zeros(batch_size, self.latent_size, device=self.device, requires_grad=True)
-            
-    #     optimizer = torch.optim.Adam(params=[latents], lr=0.005)
+        xyz_gt.requires_grad = False
+        sdf_gt.requires_grad = False
         
-    #     # ==================================================== #
-    #     # region fit latent
-    #     # ==================================================== #
-    #     with torch.enable_grad(): # I want them during validation, they are disabled automatically
-            
-    #         for i in range(250):
-                
-    #             self.decoder.eval()
-                
-    #             optimizer.zero_grad()
+        # latents_fit = torch.zeros(batch_size, self.latent_size, device=self.device, requires_grad=True) # initialize from zero for simplicity
+        
+        # get empirical mean and covariance
+        indices = torch.arange(0, self.num_scenes, device=self.lat_vecs["trainable"].weight.device)
+        trained_latents = self.lat_vecs["trainable"](indices)  # shape: [num_scenes, latent_size]
+        mean_code = torch.mean(trained_latents, axis=0)
+        cov = torch.cov(trained_latents.T)
+        cov = cov.to(dtype=torch.float32) # otherwise inverse is not supported in float16
+        cov += 1e-7 * torch.eye(self.latent_size, device=cov.device, dtype=torch.float32)
+        cov_inv = torch.linalg.inv(cov)
 
-    #             batch_vecs = latents.unsqueeze(1).expand(batch_size, num_samp_per_scene, self.latent_size).reshape(batch_size*num_samp_per_scene, self.latent_size)
-    #             input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
+        latents_fit = mean_code.unsqueeze(0).expand(batch_size, -1).clone().detach()
+        latents_fit.requires_grad_(True)
 
-    #             sdf_pred = self.decoder(input_)
-    #             if self.enforce_minmax:
-    #                 sdf_pred = torch.clamp(sdf_pred, min = -self.clamp_distance, max=self.clamp_distance)
+        optim_latents = torch.optim.Adam(params=[latents_fit], lr=0.005)
+
+        # ==================================================== #
+        # region fit latent
+        # ==================================================== #
+        with torch.enable_grad(): # I want them during validation (for latents), they are disabled automatically
+
+            # freeze decoder params to avoid storing unnecessary gradients
+            for p in self.decoder.parameters():
+                p.requires_grad_(False)
+
+            self.decoder.eval()
+
+            for _ in range(self.num_epochs_fit):
+                                
+                optim_latents.zero_grad()
+
+                batch_vecs = latents_fit.unsqueeze(1).expand(batch_size, num_samp_per_scene, self.latent_size).reshape(batch_size*num_samp_per_scene, self.latent_size)
+                input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
+
+                sdf_pred = self.decoder(input_)
+                if self.enforce_minmax:
+                    sdf_pred = torch.clamp(sdf_pred, min = -self.clamp_distance, max=self.clamp_distance)
                     
-    #             # mahalanobis to train codes distribution
+                # mahalanobis to train codes distribution
+                diff = latents_fit - mean_code  # [batch_size, latent_size]
+                # output: [batch_size] distances
+                mahalanobis = torch.sum(diff @ cov_inv * diff, dim=1)
+                # mean over batch for loss
+                reg_loss = torch.mean(mahalanobis)
 
-    #             # vanilla loss : same loss as in training
-    #             reg_loss = torch.sum(latents ** 2, dim=1).mean() 
+                # # vanilla loss : same loss as in training
+                # reg_loss = torch.sum(latents ** 2, dim=1).mean() 
 
-    #             chunk_loss = self.loss_fn(sdf_pred, sdf_gt) / (num_sdf_samples *  self.decoder.out_dim)
+                chunk_loss = self.loss_fn(sdf_pred, sdf_gt) / (num_sdf_samples *  self.decoder.out_dim)
 
-    #             loss = chunk_loss + self.code_reg_lambda * reg_loss
+                loss = chunk_loss + self.w_post * reg_loss
 
-    #             loss.backward()
+                loss.backward()
 
-    #             optimizer.step()
+                optim_latents.step()
 
-    #     regression_loss = chunk_loss
+        regression_loss = chunk_loss
 
-    #     # # ==================================================== #
-    #     # # region reconstruct surface from predicted sdf
-    #     # # ==================================================== #
-    #     # latent.requires_grad = False    
-    #     # resolution = 128
-    #     # box_lim = self.Cs * 1.05
+        # unfreeze decoder params !!
+        for p in self.decoder.parameters():
+            p.requires_grad_(True)
 
-    #     # with torch.no_grad():
-            
-    #     #     self.decoder.eval()
+        self.log_dict(
+            {
+                "sdf_regression_loss_on_test_shapes": regression_loss.detach().cpu(),
+                "test_latents_mahalanobis_loss": reg_loss.detach().cpu()
+            },
+            logger=True,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False
+        )
 
-    #     #     #region SDF ON GRID FOR RECONSTRUCTION
-    #     #     x = np.linspace(-box_lim, box_lim, resolution)
-    #     #     y = np.linspace(-box_lim, box_lim, resolution)
-    #     #     z = np.linspace(-box_lim, box_lim, resolution)
-    #     #     xx, yy, zz = np.meshgrid(x, y, z)
-
-    #     #     grid = np.c_[xx.ravel(), yy.ravel(), zz.ravel()]
-    #     #     xyz_raw = grid
-
-    #     #     n_points = 500000
-    #     #     n_batches = len(xyz_raw) // n_points
-
-    #     #     sdf_preds = []
-
-    #     #     for i in range(n_batches + 1):
-    #     #         if i < n_batches:
-    #     #             xyz = torch.from_numpy(xyz_raw[n_points * i : n_points * (i + 1)]).to(self.device)
-    #     #         else:
-    #     #             xyz = torch.from_numpy(xyz_raw[n_points * i :]).to(self.device)
-
-    #     #         batch_vecs = latent.expand(xyz.shape[0], -1)
-
-    #     #         input_ = torch.cat([batch_vecs, xyz], dim=1)
-
-    #     #         sdf_pred_batch = self.decoder(input_.to(torch.float32)).cpu().data.numpy() 
-
-    #     #         sdf_preds.append(sdf_pred_batch)
-            
-    #     # sdf_pred = np.concatenate(sdf_preds, axis=0)
-
-    #     # # ==================================================== #
-    #     # # region compute some metric to track
-    #     # # ==================================================== #
-
-    #     # sdfs_pred = {
-    #     #     "epicardium": sdf_pred[:, 0],
-    #     #     "la_endo": sdf_pred[:, 1],
-    #     #     "ra_endo": sdf_pred[:, 2]
-    #     # }
-
-    #     # organs_to_process = ["epicardium", "la_endo", "ra_endo"]
-
-    #     # for i,organ in enumerate(organs_to_process):
-
-    #     #     threshold = 0.0 
-                                    
-    #     #     try:
-    #     #         mesh_reconstructed = isosurface_from_sdf( x, y, z, sdf_pred=sdfs_pred[organ], level = threshold, box_lim = box_lim )
-    #     #     except:
-    #     #         logger.warning( f"Version {version}: skipping {organ} isosurface extraction: not found for current isovalue")
-    #     #         if i == len(organs_to_process)-1:
-    #     #             return
-    #     #         else:
-    #     #             continue
-
-    #     self.log_dict(
-    #         {
-    #             "sdf_regression_loss_on_test_shapes": regression_loss.detach().cpu()
-    #         },
-    #         logger=True,
-    #         on_step=False,
-    #         on_epoch=True,
-    #         prog_bar=False
-    #     )
-
-    #     return loss
+        return loss
 
 
 
