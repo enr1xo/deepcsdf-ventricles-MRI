@@ -2,6 +2,8 @@ import pyvista as pv
 import numpy as np
 import json
 import matplotlib.pyplot as plt
+import matplotlib.colors as mplcolors
+import matplotlib.cm as mplcm
 from matplotlib.lines import Line2D
 from vtkmodules.vtkFiltersCore import vtkImplicitPolyDataDistance
 from tensorboard.backend.event_processing import event_accumulator # to read from events.out files created during training by Tensorboard logger
@@ -140,38 +142,37 @@ def get_legend_label(log_dir):
 
     specs = json.load( open( next( Path(log_dir).glob("hparams.json"), None) ) )
 
-    match exp_name:
+    if exp_name in {
+        "LipAlphaAndCodeReg",
+        "LipAlphaCodeRegAndLatentSize16",
+        "LipAlphaCodeRegAndLatentSize32",
+        "LipAlphaCodeRegAndLatentSize64"
+    }:
 
-        case "LipAlphaAndCodeReg":
-            alpha = specs["lipschitz_alpha"]
-            lamb = specs["code_reg_lambda"]
-            label = rf"$\alpha = {alpha:.0e}, \lambda = {lamb:.0e}$"  # .0e} → scientific notation with no decimal places
+        alpha = specs["lipschitz_alpha"]
+        lamb = specs["code_reg_lambda"]
+        #label = r"$\lambda_{lip}$" + f" = {alpha:.0e},  " + r"$\lambda_{prior}$" + f" = {lamb:.0e}"  # .0e} → scientific notation with no decimal places
+        label = (
+            rf"$\lambda_{{lip}} = {alpha:.0e}$" "\n"
+            rf"$\lambda_{{prior}} = {lamb:.0e}$"
+        )
+    elif exp_name == "LipLayersAndCodeReg":
+        lip = specs["Network_specs"]["lipschitz_layers"]
+        lamb = specs["code_reg_lambda"]
+        label = f"Spectral = {lip} " + rf"$\lambda = {lamb:.0e}$" 
 
-        case "LipLayersAndCodeReg":
-            lip = specs["Network_specs"]["lipschitz_layers"]
-            lamb = specs["code_reg_lambda"]
-            label = f"Spectral = {lip} " + rf"$\lambda = {lamb:.0e}$" 
+    elif exp_name == "SpectralLaysAndAct":
+        lip = specs["Network_specs"]["lipschitz_layers"]
+        act = specs["Network_specs"]["activation"]
+        label = f"Spectral = {lip}, {act}" 
 
-        case "SpectralLaysAndAct":
-            lip = specs["Network_specs"]["lipschitz_layers"]
-            act = specs["Network_specs"]["activation"]
-            label = f"Spectral = {lip}, {act}" 
+    elif exp_name == "LatentSizeAndCodeReg":
+        latent = specs["Network_specs"]["latent_size"]
+        lamb = specs["code_reg_lambda"]
+        label = f"latent = {latent}" + rf"$\lambda = {lamb:.0e}$" 
 
-        case "BatchSizeEffectCorrected":
-            steps = [25000, 50000, 100000, 200000]
-            bs = specs["batch_size"]
-            n_steps = specs["NumEpochs"] * np.floor( 89 / bs)
-            n_steps = steps[ np.abs( steps - n_steps).argmin() ]
-            label = f"batch = {bs}, steps = {int(n_steps)}" 
-
-
-        case "LatentSizeAndCodeReg":
-            latent = specs["Network_specs"]["latent_size"]
-            lamb = specs["code_reg_lambda"]
-            label = f"latent = {latent}" + rf"$\lambda = {lamb:.0e}$" 
-
-        case _:
-            label = version
+    else:
+        label = version
 
     return label  
 
@@ -183,15 +184,16 @@ def plot_experiment_runs_events(
     alpha = 0.6,
     grid: bool = True,
     fontsize: int = 14,
+    title_fontsize=18,              # NEW
+    title_mapping: dict | None = None,  # NEW
     save_fname=None
-    ):
+):
     """
     Args:
         `log_dir` : Path to the experiment folder containing all version folders (where events.out.tfevents.* files are)
         `plot_scalars` : list of scalar names to plot
         `linewidth` : line width for plot lines
         `grid` : whether to show grid (major ticks only)
-        `fontsize` : font size for labels and titles
         `save_fname` : if provided, saves the figure to this file path
     """
     #TODO: make legend labels more informative instead of version_x
@@ -253,20 +255,16 @@ def plot_experiment_runs_events(
                 steps = [e.step for e in events]
                 values = [e.value for e in events]
 
-                if min(values) <= 1e-10:
-                    continue
-
                 line, = axs[i].plot(steps, values, c = colors[idx], alpha = alpha, linewidth=linewidth, label=logdir.name)
 
                 # Collect handles/labels from first subplot only
                 if i == 0:
                     # Create thicker Line2D for the legend
-                    legend_line = Line2D([0], [0], color=colors[idx], lw=linewidth*2)  # double thickness in legend
+                    legend_line = Line2D([0], [0], color=colors[idx], lw=linewidth*3)  # more thickness in legend
                     legend_handles.append(legend_line)
                     legend_labels.append( get_legend_label(logdir))
                     # legend_handles.append(line) # use the plotted line
                     # legend_labels.append(logdir.name)
-
                 try:
                     axs[i].set_yscale("log")
                 except:
@@ -274,7 +272,13 @@ def plot_experiment_runs_events(
 
                 # axs[i].set_xlabel("Global training step", fontsize=fontsize)
                 # axs[i].set_ylabel("Value", fontsize=fontsize)
-                axs[i].set_title(tag, fontsize=fontsize)
+                # Use custom title if provided
+                if title_mapping and tag in title_mapping:
+                    title_text = title_mapping[tag]
+                else:
+                    title_text = tag
+
+                axs[i].set_title(title_text, fontsize=title_fontsize)
                 if grid:
                     axs[i].grid(True, which='major', linestyle='-', alpha=0.5)
 
@@ -287,13 +291,14 @@ def plot_experiment_runs_events(
         labels=legend_labels,
         loc='center left',         # the legend's left edge is at bbox_to_anchor x
         bbox_to_anchor=(0.8, 0.5),  # bbox_to_anchor coordinates are in figure fraction units (0–1).
-        fontsize=11,
+        fontsize=fontsize,
         #title="Versions",
         borderaxespad=0
     )
 
-
     if save_fname:
+        save_fname = Path(save_fname)
+        save_fname.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(save_fname, dpi=300, transparent=True)
         plt.close()
         return
@@ -301,35 +306,10 @@ def plot_experiment_runs_events(
     plt.show()
 
 
+
 # ================================================================ #
 # region meshes visualization
 # ================================================================ #
-def plot_gt_vs_reconstructed(mesh_gt, mesh_pred, patient_name, opacity = 0.8, link_views = True):
-
-    cam = dict(
-        position=(300, 300, 300),
-        focal_point=(0.0, 0, 0.0),
-        viewup=(0.0, 0.0, 0.1),
-    )
-
-    # Create a PyVista plotter with 2 subplots (side-by-side) ----- toggle off_screen
-    plotter = pv.Plotter(shape=(1, 2), window_size=[1280, 720])
-
-    plotter.subplot(0, 0)
-    plotter.add_text(f"Original mesh: patient {patient_name}", font_size=12)
-    plotter.add_mesh(mesh_gt, color="pink", opacity=opacity)
-    plotter.camera_position = [cam["position"], cam["focal_point"], cam["viewup"]]
-
-    plotter.subplot(0, 1)
-    plotter.add_text(f"Reconstructed mesh: patient {patient_name}", font_size=12)
-    plotter.add_mesh(mesh_pred, color="pink", opacity=opacity)
-    plotter.camera_position = [cam["position"], cam["focal_point"], cam["viewup"]]
-
-    if link_views:
-        plotter.link_views()
-
-    return plotter
-
 def plot_gt_vs_reconstructed_with_error(
         mesh_gt: pv.PolyData | pv.UnstructuredGrid,
         mesh_pred: pv.PolyData | pv.UnstructuredGrid,
@@ -533,8 +513,3 @@ def plot_two_gt_vs_reconstructed_publication_style(
 
     print(f"Saved publication figure to {output_path}")
 
-
-if __name__ == "__main__":
-
-    from pathlib import Path
-    

@@ -5,7 +5,9 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
 import json
-
+import seaborn as sns
+import pandas as pd
+    
 
 COLORS_PALETTE = {
     # --- Pastel tones ---
@@ -62,7 +64,7 @@ def get_dataset_patients_names(data: dict):
 
     return patient_names
 
-def associate_trained_embeddings_with_patients(version_dir):
+def associate_trained_embeddings_with_patients(version_dir, DATA_DIR):
 
     latents = np.load( version_dir / "latents.npy" )
 
@@ -233,24 +235,6 @@ def plot_UMAP(latents, patients_names, n_neighbors = 15, min_dist = 0.05, save_f
 
     return
 
-def mahalanobis(latents):
-    # assuming latents are (N, latent size) !
-
-    mu = np.mean(latents, axis=0)  # shape (64,)
-
-    X_centered = latents - mu      # shape (N, 64)
-
-    cov = np.cov(X_centered, rowvar=False)  # shape (64, 64)
-
-    epsilon = 1e-6
-    cov_reg = cov + epsilon * np.eye(cov.shape[0])
-
-    inv_cov = np.linalg.inv(cov_reg)
-
-    mahl = np.sqrt(np.sum((X_centered @ inv_cov) * X_centered, axis=1))  # shape (N,)
-
-    return mahl
-
 def plot_embedding(ax, x, y, title, colors_af_norm, colors_train_test):
 
     # Aura (Train/Test)
@@ -277,45 +261,14 @@ def plot_embedding(ax, x, y, title, colors_af_norm, colors_train_test):
     ax.set_aspect('equal')
     ax.set_box_aspect(1)
 
+def plot_pca_varpca_tsne_umap(
+        experiment_name, vnum,
+        latents_train, latents_test, 
+        train_patients, test_patients,
+        IMAGES_DIR
+):
 
-if __name__ == "__main__":
-
-    from pathlib import Path
-    # Add project root to sys.path
-    import sys
-    PROJECT_ROOT = Path(__file__).resolve().parent.parent
-    sys.path.append(str(PROJECT_ROOT))
-
-    # Now can import config
-    from config import DATA_DIR
-
-    expname = "LipLayersAndCodeReg"
-    vnum = 16
-
-    LATENTS_DIR = Path(f"results/fitted_latents/{expname}")
-
-    latents_file = next(LATENTS_DIR.glob(f"{expname}-version_{vnum}-latents_23_test*"), None)
-    latents_dict = np.load(latents_file)
-
-    latents_fitted = []
-    test_patients = []
-    for patient, code in latents_dict.items():
-        #if patient != "LEU_NORM_0194":
-            test_patients.append(patient)
-            latents_fitted.append(code)
-    latents_fitted = np.array(latents_fitted)
-
-    latents_file = next(LATENTS_DIR.glob(f"{expname}-version_{vnum}-latents_89_train*"), None)
-    latents_dict = np.load(latents_file)
-
-    latents_trained = []
-    train_patients = []
-    for patient, code in latents_dict.items():
-        train_patients.append(patient)
-        latents_trained.append(code)
-    latents_trained = np.array(latents_trained)
-
-    latents_all = np.vstack([latents_trained, latents_fitted])
+    latents_all = np.vstack([latents_train, latents_test])
 
     patient_names = train_patients + test_patients
 
@@ -323,6 +276,7 @@ if __name__ == "__main__":
 
     colors_af_norm = [ COLORS_PALETTE["neon_red"] if "AF" in name else COLORS_PALETTE["neon_green"] for name in patient_names ]
 
+    import matplotlib.patches as mpatches
 
     fig, axes = plt.subplot_mosaic(
         [["PCA", "explained_var"],
@@ -397,8 +351,6 @@ if __name__ == "__main__":
         colors_train_test
     )
 
-    import matplotlib.patches as mpatches
-
     legend_elements = [
         mpatches.Patch(facecolor=COLORS_PALETTE["neon_red"], edgecolor='black', label='AF'),
         mpatches.Patch(facecolor=COLORS_PALETTE["neon_green"], edgecolor='black', label='NORM'),
@@ -415,103 +367,78 @@ if __name__ == "__main__":
         frameon=True
     )
 
-    save_fname = IMAGES_DIR / f"{expname}/{expname}-version_{vnum}-latents-all-embeddings_combined.pdf"
+    save_fname = IMAGES_DIR / f"{experiment_name}/{experiment_name}-version_{vnum}-latents-all-embeddings_combined.pdf"
     plt.savefig(save_fname, dpi=300, bbox_inches="tight")
 
-    save_fname = IMAGES_DIR / f"{expname}/{expname}-version_{vnum}-latents-all-embeddings_combined.svg"
+    save_fname = IMAGES_DIR / f"{experiment_name}/{experiment_name}-version_{vnum}-latents-all-embeddings_combined.svg"
     plt.savefig(save_fname, dpi=300, bbox_inches="tight")
 
     plt.show()
     plt.close()
 
+    return
 
 
 
+def mahalanobis(latents):
+    # assuming latents are (N, latent size) !
+
+    mu = np.mean(latents, axis=0)  # shape (64,)
+
+    X_centered = latents - mu      # shape (N, 64)
+
+    cov = np.cov(X_centered, rowvar=False)  # shape (64, 64)
+
+    epsilon = 1e-6
+    cov_reg = cov + epsilon * np.eye(cov.shape[0])
+
+    inv_cov = np.linalg.inv(cov_reg)
+
+    mahl = np.sqrt(np.sum((X_centered @ inv_cov) * X_centered, axis=1))  # shape (N,)
+
+    return mahl
+
+def plot_latent_correlation(latent_codes, figsize = (10, 8), fontsize = 12, show_numbers = False, save_fname=None):
+    """
+    latent_codes: np.array or torch tensor of shape (N, latent_dim)
+    save_fname: optional, file path to save the heatmap
+    """
+
+    # just to assign easily labels I want
+    if not isinstance(latent_codes, pd.DataFrame):
+        latent_codes = pd.DataFrame(latent_codes, columns=[f"{i+1}" for i in range(latent_codes.shape[1])])
+
+    # Compute correlation matrix
+    corr_matrix = latent_codes.corr()
+
+    # Plot
+    plt.figure(figsize=figsize)
+    ax = sns.heatmap(
+        corr_matrix,
+        annot=show_numbers,
+        fmt=".2f",
+        cmap="coolwarm",
+        center=0,
+        square=True,
+        linewidths=0.5,
+        cbar_kws={"shrink": 0.8}  # We'll adjust ticks below
+    )
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right", fontsize=fontsize)
+    ax.set_yticklabels(ax.get_yticklabels(), fontsize=fontsize)
+    plt.title("Latent Code Correlation Heatmap", fontsize=fontsize + 2)
+
+    # ---- Adjust colorbar ticks ----
+    cbar = ax.collections[0].colorbar
+    vmin, vmax = cbar.vmin, cbar.vmax
+    cbar_ticks = np.linspace(vmin, vmax, 5)
+    cbar.set_ticks(cbar_ticks)
+    cbar.set_ticklabels([f"{t:.2f}" for t in cbar_ticks])
+    cbar.ax.tick_params(labelsize=fontsize)
 
 
+    if save_fname:
+        plt.tight_layout()
+        plt.savefig(save_fname, dpi=300, transparent=True)
 
-
-
-
-
-
-
-
-
-
-
-
-    # LATENTS_DIR = Path("experiments/training_sweeps/RegLambda/version_3")
-
-    # # # latents_name = "latent_codes_89_patients_version_114-codereg=0.000200-epochs=250"
-    # # latents_name = "latent_codes_109_patients_version_89-codereg=0.000200-epochs=250"
-    # # fname = LATENTS_DIR / str(latents_name + ".npz")
-    # # latent_dict = np.load(fname)
-
-    # patients_names = []
-    # latent_codes = []
-    # for name, code in latent_dict.items():
-    #     if name not in ["AF001", "AF069", "LEU_NORM_F004"]:
-    #         patients_names.append(name)
-    #         latent_codes.append(code)
-
-    # latent_codes = np.array(latent_codes)
-
-    # IMAGES_DIR = Path("/home/davidenava_linux/AtriaProject/deepcsdf-atria/results/images")
-
-    # # save_fname = IMAGES_DIR / f"PCA-{latents_name}.svg"
-    # plot_PCA(latent_codes, patients_names, None)
-
-    # # save_fname = IMAGES_DIR / f"tSNE-{latents_name}.svg"
-    # plot_tSNE(latent_codes, patients_names, learning_rate=80, save_fname = None)
-
-    # # save_fname = IMAGES_DIR / f"UMAP-{latents_name}.svg"
-    # plot_UMAP(latent_codes, patients_names, save_fname = None)
-
-
-
-    # version_dir = Path("/home/navarri/AtriaProject/deepcsdf-atria/experiments/training_sweeps/RegLambda/version_0")
-
-    # latents, patient_names = associate_trained_embeddings_with_patients(version_dir)
-
-    # colors = map_categories(patient_names)
-
-    # for i,latent in enumerate(latents):
-    #     #if colors[i] == "AF":
-    #         c = COLORS_PALETTE["coral"] if colors[i] == "AF" else COLORS_PALETTE["electric_blue"]
-    #         plt.scatter( np.arange(0, latents.shape[-1]), latent, c = c, s=15)
-    # plt.show()
-
-    # plot_PCA(latents, patient_names)
-
-    # T_max = 0.0
-    # for perp in [5,10,15,20]:
-    #     for lr in [50,100,150,200]:
-    #         tsne = TSNE(n_components=2, perplexity=perp, learning_rate=lr, max_iter=1000, random_state=42)
-    #         latents_embedded = tsne.fit_transform(latents)
-    #         T = trustworthiness(latents, latents_embedded)
-    #         if T > T_max:
-    #             T_max = T
-    #             perplexity = perp
-    #             learning_rate = lr
-
-    # plot_tSNE(latents, patient_names, learning_rate=learning_rate, perplexity=perplexity)
-    # plot_UMAP(latents, patient_names)
-
-    # d2 = mahalanobis(latents) ** 2
-
-    # import scipy.stats as stats
-
-    # plt.hist(d2, bins=30, density=True, alpha=0.6, label='Empirical')
-
-    # x = np.linspace(min(d2), max(d2), 200)
-    # plt.plot(x, stats.chi2.pdf(x, df=64), 'r-', lw=2, label=r'$\chi^2_{64}$')
-    # plt.xlabel(r'Squared Mahalanobis distance $d_M^2$')
-    # plt.ylabel('Density')
-    # plt.legend()
-    # plt.show()
-
-    # stats.probplot(d2, dist="chi2", sparams=(64,), plot=plt)
-    # plt.title("Chi-squared Q-Q plot")
-    # plt.show()
+    plt.show()
 
