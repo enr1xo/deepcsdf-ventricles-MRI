@@ -326,7 +326,7 @@ def train(
         enable_model_summary=False,  
         enable_progress_bar=show_progress,
         log_every_n_steps=1,
-        check_val_every_n_epoch=model.log_val_every_n_epochs if model.log_val_every_n_epochs <= 0 else None,  # run validation
+        check_val_every_n_epoch=model.log_val_every_n_epochs if model.log_val_every_n_epochs > 0 else 100000000000,  # run validation
         logger=logger_tb,
         enable_checkpointing=True,
         callbacks = callbacks
