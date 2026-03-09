@@ -20,22 +20,37 @@ except ImportError:
 from model.deepsdf_dataloader import SDFDataModule
 from model.deepsdf_decoder import Decoder, DeepSDF 
 
-
-# # =========== setup for H100 / A100 / L40S GPU =========== #
-# torch.set_float32_matmul_precision("high")   # "medium" if instability (NaNs / loss spikes) appear, "high" is ignored by L40S
-# PRECISION = "bf16-mixed"
-# # next flags ignored by L40S
-# torch.backends.cuda.matmul.allow_tf32 = True
-# torch.backends.cudnn.allow_tf32 = True
-
-# =========== setup for RTX 3090 GPU =========== #
-torch.set_float32_matmul_precision("medium") # "medium" if instability (NaNs / loss spikes) appear
-PRECISION = "16-mixed"
-
-# # # =========== setup for GTX 1050 GPU =========== #
-# PRECISION = "32"
-
 from config import SPECS_FILES_DIR, EXPERIMENTS_DIR
+
+
+# Set precision 
+PRECISION = "32"
+
+if torch.cuda.is_available():
+    gpu_name = torch.cuda.get_device_name(0).lower()
+    print(f"Detected GPU: {gpu_name}")
+
+    if any(x in gpu_name for x in ["h100", "a100", "l40s"]): # Setup for H100 / A100 / L40S
+        torch.set_float32_matmul_precision("high")   # "medium" if instability appears
+        PRECISION = "bf16-mixed"
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+
+    elif "3090" in gpu_name: # Setup for RTX 3090        
+        torch.set_float32_matmul_precision("medium")
+        PRECISION = "16-mixed"
+
+    elif "1050" in gpu_name:  # Setup for GTX 1050
+        PRECISION = "32"
+
+    else:
+        PRECISION = "32"
+else:
+    print("CUDA not available, using CPU with full precision.")
+    PRECISION = "32"
+
+print(f"Using precision: {PRECISION}")
+
 
 # ============================== #
 # HELPERS
