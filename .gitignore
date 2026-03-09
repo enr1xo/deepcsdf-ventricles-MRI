@@ -21,7 +21,7 @@ ENV/
 # ===============================
 .ipynb_checkpoints/
 *.ipynb
-!summarize_experiment_performance.ipynb  # keep only this notebook tracked
+# !summarize_experiment_performance.ipynb  # keep only this notebook tracked
 
 # ===============================
 # Environment / local config
@@ -46,6 +46,7 @@ datasets/
 # ===============================
 # Training outputs / experiments
 # ===============================
+interactive_app/
 experiments/
 results/
 logs/
