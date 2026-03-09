@@ -63,7 +63,7 @@ launched_slurm/
 launch_bash/
 
 specs_files/*
-!specs_files/specs_deepsdfatria.json
+!specs_files/specs.json
 
 # ===============================
 # scripts

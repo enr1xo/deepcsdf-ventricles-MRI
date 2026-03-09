@@ -337,7 +337,7 @@ if __name__ == "__main__":
     parser.add_argument("--experiment_name", "-e", type=str, default = None,
                         help="Becomes the directory name in which checkpoints and logs are saved, under version_x folder for each run."
     )
-    parser.add_argument("--specs_file_path", "-s", type=str, default = "specs_deepsdfatria.json")
+    parser.add_argument("--specs_file_path", "-s", type=str, default = "specs.json")
     parser.add_argument("--train_mode", type=str, default="use_specs_file", choices=["use_specs_file", "compose_specs_from_override"])
     parser.add_argument("--override_specs", type=str, default=None)
     parser.add_argument("--num_workers_dataloader", type=int, default=0)
