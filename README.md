@@ -9,11 +9,11 @@ This sets paths for directories containing meshes files for each patient, traini
 
 
 #### Experiments runs
-Each training run is organized under an "experiment" and "version" directory. Training results in the creation of `.pth` files storing the trained model weights, an `hparams.json` file recording the specifics used for that run, and an events.out file recording metrics logged during training. Model checkpoints during training can be also saved under a checkpoints/ directory for each run.
+Each training run is organized under an "experiment" and "version" directory. Training results in the creation of `.pth` files storing the trained model weights, an `hparams.json` file recording the specifics used for that run, and an `events.out` file recording metrics logged during training. Model checkpoints during training can be also saved under a checkpoints/ directory for each run.
 
 The only file that is required to start training (or testing) is a `.json` under the specification files directory path, which sets the hyperparameters, network architecture, and data files to be used for the experiment.
 
-Example of a specs file can be found in `specs_files/specs_deepsdfatria.json`.
+Example of a specs file can be found in `specs_files/specs.json`.
 
 ## How to use
 
@@ -29,18 +29,18 @@ The surface extraction is done using a specific dictionary of TAGS identifying v
 
 All these steps can be done separately or alltogheter, over one or multiple patients. See docstrings of functions to understand what directories or files are expected, and how and where results are saved.
 
-Possible TODO: make it executable from command like passing options as input, actually split into several executable scripts that each do a step, then explain here the intended sequence in which to use them if starting from scratch.
+<!-- Possible TODO: make it executable from command like passing options as input, actually split into several executable scripts that each do a step, then explain here the intended sequence in which to use them if starting from scratch. -->
 
 ### Training 
 
 After setting data and results directory in `config.py` script, the only thing needed to start training is a `.json` file specifying a dictionary holding all training hyperparameters, network architecture, and actual data file path to use.
 
-#### data files
+#### Data files
 Data will be loaded in the dataloader from `.json` files containing a list of `.npy` file names, one for each patient/anatomy. The full path will be constructed relative to the `PATIENT_NUMPY_DATA_DIR` specified in the `config.py` file, so the `.json` just needs to specify each single `.npy` file to use, assumed they are then found under the same directory `PATIENT_NUMPY_DATA_DIR`.
 
 example: `data_fnames.json` contains `["patient1.npy", "patient2.npy"]`, then full paths are assumed to be `PATIENT_NUMPY_DATA_DIR/patient1.npy`, `PATIENT_NUMPY_DATA_DIR/patient2.npy`
 
-#### train script
+#### Train script
 Then the script `train.py` can be executed combining optional features:
 
 - `--experiment_name`, `-e` *(str)*  
@@ -49,10 +49,10 @@ Then the script `train.py` can be executed combining optional features:
 - `--specs_file_path`, `-s` *(str)*  
   File name of the `.json` specs file defining training hyperparameters, network architecture, and data paths. This will be loaded constructing the full path prepending the `SPECS_FILES_DIR` path in `config.py`.
 
-- `--train_mode` *(str)*  
-  Training mode selector (default: `use_specs_file`). If passed as `compose_specs_from_options` then overwrites fields in the original specs files with new ones  
+- `--train_mode` *(str, "use_specs_file", "compose_specs_from_override")*  
+  Training mode selector (default: `use_specs_file`). If passed as `compose_specs_from_override` then overwrites fields in the original specs files with new ones  
 
-- `--override_specs` *(str, "use_specs_file", "compose_specs_from_override)*  
+- `--override_specs` *(str)*  
   Json style string, overrides values defined in the default specs file passed indicated with `--specs_file_path`. It can just contain some specific fields to override, with the same names as in the original specs.
 
 - `--show_progress`  
@@ -67,7 +67,7 @@ A trained model from a specific experiment and version can be loaded from just t
 
 The script `test.py` can be executed with additional flags specifying the trained model to use, data, and what to do:
 
-- `--experiment_name`, `-e` *(str)*  and `--version`, `-v` *(str)*
+- `--experiment_name`, `-e` *(str)*  and `--version`, `-v` *(str)* :
   Run identifiers, specify which run to load decoder weights and parameters from. 
 
 - `--override_with_test_dataset`, , `-od` *(str)*  
@@ -93,7 +93,7 @@ Then one can specify further inference options:
 - `--init_latent_from` *{str, {"zero", "normal", "empirical"}}*
   How to initialize the latent code for fitting a scene. Either from zero, from a centered normal with same variance as the prior used in training, or from the empirical distribution of the trained latent codes.
 
-- `--use_mahalanobis_loss`, '-maha'
+- `--use_mahalanobis_loss`, `-maha`
   Use mahalanobis loss in fitting the latent codes
   
 - `--save_latent_codes`, `-sc`  
