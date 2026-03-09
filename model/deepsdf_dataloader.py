@@ -39,11 +39,11 @@ class SDFSamples(Dataset):
 
         self.sdf_dim = specs.get("Network_specs", {}).get("out_dim", 3)
 
-        self.train_fname = DATA_DIR / specs.get("TrainSplit", None) # I donìt like DATA_DIR hardcoded actually
+        self.train_fname = DATA_DIR / specs.get("TrainSplit", None) # I don't like DATA_DIR hardcoded actually
 
         self.test_fname = DATA_DIR / specs.get("TestSplit", None)
 
-        self.val_fname = DATA_DIR / specs.get("ValSplit", self.test_fname)
+        self.val_fname = DATA_DIR / specs.get("ValSplit", None)
 
         self.data_file = ""
 
@@ -53,6 +53,8 @@ class SDFSamples(Dataset):
             self.data_file = self.train_fname
         elif self.stage == "test":
             self.data_file = self.test_fname
+        elif self.stage == "val":
+            self.data_file = self.val_fname
 
         if Path(self.data_file).suffix == ".json":
             data_tot = self._unpack_sdfdata_json(self.data_file)
@@ -94,8 +96,7 @@ class SDFSamples(Dataset):
                     "sdf": dat_[:,3:]
                 })
 
-                if self.balance_pos_neg: # build also lists of positive / negative sdf indexes per scene
-                    coords = dat_[:,:3]
+                if self.balance_pos_neg and self.stage == "train" or self.stage == "test": # build also lists of positive / negative sdf indexes per scene
                     sdf = dat_[:,3:]
 
                     pos_list = []
@@ -170,25 +171,31 @@ class SDFSamples(Dataset):
 
     def __getitem__(self, index):
         
-        # TODO: optional: return BALANCED pos/neg sdf samples
         data = self.data_tot[index]
 
         coords = data["coords"]
         sdf = data["sdf"]
 
-        if self.balance_pos_neg:
-            coords, sdf = self.balance_batch(index,coords,sdf)
-        else:
-            # this sampling CAN REPEAT points !!!
-            if self.sampling == "random":
-                random_pos = torch.randint(0, coords.shape[0], (self.num_samp_per_scene,))
-            elif self.sampling == "random_seed":
-                g = torch.Generator()
-                g.manual_seed(69 + index) # subsample always same points for each scene
-                random_pos = torch.randint(0, coords.shape[0], (self.num_samp_per_scene,), generator=g)
-            elif self.sampling == "all":
-                random_pos = torch.arange(0, coords.shape[0])
+        if self.stage == "train" or self.stage == "test":
+            if self.balance_pos_neg:
+                coords, sdf = self.balance_batch(index,coords,sdf)
+            else:
+                # this sampling CAN REPEAT points !!!
+                if self.sampling == "random":
+                    random_pos = torch.randint(0, coords.shape[0], (self.num_samp_per_scene,))
+                elif self.sampling == "random_seed":
+                    g = torch.Generator()
+                    g.manual_seed(69 + index) # subsample always same points for each scene
+                    random_pos = torch.randint(0, coords.shape[0], (self.num_samp_per_scene,), generator=g)
+                elif self.sampling == "all":
+                    random_pos = torch.arange(0, coords.shape[0])
 
+                coords = coords[random_pos]
+                sdf    = sdf[random_pos]
+        elif self.stage == "val":
+            # for validation during training, just sample num_samp_per_scene points from the available ones
+            # no balanced batch, I will build validation data then in the way I want then
+            random_pos = torch.randint(0, coords.shape[0], (self.num_samp_per_scene,))
             coords = coords[random_pos]
             sdf    = sdf[random_pos]
 
@@ -233,6 +240,7 @@ class SDFDataModule(pl.LightningDataModule):
 
     def setup(self, stage: str):
         if stage in ["fit", "train"]:
+            # train data
             sdf_dataset = SDFSamples( 
                 specs = self.specs,
                 stage="train"
@@ -245,9 +253,10 @@ class SDFDataModule(pl.LightningDataModule):
 
             self.num_samples_per_scene = self.sdf_train.num_samp_per_scene
 
+            # data for validation/test during training
             sdf_dataset = SDFSamples( 
                 specs = self.specs,
-                stage="test"
+                stage="val"
             ) 
             sdf_dataset._read_data()
 
@@ -298,9 +307,9 @@ class SDFDataModule(pl.LightningDataModule):
         return DataLoader(
             self.sdf_val,
             batch_size=self.val_batch_size, 
-            shuffle=False, # I get always the same scene 
+            shuffle=False,  
             num_workers=0,
-            drop_last=True,
+            drop_last=False,
         )
 
 
