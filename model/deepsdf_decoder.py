@@ -242,6 +242,17 @@ class DeepSDF(pl.LightningModule):
 
         self.lipschitz_alpha = specs.get("lipschitz_alpha", 2e-6)
 
+        # EIKONAL terms
+        # self.use_eikonal = specs.get("use_eikonl_loss", False)
+        self.use_eikonal_loss = True
+
+        # self.eikonal_weight = specs.get("eikonal_weight", 1e-2)
+        self.eikonal_weight = 0.1
+        
+        # self.ekional_frac = specs.get("eikonal_frac", 0.25)
+        self.eikonal_frac = 0.2
+
+
         self.enforce_minmax = specs.get("enforce_minmax", False)
 
         self.clamp_distance = specs.get("clamp_distance", 0.1)
@@ -349,7 +360,7 @@ class DeepSDF(pl.LightningModule):
         num_sdf_samples = sdf_gt.shape[0]
 
         indices.requires_grad = False
-        xyz.requires_grad = False
+        # xyz.requires_grad = False
         sdf_gt.requires_grad = False
 
         indices = indices.unsqueeze(-1).repeat(1, num_samp_per_scene).view(-1)
@@ -376,6 +387,7 @@ class DeepSDF(pl.LightningModule):
         else:
             code_reg_lambda =  self.code_reg_lambda
 
+        # LIPSCHTIZ LOSS
         lipschitz_loss = 0.0
         if self.use_lipreg_loss:
             for i in range(self.decoder.num_layers - 1):
@@ -384,7 +396,52 @@ class DeepSDF(pl.LightningModule):
                 lipschitz_loss += torch.log( softplus_ci ) 
             lipschitz_loss = torch.exp(lipschitz_loss)
 
-        training_loss = chunk_loss + code_reg_lambda * reg_loss + self.lipschitz_alpha * lipschitz_loss
+        # EIKONAL LOSS
+        # qua computiamo il termine eikonale (grad(S) - 1)
+        eikonal_loss = torch.tensor(0.0, device=self.device)
+
+        if getattr(self, "use_eikonal_loss", False):
+            N = xyz.shape[0]
+
+            frac = float(getattr(self, "eikonal_frac", 0.25))
+            frac = max(0.0, min(1.0, frac))
+
+            M = max(1, int(frac * N))
+
+            eik_idx = torch.randperm(N, device=xyz.device)[:M]
+
+            xyz_eik = xyz[eik_idx].detach().clone().requires_grad_(True)
+
+            batch_vecs_eik = batch_vecs[eik_idx].detach()
+
+            input_eik = torch.cat([batch_vecs_eik, xyz_eik], dim=1)
+            pred_eik = self.decoder(input_eik)
+
+            if self.decoder.out_dim > 1:
+                pred_eik_scalar = pred_eik.sum(dim=1, keepdim=True)
+            else:
+                pred_eik_scalar = pred_eik
+            
+            grads = torch.autograd.grad(
+                outputs=pred_eik_scalar,
+                input=xyz_eik,
+                grad_outputs=torch.ones_like(pred_eik_scalar),
+                create_graph=True,
+                retain_graph=True,
+                only_inputs=True        
+                )[0]
+            
+            grad_norm = grads.norm(2, dim=1)
+            eikonal_loss = ((grad_norm - 1.0)).mean() 
+            # eikonal_loss = ((grad_norm - 1.0)**2).mean() 
+        
+        eikonal_alpha = self.eikonal_weight
+
+        # qua dovremo aggiungere il termine eikonale 
+        training_loss = (chunk_loss 
+                        + code_reg_lambda * reg_loss
+                        + self.lipschitz_alpha * lipschitz_loss
+                        + eikonal_alpha * eikonal_loss)
 
 
         if self.logger is not None and (self.current_epoch + 1) % self.log_every_n_epochs == 0:
@@ -399,6 +456,7 @@ class DeepSDF(pl.LightningModule):
                     "latents_mean_L2_squared": reg_loss.detach().cpu(),
                     "lipschitz_penalty": lipschitz_loss.detach().cpu() if self.use_lipreg_loss else torch.tensor(0.0, device="cpu"),
                     "prediction_loss": chunk_loss.detach().cpu(),
+                    "eikonal_loss": eikonal_loss.detach().cpu(),
                     "training_loss" : training_loss.detach().cpu(),
                     "code_reg_factor" : code_reg_lambda,
                     # "lr_weights" : lr_weights,

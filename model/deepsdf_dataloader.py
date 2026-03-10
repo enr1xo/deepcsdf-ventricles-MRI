@@ -9,7 +9,7 @@ from torch.utils.data import Dataset, DataLoader
 import json
 from pathlib import Path
 
-from config_v import DATA_DIR, PATIENTS_NPY_DATA_DIR
+from config import DATA_DIR, PATIENTS_NPY_DATA_DIR
 
 
 class SDFSamples(Dataset):
@@ -85,6 +85,10 @@ class SDFSamples(Dataset):
         loaded = json.load( open(data_file) )
 
         for fname in loaded:
+            # # DEBUG
+            # print(loaded)
+            # break
+            # # fine debug
             
             if fname.endswith(".npy"):
                 dat_ = np.load(PATIENTS_NPY_DATA_DIR / fname) # names always relative to PATIENTS_NPY_DATA_DIR !!

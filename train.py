@@ -36,10 +36,10 @@ torch.backends.cudnn.allow_tf32 = True
 # from config_v import SPECS_FILES_DIR, DATA_DIR, EXPERIMENTS_DIR
 
 # SPECS_FILE = SPECS_FILES_DIR / "specs_deepsdfatria.json" # default if not specified on execution
-=======
+# =======
 # # # =========== setup for GTX 1050 GPU =========== #
 # PRECISION = "32"
->>>>>>> main
+# >>>>>>> main
 
 from config import SPECS_FILES_DIR, EXPERIMENTS_DIR
 

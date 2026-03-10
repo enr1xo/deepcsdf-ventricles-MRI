@@ -8,7 +8,7 @@
     "Network_specs" : {
         "latent_size" : 64,
         "out_dim" : 3,
-        "dims" : [256,256,256,256,256],
+        "dims": [128,128,128,128,128],
         "latent_in" : [3],
         "positional_encoding" : false,
         "pos_enc_dim" : 4,   
@@ -23,12 +23,12 @@
     },
 
     "NumEpochs": 50000,
-    "lr_weights": 0.001,
+    "lr_weights": 0.0005,
     "lr_latents": 0.005,
     "num_samp_per_scene": 4096,
     "sampling_scene_method": "random",
     "balance_pos_neg": true,
-    "batch_size": 89,
+    "batch_size": 461,
     "scale_spatial_inputs_by": 100,
     "enforce_minmax": false,
     "clamp_distance": 0.1,

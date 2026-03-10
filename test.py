@@ -19,7 +19,7 @@ import pandas as pd
 from pprint import pprint
 import math
 
-from config_v import (
+from config import (
     EXPERIMENTS_DIR,
     IMAGES_DIR,
     RECONSTRUCTED_MESHES_DIR,
@@ -178,6 +178,10 @@ def run(
 
     # region specs: get specifics for the wanted run
     version_dir = EXPERIMENTS_DIR / experiment_name / version
+    # DEBUG
+    # version_dir = Path("deepcsdf-atria/experiments/enrico_preliminary_train/version_0")
+    version_dir = Path("experiments/enrico_preliminary_2/version_1")
+    # fine debug
 
     if hparams_file is None:
         hparams_file =  version_dir / "hparams.json"
@@ -452,8 +456,8 @@ def run(
                 # assume sdf is distance from epicardium, left endocardium, right endocardium                        
                 sdf_grid_pred = {
                         "epicardium": sdf_pred[:, 0],
-                        "la_endo": sdf_pred[:, 1],
-                        "ra_endo": sdf_pred[:, 2]
+                        "lv_endo": sdf_pred[:, 1],
+                        "rv_endo": sdf_pred[:, 2]
                     }
                 
                 data_ = np.load( coords_and_sdf_file )
@@ -462,13 +466,13 @@ def run(
 
                 sdfs_all_gt = {
                         "epicardium": data_[:, 0 + 3],
-                        "la_endo": data_[:, 1 + 3],
-                        "ra_endo": data_[:, 2 + 3]
+                        "lv_endo": data_[:, 1 + 3],
+                        "rv_endo": data_[:, 2 + 3]
                     }
 
                 thresholds = {}
                 
-                organs_to_process = ["epicardium", "la_endo", "ra_endo"]
+                organs_to_process = ["epicardium", "lv_endo", "rv_endo"]
 
                 for i,organ in enumerate(organs_to_process):
 
@@ -503,7 +507,28 @@ def run(
                             print("\n Saved reconstructed mesh file")
 
                         patient_dir = PATIENT_MESHES_DIR / patient_name
+
+                        # DEBUG
+                        # print("patient dir:", patient_dir)
+
+                        # print(patient_dir.rglob(f"{organ}-processed.vtp"))
+                        #  fine debug
+
+
                         mesh_file = next( patient_dir.rglob(f"{organ}-processed.vtp"), None) # !!! these are assumed to be standardized, unit scale already.
+                        
+                        
+                        
+                        
+                        
+                        # DEBUG
+                        # print("mesh file:", mesh_file) # il debug dice che è None
+                        # fine debug
+
+
+
+
+
                         mesh_gt = pv.read(mesh_file)
                         
                         ## !!! NOW BOTH MESHES ARE AT THE UNIT SCALE !!! 
@@ -672,7 +697,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--experiment_name", "-e", type=str, default = "training_sweeps/LipAndAct")
+    # parser.add_argument("--experiment_name", "-e", type=str, default = "training_sweeps/LipAndAct")
+    parser.add_argument("--experiment_name", "-e", type=str, default = "enrico_preliminary_train")
     parser.add_argument("--version", "-v", type=str, default = "version_0")
     parser.add_argument("--override_with_dataset", "-od", type=str, default=None)
     parser.add_argument("--override_with_patients_list", "-opl", type=str, nargs="+", default=None, help="List of patient IDs to process")
@@ -704,7 +730,7 @@ if __name__ == "__main__":
         with json_file.open("w") as f:
             json.dump(names, f)
     else:
-        test_datafnames = args.override_with_dataset or "test/AF009_P2R-LEU_NORM_F004.json"
+        test_datafnames = args.override_with_dataset or "test/data_fnames_test.json"
 
     exp_name = args.experiment_name
     vers = args.version
