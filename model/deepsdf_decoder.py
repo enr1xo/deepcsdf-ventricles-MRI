@@ -57,7 +57,7 @@ class LipschitzNormLinear(nn.Linear):
     """
         Lipschitz scaled layer, as in learning smooth neural functions via lip reg paper
     """
-    def __init__(self, in_features, out_features, bias=True, init_c=0.0):
+    def __init__(self, in_features, out_features, bias=True, init_c=1.0): #, init_c=0.0):
         super().__init__(in_features, out_features, bias=bias)
 
         self.c = nn.Parameter(torch.ones(1) * init_c)  # Learnable Lipschitz scaling parameter (scalar per layer)
@@ -190,7 +190,7 @@ class Decoder(nn.Module):
             f = f + f"\n Using positional encoding of dimension {self.pos_enc_dim} on input."
 
         if self.latent_in != [-1]:
-            f = f + f"\n Shortcut connection of input to layer {self.latent_in[0]}"
+            f = f + f"\n Shortcut connection of input to layer {self.latent_in}"
 
         f = f + f"\n Using latent dimension {self.latent_size}."
 
@@ -623,7 +623,7 @@ if __name__ == "__main__":
         "actual_skip_concatenation" : True,
         "positional_encoding" : False,
         "pos_enc_dim" : 4,   
-        "lipschitz_layers" : [-1],
+        "lipschitz_layers" : [1,3],
         "use_lipschitz_normalized_layers" : False,
         "activation" : "SiLU",
         "last_tanh" : False,

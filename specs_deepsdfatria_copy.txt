@@ -1,0 +1,49 @@
+{
+    "Description" : "...",
+
+    "TrainSplit" : "train/data_fnames_train.json",
+
+    "TestSplit" : "test/data_fnames_test.json",
+
+    "Network_specs" : {
+        "latent_size" : 64,                         dimensione latente, provare acneh ad abbassare a 32 o a 16
+        "out_dim" : 3,                              dimensione out, ogni valore è la sdf da ogni surface di x (epi, lv, rv)
+        "dims": [128,128,128,128,128],              dimensioni layers
+        "latent_in" : [3],                          layer in cui viene concatenato l'input di nuovo                      
+        "positional_encoding" : false,
+        "pos_enc_dim" : 4,   
+        "lipschitz_layers" : [-1],                  layer che vengono presi non lineari ma come spectralLinear
+        "use_lipschitz_normalized_layers" : true,   usa layer normalizzati come fanno nel paper SOMH
+        "activation" : "SiLU",
+        "last_tanh" : false,
+        "norm_layers" : [-1],                       
+        "batch_norm" : false,
+        "dropout_prob" : 0.2,
+        "dropout_layers" : [-1]       
+    },
+
+    "NumEpochs": 50000,
+    "lr_weights": 0.0005,
+    "lr_latents": 0.005,
+    "num_samp_per_scene": 4096,
+    "sampling_scene_method": "random",
+    "balance_pos_neg": true,
+    "batch_size": 461,
+    "scale_spatial_inputs_by": 100,
+    "enforce_minmax": false,
+    "clamp_distance": 0.1,
+    "use_loss": "MSE",
+    "lipschitz_alpha": 2e-06,
+    "code_reg_lambda": 1e-06,
+    "anneal_reg_loss": true,
+    "code_reg_anneal_warmup_epochs": 2500,
+    "use_lr_scheduler": true,
+    "lr_weights_final": 0.0001,
+    "lr_latents_final": 0.0005,
+    "lr_decay_time_max": 40000,
+    "log_every_n_epochs": 1000,
+    "log_val_every_n_epochs" : 200,
+    "val_batch_size" : 23,
+    "checkpoint_every_n_epochs": 20000,
+    "resume_training_from_version": "-"
+}

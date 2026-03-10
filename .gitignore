@@ -27,7 +27,7 @@ ventriclesSDF/
 # ===============================
 # Environment / local config
 # ===============================
-config.py
+# config.py
 environment.yml
 *.env
 .env

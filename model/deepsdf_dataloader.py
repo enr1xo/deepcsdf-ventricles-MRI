@@ -91,7 +91,7 @@ class SDFSamples(Dataset):
             # # fine debug
             
             if fname.endswith(".npy"):
-                dat_ = np.load(PATIENTS_NPY_DATA_DIR / fname) # names always relative to PATIENTS_NPY_DATA_DIR !!
+                dat_ = np.load( PATIENTS_NPY_DATA_DIR / fname) # names always relative to PATIENTS_NPY_DATA_DIR !!
 
                 data_tot.append({
                     "coords": dat_[:,:3],
