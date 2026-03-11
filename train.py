@@ -257,7 +257,7 @@ if __name__ == "__main__":
                 show_progress = args.show_progress
             )
 
-        case "compose_specs_from_options":
+        case "compose_specs_from_override":
 
             if args.experiment_name is not None:
                 EXPERIMENT_NAME = str(args.experiment_name)

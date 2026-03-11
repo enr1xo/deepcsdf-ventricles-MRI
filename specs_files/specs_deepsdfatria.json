@@ -44,6 +44,6 @@
     "log_every_n_epochs": 1000,
     "log_val_every_n_epochs" : 200,
     "val_batch_size" : 23,
-    "checkpoint_every_n_epochs": 20000,
+    "checkpoint_every_n_epochs": 200000000,
     "resume_training_from_version": "-"
 }
