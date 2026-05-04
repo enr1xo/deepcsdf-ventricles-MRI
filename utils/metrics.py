@@ -18,7 +18,9 @@ def chamfer_distance_L2(points1, points2):
     dists_1, _ = tree.query(points2)
     tree = KDTree(points2)
     dists_2, _ = tree.query(points1)
-    return 0.5 * ( np.mean(dists_1)  + np.mean(dists_2) )
+    chd = 0.5 * ( np.mean(dists_1)  + np.mean(dists_2) )
+
+    return float(chd)
 
 def varifold_inner(faces1, faces2, gamma = 1.0, block=2048, device = "cuda"):
     faces1 = faces1.to(device)
@@ -133,6 +135,39 @@ def chamfer_and_haussdorff(points1, points2):
     hdd = max( max(dists_1), max(dists_2) )
 
     return {"chamfer" : chd, "haussdorff" : hdd}
+
+
+
+
+def f1_score_function(points_pred, points_gt, tau=1e1):
+
+    if len(points_pred) == 0 or len(points_gt) == 0:
+        return {
+            "precision": float("nan"),
+            "recall": float("nan"),
+            "f1scaore": float("nan")
+        }
+    
+    tree_gt = KDTree(points_gt)
+    d_pred_to_gt, _ = tree_gt.query(points_pred)
+
+    tree_pred = KDTree(points_pred)
+    d_gt_to_pred, _ = tree_pred(points_gt)
+
+    precision = np.mean(d_pred_to_gt < tau)
+    recall = np.mean(d_gt_to_pred < tau)
+
+    if precision + recall == 0:
+        f1_score = 0.0
+    
+    else:
+        f1_score = 2 * (precision * recall/ ( precision + recall))
+    
+    return {
+        "precision": float(precision),
+        "recall": float(recall),
+        "f1scaore": float(f1_score)
+    }
 
 
 if __name__ == "__main__":
