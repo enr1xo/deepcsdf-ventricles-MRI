@@ -9,7 +9,7 @@ import pyvista as pv
 from model.deepsdf_decoder import Decoder, DeepSDF
 from model.deepsdf_dataloader import SDFDataModule
 from utils.metrics import chamfer_distance_L2, LDDMM_loss, haussdorff
-from utils.surface_utils import remesh
+from utils.surface_utils import remesh, make_trimesh_from_pv
 from utils.reconstruction_utils import isosurface_from_sdf
 from utils.visual_utils import plot_gt_vs_reconstructed_with_error
 from vtk import vtkImplicitPolyDataDistance
@@ -173,14 +173,15 @@ def run(
     compute_chamfer = False,
     compute_lddmm = False,
     compute_haussdorff = False,
-    save_latent_codes = True
+    save_latent_codes = True,
+    use_old_chamfer_surface_metric = False
 ):
 
     # region specs: get specifics for the wanted run
     version_dir = EXPERIMENTS_DIR / experiment_name / version
     # DEBUG
     # version_dir = Path("deepcsdf-atria/experiments/enrico_preliminary_train/version_0")
-    version_dir = Path("experiments/enrico_preliminary_2/version_1")
+    # version_dir = Path("experiments/enrico_preliminary_2/version_1")
     # fine debug
 
     if hparams_file is None:
@@ -408,7 +409,7 @@ def run(
             # ==================================================== #
     
             resolution = 128
-            box_lim = 1.1
+            box_lim = 1.05
 
             with torch.no_grad():
                 
@@ -424,17 +425,18 @@ def run(
 
                 grid = np.c_[xx.ravel(), yy.ravel(), zz.ravel()]
 
-                n_batches = len(grid) // 250000
+                ppb = 500000
+                n_batches = len(grid) // ppb
 
                 sdf_preds = []
 
                 for i in range(n_batches + 1):
                     if i < n_batches:
                         # print(250000 * i, 250000 * (i + 1))
-                        xyz = torch.from_numpy(grid[250000 * i : 250000 * (i + 1)]).to(DEVICE)
+                        xyz = torch.from_numpy(grid[ppb * i : ppb * (i + 1)]).to(DEVICE)
                     else:
                         # print(250000 * i, ": ")
-                        xyz = torch.from_numpy(grid[250000 * i :]).to(DEVICE)
+                        xyz = torch.from_numpy(grid[ppb * i :]).to(DEVICE)
 
                     xyz *= decoder_input_scale
 
@@ -474,12 +476,22 @@ def run(
                 
                 organs_to_process = ["epicardium", "lv_endo", "rv_endo"]
 
+                mesh_gt_dict = {}
+                patient_dir = PATIENT_MESHES_DIR / patient_name
+                for organ_name in organs_to_process:
+                    mesh_file = next(patient_dir.rglob(f"{organ_name}-processed.vtp"), None)
+                    mesh_gt_dict[organ_name] = pv.read(mesh_file)
+
+
                 for i,organ in enumerate(organs_to_process):
 
                     print(f"\n > > > Processing {organ} surface ")
                     
+                    # mesh_gt = pv.read(mesh_file)
+                    mesh_gt = mesh_gt_dict[organ]
+
                     # now I compute chamfer without needing the reconstructed mesh, so I do it only when needed
-                    if save_reconstructed_mesh or show_reconstruction_images or save_reconstruction_images or compute_lddmm:
+                    if save_reconstructed_mesh or show_reconstruction_images or save_reconstruction_images or compute_lddmm or compute_chamfer or compute_haussdorff:
                         print("\n Running marching cubes to reconstruct surface ...")
 
                         threshold = 0.0 
@@ -506,7 +518,7 @@ def run(
 
                             print("\n Saved reconstructed mesh file")
 
-                        patient_dir = PATIENT_MESHES_DIR / patient_name
+                        # patient_dir = PATIENT_MESHES_DIR / patient_name
 
                         # DEBUG
                         # print("patient dir:", patient_dir)
@@ -515,10 +527,7 @@ def run(
                         #  fine debug
 
 
-                        mesh_file = next( patient_dir.rglob(f"{organ}-processed.vtp"), None) # !!! these are assumed to be standardized, unit scale already.
-                        
-                        
-                        
+                        # mesh_file = next( patient_dir.rglob(f"{organ}-processed.vtp"), None) # !!! these are assumed to be standardized, unit scale already.                    
                         
                         
                         # DEBUG
@@ -526,10 +535,7 @@ def run(
                         # fine debug
 
 
-
-
-
-                        mesh_gt = pv.read(mesh_file)
+                        # mesh_gt = pv.read(mesh_file)
                         
                         ## !!! NOW BOTH MESHES ARE AT THE UNIT SCALE !!! 
 
@@ -574,8 +580,14 @@ def run(
                     # ======= region METRICS ======= # 
                     if compute_chamfer or compute_haussdorff or compute_lddmm: 
                         
+                        
+
                         if compute_chamfer or compute_haussdorff:
-                            print("\n Retrieving point clouds for metrics computation ... ")
+                            scale = mesh_gt.field_data["scale-tooriginalrange"][0]
+                            scale_mm = scale * 0.001
+
+                            # old code, lo teniamo per sicurezza
+                            #print("\n Retrieving point clouds for metrics computation ... ")
                             # print("Sampling points ...")
                             # samples_orig = make_trimesh_from_pv(mesh_gt).sample(count=100000)
                             # samples_rec = make_trimesh_from_pv(mesh_reconstructed).sample(count=100000)
@@ -597,46 +609,115 @@ def run(
 
                             # here grid and SDF values are at the unit-sphere scale.
                             # Interpolate GT SDF onto same grid points --> use the all the original available points
-                            sdf_grid_gt_organ = griddata(
-                                points_all_in_scene,
-                                sdfs_all_gt[organ],
-                                grid,
-                                method='linear'   
-                            )
+                            # sdf_grid_gt_organ = griddata(
+                            #     points_all_in_scene,
+                            #     sdfs_all_gt[organ],
+                            #     grid,
+                            #     method='linear'   
+                            # )
 
-                            # select points: SDF in a shell around the surface: make it meaningful in millimeters !
-                            # but still I want to compute chamfer at standardized scale for stability
-                            # Chamfer decreases as shell widens, not because reconstruction is better, 
-                            # but because more points farther from high-error regions dilute the average.
+                            # # select points: SDF in a shell around the surface: make it meaningful in millimeters !
+                            # # but still I want to compute chamfer at standardized scale for stability
+                            # # Chamfer decreases as shell widens, not because reconstruction is better, 
+                            # # but because more points farther from high-error regions dilute the average.
 
-                            patient_dir = PATIENT_MESHES_DIR / patient_name
-                            mesh_file = next( patient_dir.rglob(f"{organ}-processed.vtp"), None) # !!! these are assumed to be standardized, unit scale already.
-                            mesh_gt = pv.read(mesh_file)
-                            scale = mesh_gt.field_data["scale-tooriginalrange"] # this rescales the standardized mesh to its original scale, in micrometers
-                            scale_mm = scale * 0.001
+                            # patient_dir = PATIENT_MESHES_DIR / patient_name
+                            # mesh_file = next( patient_dir.rglob(f"{organ}-processed.vtp"), None) # !!! these are assumed to be standardized, unit scale already.
+                            # mesh_gt = pv.read(mesh_file)
+                            # scale = mesh_gt.field_data["scale-tooriginalrange"] # this rescales the standardized mesh to its original scale, in micrometers
+                            # scale_mm = scale * 0.001
 
-                            shell_thick_mm = 0.5 # this means the points AT MILLIMETERS SCALE will be thresholded where their distance to the surface is less than shell_thick_mm mm 
-                            shell_threshold = shell_thick_mm / scale_mm # pick this to be used at the unit scale, but so that the samples rescaled at mm scale are in fact in a shell of thickness 2*shell_thick_mm around the surface
+                            # shell_thick_mm = 0.5 # this means the points AT MILLIMETERS SCALE will be thresholded where their distance to the surface is less than shell_thick_mm mm 
+                            # shell_threshold = shell_thick_mm / scale_mm # pick this to be used at the unit scale, but so that the samples rescaled at mm scale are in fact in a shell of thickness 2*shell_thick_mm around the surface
 
-                            # now grid is still at the standardized scale, where I compute chamfer
-                            samples_gt = grid[ np.where( np.abs(sdf_grid_gt_organ) <= shell_threshold) ]
+                            # # now grid is still at the standardized scale, where I compute chamfer
+                            # samples_gt = grid[ np.where( np.abs(sdf_grid_gt_organ) <= shell_threshold) ]
 
-                            samples_pred = grid[ np.where( np.abs(sdf_grid_pred[organ]) <= shell_threshold) ]
+                            # samples_pred = grid[ np.where( np.abs(sdf_grid_pred[organ]) <= shell_threshold) ]
 
-                            # resample to same number of points : uniform
-                            num_points = 20000
-                            if samples_gt.shape[0] > num_points:
-                                samples_gt = samples_gt[np.random.choice(samples_gt.shape[0], num_points, replace=False)]
-                            if samples_pred.shape[0] > num_points:
-                                samples_pred = samples_pred[np.random.choice(samples_pred.shape[0], num_points, replace=False)]
+                            # # resample to same number of points : uniform
+                            # num_points = 20000
+                            # if samples_gt.shape[0] > num_points:
+                            #     samples_gt = samples_gt[np.random.choice(samples_gt.shape[0], num_points, replace=False)]
+                            # if samples_pred.shape[0] > num_points:
+                            #     samples_pred = samples_pred[np.random.choice(samples_pred.shape[0], num_points, replace=False)]
 
-                            if compute_chamfer: # average nearest-neighbor distances in millimeters
-                                print("\n Computing chamfer")
-                                chamfer_dists[patient_name][organ] = chamfer_distance_L2(samples_gt, samples_pred) * scale_mm # compute at unit scale, rescale to mm
+                            # if compute_chamfer: # average nearest-neighbor distances in millimeters
+                            #     print("\n Computing chamfer")
+                            #     chamfer_dists[patient_name][organ] = chamfer_distance_L2(samples_gt, samples_pred) * scale_mm # compute at unit scale, rescale to mm
                         
-                            if compute_haussdorff:
-                                print("\n Computing Haussdorff")
-                                haussdorff_dists[patient_name][organ] = haussdorff(samples_gt, samples_pred) * scale_mm 
+                            # if compute_haussdorff:
+                            #     print("\n Computing Haussdorff")
+                            #     haussdorff_dists[patient_name][organ] = haussdorff(samples_gt, samples_pred) * scale_mm 
+                            
+                            if use_old_chamfer_surface_metric:
+                                print("\n Retrieving point clouds for OLD chamfer metrics computation ...")
+
+                                # =================
+                                # OLD METHOD
+                                # compare shell point clouds by thresholding sdf on the grid
+                                # =================
+
+                                sdf_grid_gt_organ = griddata(
+                                    points_all_in_scene,
+                                    sdfs_all_gt[organ],
+                                    grid,
+                                    method='linear'   
+                                )
+
+                                shell_thick_mm = 0.5
+                                shell_threshold = shell_thick_mm / scale_mm
+
+                                samples_gt = grid[np.where(np.abs(sdf_grid_gt_organ) <= shell_threshold)]
+                                samples_pred = grid[np.where(np.abs(sdf_grid_pred[organ]) <= shell_threshold)]
+
+                                num_points = 20000
+
+                                if samples_pred.shape[0] > num_points:
+                                    samples_pred = samples_pred[np.random.choice(samples_pred.shape[0], num_points, replace=False)]
+
+                                if compute_chamfer: # average nearest-neighbor distances in millimeters
+                                    print("\n Computing chamfer")
+                                    chamfer_dists[patient_name][organ] = chamfer_distance_L2(samples_gt, samples_pred) * scale_mm # compute at unit scale, rescale to mm
+                            
+                                if compute_haussdorff:
+                                    print("\n Computing Haussdorff")
+                                    haussdorff_dists[patient_name][organ] = haussdorff(samples_gt, samples_pred) * scale_mm 
+                            
+                            else:
+                                print("\n point clouds for new chamfer metrics computation")   
+                                # =========================
+                                # NEW METHOD
+                                # Sample points directly from GT and reconstructed meshes
+                                # =========================
+
+                                if mesh_reconstructed is None:
+                                    try:
+                                        mesh_reconstructed = isosurface_from_sdf(
+                                                                x, y, z,
+                                                                sdf_pred=sdf_grid_pred[organ],
+                                                                level=0.0,
+                                                                box_lim=box_lim
+                                        )
+                                    except:
+                                        print(f"!!! Version {version}: skipping {organ} isosurface extraction: not found for current isovalue !!! ")
+                                        continue
+                                    
+                                samples_count = 50000
+                                samples_gt = make_trimesh_from_pv(mesh_gt).sample(count=samples_count)
+                                samples_pred = make_trimesh_from_pv(mesh_reconstructed).sample(count=samples_count)
+                            
+                                if compute_chamfer:
+                                    print("\n Computing chamfer")
+                                    chamfer_dist = chamfer_distance_L2(samples_gt, samples_pred) * scale_mm
+                                    chamfer_dists[patient_name][organ] = chamfer_dist
+                                
+                                if compute_haussdorff:
+                                    print("\n Computing Hausdorff")
+                                    haussdorff_dist = haussdorff(samples_gt, samples_pred) * scale_mm
+                                    haussdorff_dists[patient_name][organ] = haussdorff_dist
+
+
 
                         if compute_lddmm:
                             print("\n Computing LDDMM")

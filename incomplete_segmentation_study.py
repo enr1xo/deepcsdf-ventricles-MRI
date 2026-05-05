@@ -52,5 +52,11 @@ def visualize_epi_in_batches(folder_path, batch_size=24):
 # af_path = "/home/rizzardi/Schreibtisch/SDF_processed_patients/AF_processed/AF_processed"
 # sv_path = "/home/rizzardi/Schreibtisch/SDF_processed_patients/sicvalves_processed/sicvalves_processed"
 # ilearnHeart_path = "/home/rizzardi/Schreibtisch/SDF_processed_patients/2017_ilearnHeart_prcessed/2017_ilearnHeart_prcessed"
-vt_path = "/home/rizzardi/Schreibtisch/SDF_processed_patients/VT_cases_processed/VT_cases_processed"
-visualize_epi_in_batches(vt_path)
+#vt_path = "/home/rizzardi/Schreibtisch/SDF_processed_patients/VT_cases_processed/VT_cases_processed"
+
+# new paths for leuven patients
+leuNORM = "/home/rizzardi/Schreibtisch/leuvenNORMcomplete"
+leuBBB = "/home/rizzardi/Schreibtisch/leuvenBBBcomplete"
+
+
+visualize_epi_in_batches(leuBBB)

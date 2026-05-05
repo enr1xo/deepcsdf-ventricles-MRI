@@ -1,12 +1,14 @@
 {
     "Description" : "...",
 
-    "TrainSplit" : "train/data_fnames_train.json",
+    "TrainSplit" : "data/data_5k/fold1/train/data_fnames_train.json",
 
-    "TestSplit" : "test/data_fnames_test.json",
+    "TestSplit" : "data/data_5k/fold1/test/data_fnames_test.json",
+
+    "DataSource": "",
 
     "Network_specs" : {
-        "latent_size" : 64,
+        "latent_size" : 32,
         "out_dim" : 3,
         "dims": [128,128,128,128,128],
         "latent_in" : [3],
@@ -22,19 +24,19 @@
         "dropout_layers" : [-1]       
     },
 
-    "NumEpochs": 50000,
+    "NumEpochs": 30000,
     "lr_weights": 0.0005,
     "lr_latents": 0.005,
-    "num_samp_per_scene": 4096,
+    "num_samp_per_scene": 256,
     "sampling_scene_method": "random",
     "balance_pos_neg": true,
-    "batch_size": 461,
+    "batch_size": 632,
     "scale_spatial_inputs_by": 100,
     "enforce_minmax": false,
     "clamp_distance": 0.1,
     "use_loss": "MSE",
-    "lipschitz_alpha": 2e-06,
-    "code_reg_lambda": 1e-06,
+    "lipschitz_alpha": 2e-05,
+    "code_reg_lambda": 1e-05,
     "anneal_reg_loss": true,
     "code_reg_anneal_warmup_epochs": 2500,
     "use_lr_scheduler": true,
@@ -42,7 +44,7 @@
     "lr_latents_final": 0.0005,
     "lr_decay_time_max": 40000,
     "log_every_n_epochs": 1000,
-    "log_val_every_n_epochs" : 200,
+    "log_val_every_n_epochs" : 2000,
     "val_batch_size" : 23,
     "checkpoint_every_n_epochs": 200000000,
     "resume_training_from_version": "-"

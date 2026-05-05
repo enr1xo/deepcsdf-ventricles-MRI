@@ -139,20 +139,20 @@ def chamfer_and_haussdorff(points1, points2):
 
 
 
-def f1_score_function(points_pred, points_gt, tau=1e1):
+def f1_score_function(points_pred, points_gt, tau):
 
     if len(points_pred) == 0 or len(points_gt) == 0:
         return {
             "precision": float("nan"),
             "recall": float("nan"),
-            "f1scaore": float("nan")
+            "f1score": float("nan")
         }
     
     tree_gt = KDTree(points_gt)
     d_pred_to_gt, _ = tree_gt.query(points_pred)
 
     tree_pred = KDTree(points_pred)
-    d_gt_to_pred, _ = tree_pred(points_gt)
+    d_gt_to_pred, _ = tree_pred.query(points_gt)
 
     precision = np.mean(d_pred_to_gt < tau)
     recall = np.mean(d_gt_to_pred < tau)
@@ -161,12 +161,12 @@ def f1_score_function(points_pred, points_gt, tau=1e1):
         f1_score = 0.0
     
     else:
-        f1_score = 2 * (precision * recall/ ( precision + recall))
+        f1_score = 2 * precision * recall/ ( precision + recall)
     
     return {
         "precision": float(precision),
         "recall": float(recall),
-        "f1scaore": float(f1_score)
+        "f1score": float(f1_score)
     }
 
 

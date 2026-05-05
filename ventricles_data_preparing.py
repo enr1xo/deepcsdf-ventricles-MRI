@@ -10,6 +10,8 @@ from tqdm import tqdm
 from utils.align_atrial_mesh import apply_icp_result, align_to_reference_mesh
 from scipy.spatial import KDTree
 import pymeshfix
+import time
+
 from utils.surface_utils import (
     check_watertight,
     scale_to_unit_sphere,
@@ -570,8 +572,9 @@ def _create_deepsdf_data_npy(
     num_epi_samples=None,
     num_lendo_samples=None,
     num_rendo_samples=None,
-    rho = 0.75,
+    sigma = 0.025,
     lamb = 0.1,
+    rho = 0.75,
     create_processed_meshes=True,
     store_processed_meshes=True,
 ):
@@ -791,6 +794,7 @@ def _create_deepsdf_data_npy(
                     epicardium.copy(),
                     number_of_points=num_epi_samples,
                     use_deepsdf_convention=True,
+                    sigma=sigma,
                     rho=rho,
                     lamb=lamb,
                     ratio=48 / 50,
@@ -803,6 +807,7 @@ def _create_deepsdf_data_npy(
                     LV_endo.copy(),
                     number_of_points=num_lendo_samples,
                     use_deepsdf_convention=True,
+                    sigma=sigma,
                     rho=rho,
                     lamb=lamb,
                     ratio=48 / 50,
@@ -815,6 +820,7 @@ def _create_deepsdf_data_npy(
                     RV_endo.copy(),
                     number_of_points=num_rendo_samples,
                     use_deepsdf_convention=True,
+                    sigma=sigma,
                     rho=rho,
                     lamb=lamb,
                     ratio=48 / 50,
@@ -887,63 +893,153 @@ if __name__ == "__main__":
     #     reference_patient="AF069"
     # )
 
-    sickness_list = ["AF", "SV", "2017", "VT"]
-    reference_patient_lis = ["AF001", "yrm0342_v1", "S62", "VT001_MUG1"]
+    sickness_list = ["AF", "SV", "2017", "VT", "LeuBBB", "LeuNORM"]
+    reference_patient_list = ["AF001", "yrm0342_v1", "S62", "VT001_MUG1", "LEU_BBB_21001", "LEU_NORM_0016"]
 
-    sickness = "VT"
+    sickness = "AF"
 
     if sickness == sickness_list[0]:
-        reference_patient = reference_patient_lis[0]
+        reference_patient = reference_patient_list[0]
 
     elif sickness == sickness_list[1]:
-        reference_patient = reference_patient_lis[1]
+        reference_patient = reference_patient_list[1]
     
     elif sickness == sickness_list[2]:
-        reference_patient = reference_patient_lis[2]
+        reference_patient = reference_patient_list[2]
     
     elif sickness == sickness_list[3]:
-        reference_patient = reference_patient_lis[3]
+        reference_patient = reference_patient_list[3]
+    
+    elif sickness == sickness_list[4]:
+        reference_patient = reference_patient_list[4]
 
-    num_epi_samples = 30000
-    num_lendo_samples = 35000
-    num_rendo_samples = 35000
+    elif sickness == sickness_list[5]:
+        reference_patient = reference_patient_list[5]
+
+    # 5k
+    num_epi_samples = 1500
+    num_lendo_samples = 1750
+    num_rendo_samples = 1750
+
+    # 3k
+    num_epi_samples = 900
+    num_lendo_samples = 1050
+    num_rendo_samples = 1050
+
     num = num_epi_samples + num_lendo_samples + num_rendo_samples
 
-    _create_deepsdf_data_npy(
-        source_dir=PATIENT_MESHES_DIR,
-        save_to_dir= PATIENTS_COORDS_AND_SDFS_DIR / f"single_VT_{num}pts_npy",
-        reference_patient=reference_patient,
-        num_epi_samples=num_epi_samples,
-        num_lendo_samples=num_lendo_samples,
-        num_rendo_samples=num_rendo_samples,
-        create_processed_meshes=True,
-        store_processed_meshes=True
-    )
+    sigmas = [0.25, 0.025, 0.0025]
+    lambdas = [0.25, 0.5, 0.75]
+    rhos = [0.5, 1, 2]
+
+    combination = 1
+    combs = len(sigmas) * len(lambdas) * len(rhos)
+
+    parallel = True
+
+    if not parallel:
+        print(f"\n--- NON-PARALELL PREPROCESSING ---\n")
+    else:
+        print(f"\n--- PARALELL PREPROCESSING ---\n")
+
+    for sigma in sigmas:
+        for lam in lambdas:
+            for rho in rhos:
+
+                if not parallel:               
+                    print(f"\nSamples number: {num}")
+                    print(f"\nPreprocessing sampling combination {combination} / {combs}.")
+
+                    save_dir = PATIENTS_COORDS_AND_SDFS_DIR / f"S_{sigma}-L_{lam}-R_{rho}"
+                    save_dir.mkdir(parents=True, exist_ok=True)
+
+                    start_time = time.time()
+
+                    _create_deepsdf_data_npy(
+                        source_dir=PATIENT_MESHES_DIR,
+                        save_to_dir= save_dir,
+                        reference_patient=reference_patient,
+                        num_epi_samples=num_epi_samples,
+                        num_lendo_samples=num_lendo_samples,
+                        num_rendo_samples=num_rendo_samples,
+                        sigma=sigma,
+                        lamb=lam,
+                        rho=rho,
+                        create_processed_meshes=False,
+                        store_processed_meshes=True
+                    )
+                    
+                    end_time = time.time()
+
+                    elapsed = end_time - start_time
+
+                    print(f"\nCombination S={sigma}, L={lam}, R={rho} took {elapsed:.2f} seconds ({elapsed/60:.2f} min)")
+
+                    combination += 1
+
+                else:
+                    from Z_enricos_stuff.parallel_preprocessing import _create_deepsdf_data_npy_parallel
+                    print(f"\nSamples number: {num}")
+                    print(f"\nPreprocessing sampling combination {combination} / {combs}.")
+
+                    save_dir = PATIENTS_COORDS_AND_SDFS_DIR / f"S_{sigma}-L_{lam}-R_{rho}"
+                    save_dir.mkdir(parents=True, exist_ok=True)
+
+                    # DEBUG
+                    # patient_dir = PATIENT_MESHES_DIR / "LEU_BBB_21056"
+                    # fine debug
+
+                    start_time = time.time()
+
+                    _create_deepsdf_data_npy_parallel(
+                        source_dir=PATIENT_MESHES_DIR,
+                        # source_dir=patient_dir,
+                        save_to_dir= save_dir,
+                        reference_patient=reference_patient,
+                        num_epi_samples=num_epi_samples,
+                        num_lendo_samples=num_lendo_samples,
+                        num_rendo_samples=num_rendo_samples,
+                        sigma=sigma,
+                        lamb=lam,
+                        rho=rho,
+                        create_processed_meshes=False,
+                        store_processed_meshes=True,
+                        max_workers=6
+                    )
+                    
+                    end_time = time.time()
+
+                    elapsed = end_time - start_time
+
+                    print(f"\nCombination S={sigma}, L={lam}, R={rho} took {elapsed:.2f} seconds ({elapsed/60:.2f} min)")
+
+                    combination += 1
+
 
     
     patient = reference_patient
 
     data = np.load(PATIENTS_NPY_DATA_DIR / f"{patient}-epi_lv_rv_{num}_coords_and_sdf.npy") 
 
-    coords = data[:,:3]
-    sdfs = data[:,3:]
+    # coords = data[:,:3]
+    # sdfs = data[:,3:]
 
-    points = pv.PolyData(coords)
-    points["sdf_epi"] = sdfs[:,0]
-    points["sdf_lv"] = sdfs[:,1]
-    points["sdf_rv"] = sdfs[:,2]
+    # points = pv.PolyData(coords)
+    # points["sdf_epi"] = sdfs[:,0]
+    # points["sdf_lv"] = sdfs[:,1]
+    # points["sdf_rv"] = sdfs[:,2]
 
-    plotter = pv.Plotter()
-    plotter.add_mesh(points, scalars="sdf_epi", cmap="jet_r", render_points_as_spheres = True)
-    plotter.show()
+    # plotter = pv.Plotter()
+    # plotter.add_mesh(points, scalars="sdf_epi", cmap="jet_r", render_points_as_spheres = True)
+    # plotter.show()
 
-    plotter = pv.Plotter()
-    plotter.add_mesh(points, scalars="sdf_lv", cmap="jet_r", render_points_as_spheres = True)
-    plotter.show()
+    # plotter = pv.Plotter()
+    # plotter.add_mesh(points, scalars="sdf_lv", cmap="jet_r", render_points_as_spheres = True)
+    # plotter.show()
 
-    plotter = pv.Plotter()
-    plotter.add_mesh(points, scalars="sdf_rv", cmap="jet_r", render_points_as_spheres = True)
-    plotter.show()
+    # plotter = pv.Plotter()
+    # plotter.add_mesh(points, scalars="sdf_rv", cmap="jet_r", render_points_as_spheres = True)
+    # plotter.show()
 
 
         

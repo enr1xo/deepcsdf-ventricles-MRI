@@ -244,20 +244,20 @@ class DeepSDF(pl.LightningModule):
 
         # EIKONAL terms
         # self.use_eikonal = specs.get("use_eikonl_loss", False)
-        self.use_eikonal_loss = True
+        self.use_eikonal_loss = False
 
         # self.eikonal_weight = specs.get("eikonal_weight", 1e-2)
-        self.eikonal_weight = 0.1
+        self.eikonal_weight = 1e-3
         
         # self.ekional_frac = specs.get("eikonal_frac", 0.25)
-        self.eikonal_frac = 0.2
+        self.eikonal_frac = 0.75
 
 
         self.enforce_minmax = specs.get("enforce_minmax", False)
 
         self.clamp_distance = specs.get("clamp_distance", 0.1)
 
-        self.Cs = specs.get("scale_spatial_inputs_by", 100)
+        self.Cs = specs.get("scale_spatial_inputs_by", 1.00)
 
         self.log_every_n_epochs = specs.get("log_every_n_epochs", 1000)
 
@@ -353,7 +353,12 @@ class DeepSDF(pl.LightningModule):
 
         xyz = coords.reshape(-1, 3) * self.Cs
 
+        if getattr(self, "use_eikonal_loss", False):
+            xyz = xyz.clone().detach().requires_grad_(True)
+
+        # if we '* self.Cs' is uncommented in the definition of xyz above, then uncomment it also in the definition of sdf_gt below.
         sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim)
+
         if self.enforce_minmax:
             sdf_gt = torch.clamp(sdf_gt, min = -self.clamp_distance, max=self.clamp_distance)
 
@@ -398,44 +403,75 @@ class DeepSDF(pl.LightningModule):
 
         # EIKONAL LOSS
         # qua computiamo il termine eikonale (grad(S) - 1)
+        # eikonal_loss = torch.tensor(0.0, device=self.device)
+        eikonal_loss = 0.0
+        #debug
         eikonal_loss = torch.tensor(0.0, device=self.device)
+        # fine debug
+        eikonal_alpha = self.eikonal_weight
 
         if getattr(self, "use_eikonal_loss", False):
-            N = xyz.shape[0]
+            # old eikonal way (wrong)
+            # N = xyz.shape[0]
 
-            frac = float(getattr(self, "eikonal_frac", 0.25))
-            frac = max(0.0, min(1.0, frac))
+            # frac = float(getattr(self, "eikonal_frac", 0.25))
+            # frac = max(0.0, min(1.0, frac))
 
-            M = max(1, int(frac * N))
+            # M = max(1, int(frac * N))
 
-            eik_idx = torch.randperm(N, device=xyz.device)[:M]
+            # eik_idx = torch.randperm(N, device=xyz.device)[:M]
 
-            xyz_eik = xyz[eik_idx].detach().clone().requires_grad_(True)
+            # xyz_eik = xyz[eik_idx].detach().clone().requires_grad_(True)
 
-            batch_vecs_eik = batch_vecs[eik_idx].detach()
+            # batch_vecs_eik = batch_vecs[eik_idx].detach()
 
-            input_eik = torch.cat([batch_vecs_eik, xyz_eik], dim=1)
-            pred_eik = self.decoder(input_eik)
+            # input_eik = torch.cat([batch_vecs_eik, xyz_eik], dim=1)
+            # pred_eik = self.decoder(input_eik)
 
-            if self.decoder.out_dim > 1:
-                pred_eik_scalar = pred_eik.sum(dim=1, keepdim=True)
-            else:
-                pred_eik_scalar = pred_eik
+            # if self.decoder.out_dim > 1:
+            #     pred_eik_scalar = pred_eik.sum(dim=1, keepdim=True)
+            # else:
+            #     pred_eik_scalar = pred_eik
             
-            grads = torch.autograd.grad(
-                outputs=pred_eik_scalar,
-                input=xyz_eik,
-                grad_outputs=torch.ones_like(pred_eik_scalar),
-                create_graph=True,
-                retain_graph=True,
-                only_inputs=True        
-                )[0]
+            # grads = torch.autograd.grad(
+            #     outputs=pred_eik_scalar,
+            #     inputs=xyz_eik,
+            #     grad_outputs=torch.ones_like(pred_eik_scalar),
+            #     create_graph=True,
+            #     retain_graph=True,
+            #     only_inputs=True        
+            #     )[0]
             
-            grad_norm = grads.norm(2, dim=1)
-            eikonal_loss = ((grad_norm - 1.0)).mean() 
+            # grad_norm = grads.norm(2, dim=1)
+            # eikonal_loss = (grad_norm - 1.0).abs().mean() 
             # eikonal_loss = ((grad_norm - 1.0)**2).mean() 
+            # fine old eikonal
+
+            # new eikonal
+            grads = []
+
+            # we compute the gradients of the points in the unitary sphere
+            xyz /= self.Cs
+
+            for k in range(prediction.shape[1]):
+                grad_k = torch.autograd.grad(
+                    outputs=prediction[:,k].sum(),
+                    inputs=xyz,
+                    create_graph=True
+                )[0]
+                grads.append(grad_k.norm(dim=1))
+            
+            grads = torch.stack(grads, dim=1)
+
         
-        eikonal_alpha = self.eikonal_weight
+            eikonal_alpha = self.eikonal_weight
+
+            # target = 1.0 / self.Cs
+            target = torch.tensor(1.0, device=self.device)
+
+            eikonal_loss = ((grads - target)**2).mean()
+
+        
 
         # qua dovremo aggiungere il termine eikonale 
         training_loss = (chunk_loss 
@@ -451,17 +487,26 @@ class DeepSDF(pl.LightningModule):
             # current_lrs = [pg['lr'] for pg in optimizer.param_groups]
             # lr_weights, lr_latents = current_lrs
 
+            logs = {
+                "latents_mean_L2_squared": reg_loss.detach(),
+                "lipschitz_penalty": lipschitz_loss.detach() if self.use_lipreg_loss else torch.tensor(0.0, device=self.device),
+                "prediction_loss": chunk_loss.detach(),
+                "training_loss": training_loss.detach(),
+                "code_reg_factor": torch.tensor(code_reg_lambda, device=self.device),
+                "eikonal_loss": eikonal_loss.detach(),
+            }
+                        
+            if self.use_eikonal_loss:
+                logs.update({
+                    "eikonal_loss_signed": (grads - target).mean().detach(),
+                    "eikonal_loss_abs": (grads - target).abs().mean().detach(),
+                    "grad_norm_mean": grads.mean().detach(),
+                    "grad_norm_min": grads.min().detach(),
+                    "grad_norm_max": grads.max().detach(),
+                })
+
             self.log_dict(
-                {
-                    "latents_mean_L2_squared": reg_loss.detach().cpu(),
-                    "lipschitz_penalty": lipschitz_loss.detach().cpu() if self.use_lipreg_loss else torch.tensor(0.0, device="cpu"),
-                    "prediction_loss": chunk_loss.detach().cpu(),
-                    "eikonal_loss": eikonal_loss.detach().cpu(),
-                    "training_loss" : training_loss.detach().cpu(),
-                    "code_reg_factor" : code_reg_lambda,
-                    # "lr_weights" : lr_weights,
-                    # "lr_latents" : lr_latents
-                },
+                logs,
                 logger=True,
                 on_step=False,
                 on_epoch=True,
@@ -481,7 +526,10 @@ class DeepSDF(pl.LightningModule):
         sdf_gt = data["sdf"].to(self.device)
 
         xyz_gt = xyz_gt.reshape(-1, 3) * self.Cs
-        sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim)
+
+        # if we '* self.Cs' is uncommented in the definition of xyz_gt above, then uncomment it also in the definition of sdf_gt below.
+        sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim) #* self.cs
+
         if self.enforce_minmax:
             sdf_gt = torch.clamp(sdf_gt, min=-self.clamp_distance, max=self.clamp_distance)
 
@@ -615,26 +663,26 @@ class DeepSDF(pl.LightningModule):
 
 if __name__ == "__main__":
 
-    specs = {
-        "latent_size" : 64,
-        "out_dim" : 3,
-        "dims" : [256,256,256,256,256],
-        "latent_in" : [3],
-        "actual_skip_concatenation" : True,
-        "positional_encoding" : False,
-        "pos_enc_dim" : 4,   
-        "lipschitz_layers" : [1,3],
-        "use_lipschitz_normalized_layers" : False,
-        "activation" : "SiLU",
-        "last_tanh" : False,
-        "norm_layers" : [-1],
-        "batch_norm" : False,
-        "dropout_prob" : 0.2,
-        "dropout_layers" : [-1]       
-    }
+    # specs = {
+    #     "latent_size" : 64,
+    #     "out_dim" : 3,
+    #     "dims" : [256,256,256,256,256],
+    #     "latent_in" : [3],
+    #     "actual_skip_concatenation" : True,
+    #     "positional_encoding" : False,
+    #     "pos_enc_dim" : 4,   
+    #     "lipschitz_layers" : [1,3],
+    #     "use_lipschitz_normalized_layers" : False,
+    #     "activation" : "SiLU",
+    #     "last_tanh" : False,
+    #     "norm_layers" : [-1],
+    #     "batch_norm" : False,
+    #     "dropout_prob" : 0.2,
+    #     "dropout_layers" : [-1]       
+    # }
 
-    decoder = Decoder(**specs)
+    # decoder = Decoder(**specs)
 
-    print(decoder.description())
+    # print(decoder.description())
 
     pass

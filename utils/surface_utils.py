@@ -89,6 +89,16 @@ def sample_uniform_points_in_unit_sphere(amount):
     else:
         return unit_sphere_points[:amount, :]
 
+def make_trimesh_from_pv(mesh: pv.UnstructuredGrid | pv.PolyData | trimesh.Trimesh ):
+    if not isinstance(mesh, trimesh.Trimesh):
+        surface = mesh.extract_surface()
+        faces = surface.faces.reshape((-1, 4))[:, 1:] 
+        vertices = surface.points
+        return trimesh.Trimesh(vertices=vertices, faces=faces)
+    else:
+        return mesh
+    
+
 def subsample_points_simil_lhs(points, num_points, num_bins, seed=None):
     if len(points) <= num_points:
         return points
@@ -131,7 +141,7 @@ def subsample_points_simil_lhs(points, num_points, num_bins, seed=None):
     
 def make_trimesh_from_pv(mesh: pv.UnstructuredGrid | pv.PolyData | trimesh.Trimesh ):
     if not isinstance(mesh, trimesh.Trimesh):
-        surface = mesh.extract_surface()
+        surface = mesh.extract_surface(algorithm="dataset_surface")
         faces = surface.faces.reshape((-1, 4))[:, 1:] 
         vertices = surface.points
         return trimesh.Trimesh(vertices=vertices, faces=faces)
@@ -186,6 +196,7 @@ def sample_surface_for_deepsdf(
         surface_mesh: pv.PolyData,
         number_of_points,
         sample_surface_method = "curvature",
+        sigma = 0.025,
         rho = 0.75,
         lamb = 0.2,
         use_deepsdf_convention = True,
@@ -217,7 +228,7 @@ def sample_surface_for_deepsdf(
         raise ValueError("Unknown sampling method requested, available 'curvature' or 'uniform'.")
 
     # these scales make sense when points are in unit-sphere like range, make sure surface mesh is !!
-    scale1 = 0.0025
+    scale1 = sigma
     scale2 = scale1 / 10
 
     query_points.append(

@@ -39,13 +39,46 @@ class SDFSamples(Dataset):
 
         self.sdf_dim = specs.get("Network_specs", {}).get("out_dim", 3)
 
-        self.train_fname = DATA_DIR / specs.get("TrainSplit", None) # I don't like DATA_DIR hardcoded actually
+        # # old and correct dataloader uses these 4
+        # self.train_fname = DATA_DIR / specs.get("TrainSplit", None) # I don't like DATA_DIR hardcoded actually
 
-        self.test_fname = DATA_DIR / specs.get("TestSplit", None)
+        # self.test_fname = DATA_DIR / specs.get("TestSplit", None)
 
-        self.val_fname = DATA_DIR / specs.get("ValSplit", self.test_fname)
+        # self.val_fname = DATA_DIR / specs.get("ValSplit", self.test_fname)
+
+        # self.data_file = ""
+        # # end of old dataloader
+
+        # new dataloader for parallel training
+        # Use paths from specs if provided, otherwise fall back to old config-based behaviour
+        train_split = specs.get("TrainSplit", None)
+        test_split = specs.get("TestSplit", None)
+        val_split = specs.get("ValSplit", test_split)
+
+        self.train_fname = Path(train_split) if train_split is not None else None
+        self.test_fname = Path(test_split) if test_split is not None else None
+        self.val_fname = Path(val_split) if val_split is not None else self.test_fname
+
+        # If relative paths are used, keep backward compatibility with old workflow
+        if self.train_fname is not None and not self.train_fname.is_absolute():
+            self.train_fname = DATA_DIR / self.train_fname
+        if self.test_fname is not None and not self.test_fname.is_absolute():
+            self.test_fname = DATA_DIR / self.test_fname
+        if self.val_fname is not None and not self.val_fname.is_absolute():
+            self.val_fname = DATA_DIR / self.val_fname
+
+        # DataSource for the npy files
+        data_source = specs.get("DataSource", None)
+        if data_source is not None:
+            self.data_source = Path(data_source)
+        else:
+            self.data_source = PATIENTS_NPY_DATA_DIR
+
+        if not self.data_source.exists():
+            raise FileNotFoundError(f"DataSource directory does not exist: {self.data_source}")
 
         self.data_file = ""
+        # end od modification for parallel
 
     def _read_data(self):
 
@@ -80,6 +113,19 @@ class SDFSamples(Dataset):
 
     def _unpack_sdfdata_json(self, data_file):
         
+        data_file = Path(data_file).resolve()
+        print("\n[DEBUG] data_file used:", data_file)
+        print("[DEBUG] data_source used:", self.data_source.resolve())
+
+        loaded = json.load(open(data_file))
+
+        print("[DEBUG] contains 20000?", any("20000" in x for x in loaded))
+        print("[DEBUG] contains 5000?", any("5000" in x for x in loaded))
+
+        print("[DEBUG] first 10 entries:")
+        for x in loaded[:10]:
+            print("   ", x)
+
         data_tot = []
 
         loaded = json.load( open(data_file) )
@@ -91,8 +137,13 @@ class SDFSamples(Dataset):
             # # fine debug
             
             if fname.endswith(".npy"):
-                dat_ = np.load( PATIENTS_NPY_DATA_DIR / fname) # names always relative to PATIENTS_NPY_DATA_DIR !!
+                #old dataloader
+                # dat_ = np.load( PATIENTS_NPY_DATA_DIR / fname) # names always relative to PATIENTS_NPY_DATA_DIR !!
+                # end olddataloader
 
+                #new dataloader
+                dat_ = np.load(self.data_source / fname)
+                #end new dataloader
                 data_tot.append({
                     "coords": dat_[:,:3],
                     "sdf": dat_[:,3:]
@@ -207,7 +258,7 @@ class SDFDataModule(pl.LightningDataModule):
     def __init__(
         self,
         specs: dict,
-        num_workers = 0,
+        num_workers = 23,
         shuffle=True,
         drop_last=True
     ):
@@ -287,13 +338,15 @@ class SDFDataModule(pl.LightningDataModule):
             shuffle=self.shuffle,
             num_workers=self.num_workers,
             drop_last=self.drop_last,
+            pin_memory=True,
+            persistent_workers=True if self.num_workers > 0 else False,
         )
 
     def test_dataloader(self):
         print(f"TEST DATA LOADED: {len(self.sdf_test)} scenes. Default num_samp_per_scene = {self.num_samples_per_scene}.")
         return DataLoader(
             self.sdf_test,
-            batch_size=1, # hard coded for now !!
+            batch_size=self.batch_size, # hard coded for now !!
             shuffle=False,
         )
 
@@ -303,8 +356,10 @@ class SDFDataModule(pl.LightningDataModule):
             self.sdf_val,
             batch_size=self.val_batch_size, 
             shuffle=False, # I get always the same scene 
-            num_workers=0,
+            num_workers=self.num_workers,
             drop_last=True,
+            pin_memory=True,
+            persistent_workers=True if self.num_workers > 0 else False,
         )
 
 
