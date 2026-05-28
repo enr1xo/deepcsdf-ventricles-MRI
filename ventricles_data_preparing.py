@@ -214,35 +214,6 @@ def propagate_surface_cell_data_tags(original_surface, target_surface, elemtagsk
 
     return target_surface
 
-# def make_surface_consistently_oriented(surface_mesh: pv.PolyData):
-
-#     # check if passed mesh is actually watertight
-#     if not check_watertight(surface_mesh):
-#         raise ValueError("Trying to orient mesh that is not watertight!")
-
-#     # Ensures inside/outside orientation is consistent
-#     surface_mesh.compute_normals(
-#         cell_normals=True,
-#         point_normals=False,
-#         auto_orient_normals=True,  # automatically flips normals to be consistent
-#         split_vertices=False,      # keep shared vertices
-#         inplace=True
-#     )
-
-#     # consistent orientation: normals oriented outward
-#     # pick a point inside --> centroid SHOULD be
-#     center = surface_mesh.center
-
-#     cell_centers = surface_mesh.cell_centers().points
-#     normals = surface_mesh.cell_normals
-
-#     idx = np.random.choice(len(normals), size=10, replace=False)
-#     sign = np.sign(np.sum(np.einsum("ij,ij->i", normals[idx], cell_centers[idx] - center)))
-#     if sign < 0:
-#         surface_mesh.flip_normals()
-
-#     return
-
 def make_surface_watertight(surface_mesh: pv.PolyData):
     """
         Closes surface, additionally stores cell_data attribute 'isholepatch' indicating if cells are original or added to close holes.
@@ -922,9 +893,9 @@ if __name__ == "__main__":
     num_rendo_samples = 1750
 
     # 3k
-    num_epi_samples = 900
-    num_lendo_samples = 1050
-    num_rendo_samples = 1050
+    # num_epi_samples = 900
+    # num_lendo_samples = 1050
+    # num_rendo_samples = 1050
 
     num = num_epi_samples + num_lendo_samples + num_rendo_samples
 

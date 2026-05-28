@@ -15,7 +15,7 @@
         "positional_encoding" : false,
         "pos_enc_dim" : 4,   
         "lipschitz_layers" : [-1],
-        "use_lipschitz_normalized_layers" : true,
+        "use_lipschitz_normalized_layers" : false,
         "activation" : "SiLU",
         "last_tanh" : false,
         "norm_layers" : [-1],

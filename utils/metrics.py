@@ -6,6 +6,9 @@ from .surface_utils import remesh
 # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import torch
 
+from vtk import vtkSampleFunction, vtkImplicitPolyDataDistance
+from vtk.util.numpy_support import vtk_to_numpy
+
 # DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -168,6 +171,60 @@ def f1_score_function(points_pred, points_gt, tau):
         "recall": float(recall),
         "f1score": float(f1_score)
     }
+
+def sdf_gt_on_regular_grid(mesh_gt, resolution, box_lim):
+    implicit = vtkImplicitPolyDataDistance()
+    implicit.SetInput(mesh_gt)
+
+    sampler = vtkSampleFunction()
+    sampler.SetImplicitFunction(implicit)
+    sampler.SetModelBounds(
+        -box_lim, box_lim,
+        -box_lim, box_lim,
+        -box_lim, box_lim
+    )
+    sampler.SetSampleDimensions(resolution, resolution, resolution)
+    sampler.ComputeNormalsOff()
+    sampler.Update()
+
+    sdf_vtk = vtk_to_numpy(
+        sampler.GetOutput().GetPointData().GetScalars()
+    )
+
+    # VTK usa x come asse più veloce; riordino per matchare np.ravel C-style
+    sdf_grid = sdf_vtk.reshape(
+        (resolution, resolution, resolution),
+        order="F"
+    ).ravel(order="C")
+
+    return sdf_grid
+
+def compute_dice_score(sdf_pred, sdf_gt, level=0.0, eps=1e-8):
+
+    pred_occ = sdf_pred <= level
+    gt_occ = sdf_gt <= level
+
+    intersection = np.logical_and(pred_occ, gt_occ).sum()
+
+    pred_volume = pred_occ.sum()
+    gt_volume = gt_occ.sum()
+
+    dice = (2.0 * intersection + eps) / (pred_volume + gt_volume + eps)
+
+    return dice
+
+
+def compute_iou_score(sdf_pred, sdf_gt, level=0.0, eps=1e-8):
+
+    pred_occ = sdf_pred <= level
+    gt_occ = sdf_gt <= level
+
+    intersection = np.logical_and(pred_occ, gt_occ).sum()
+    union = np.logical_or(pred_occ, gt_occ).sum()
+
+    iou = float((intersection + eps) / (union + eps))
+
+    return iou
 
 
 if __name__ == "__main__":

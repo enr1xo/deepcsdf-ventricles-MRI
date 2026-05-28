@@ -341,7 +341,7 @@ class DeepSDF(pl.LightningModule):
         self.lat_vecs["trainable"].to(self.device)
         return super().on_fit_start()
 
-    def training_step(self, batch, batch_idx):
+    def training_step2(self, batch, batch_idx):
 
         data = batch[0]
         indices = batch[1]
@@ -410,6 +410,7 @@ class DeepSDF(pl.LightningModule):
         # fine debug
         eikonal_alpha = self.eikonal_weight
 
+
         if getattr(self, "use_eikonal_loss", False):
             # old eikonal way (wrong)
             # N = xyz.shape[0]
@@ -451,7 +452,7 @@ class DeepSDF(pl.LightningModule):
             grads = []
 
             # we compute the gradients of the points in the unitary sphere
-            xyz /= self.Cs
+            xyz = xyz / self.Cs
 
             for k in range(prediction.shape[1]):
                 grad_k = torch.autograd.grad(
@@ -471,7 +472,6 @@ class DeepSDF(pl.LightningModule):
 
             eikonal_loss = ((grads - target)**2).mean()
 
-        
 
         # qua dovremo aggiungere il termine eikonale 
         training_loss = (chunk_loss 
@@ -497,6 +497,136 @@ class DeepSDF(pl.LightningModule):
             }
                         
             if self.use_eikonal_loss:
+                logs.update({
+                    "eikonal_loss_signed": (grads - target).mean().detach(),
+                    "eikonal_loss_abs": (grads - target).abs().mean().detach(),
+                    "grad_norm_mean": grads.mean().detach(),
+                    "grad_norm_min": grads.min().detach(),
+                    "grad_norm_max": grads.max().detach(),
+                })
+
+            self.log_dict(
+                logs,
+                logger=True,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False
+            )
+
+        return training_loss
+    
+    # nuova funzione di training_step, la rpecedente cambiata in trainin_Step2
+    def training_step(self, batch, batch_idx):
+
+        data = batch[0]
+        indices = batch[1]
+
+        coords = data["coords"].to(self.device)
+        sdf_gt = data["sdf"].to(self.device)
+
+        num_samp_per_scene = coords.shape[1]
+
+        # Coordinate originali
+        xyz_raw = coords.reshape(-1, 3)
+
+        # Se uso eikonal, voglio derivare rispetto a xyz_raw
+        if getattr(self, "use_eikonal_loss", False):
+            xyz_raw = xyz_raw.clone().detach().requires_grad_(True)
+
+        # Coordinate scalate date al decoder
+        xyz = xyz_raw * self.Cs
+
+        sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim)
+
+        if self.enforce_minmax:
+            sdf_gt = torch.clamp(
+                sdf_gt,
+                min=-self.clamp_distance,
+                max=self.clamp_distance
+            )
+
+        num_sdf_samples = sdf_gt.shape[0]
+
+        indices.requires_grad = False
+        sdf_gt.requires_grad = False
+
+        indices = indices.unsqueeze(-1).repeat(1, num_samp_per_scene).view(-1)
+
+        batch_vecs = self.lat_vecs["trainable"](indices)
+
+        input_ = torch.cat([batch_vecs, xyz], dim=1)
+
+        prediction = self.decoder(input_)
+
+        if self.enforce_minmax:
+            prediction = torch.clamp(
+                prediction,
+                min=-self.clamp_distance,
+                max=self.clamp_distance
+            )
+
+        chunk_loss = self.loss_fn(prediction, sdf_gt) / (
+            num_sdf_samples * self.decoder.out_dim
+        )
+
+        latents = self.lat_vecs["trainable"](torch.unique(indices))
+        reg_loss = torch.mean(torch.linalg.norm(latents, dim=1) ** 2)
+
+        if self.anneal_reg_loss:
+            code_reg_lambda = self.anneal_latent_reg()
+        else:
+            code_reg_lambda = self.code_reg_lambda
+
+        lipschitz_loss = torch.tensor(0.0, device=self.device)
+
+        if self.use_lipreg_loss:
+            for i in range(self.decoder.num_layers - 1):
+                layer = getattr(self.decoder, f"lin{i}")
+                softplus_ci = layer.lipschitz_bound()
+                lipschitz_loss = lipschitz_loss + torch.log(softplus_ci)
+
+            lipschitz_loss = torch.exp(lipschitz_loss)
+
+        eikonal_loss = torch.tensor(0.0, device=self.device)
+        eikonal_alpha = self.eikonal_weight
+
+        if getattr(self, "use_eikonal_loss", False):
+            grads = []
+
+            for k in range(prediction.shape[1]):
+                grad_k = torch.autograd.grad(
+                    outputs=prediction[:, k].sum(),
+                    inputs=xyz_raw,
+                    create_graph=True,
+                    retain_graph=True,
+                )[0]
+
+                grads.append(grad_k.norm(dim=1))
+
+            grads = torch.stack(grads, dim=1)
+
+            target = torch.tensor(1.0, device=self.device)
+            eikonal_loss = ((grads - target) ** 2).mean()
+
+        training_loss = (
+            chunk_loss
+            + code_reg_lambda * reg_loss
+            + self.lipschitz_alpha * lipschitz_loss
+            + eikonal_alpha * eikonal_loss
+        )
+
+        if self.logger is not None and (self.current_epoch + 1) % self.log_every_n_epochs == 0:
+
+            logs = {
+                "latents_mean_L2_squared": reg_loss.detach(),
+                "lipschitz_penalty": lipschitz_loss.detach(),
+                "prediction_loss": chunk_loss.detach(),
+                "training_loss": training_loss.detach(),
+                "code_reg_factor": torch.tensor(code_reg_lambda, device=self.device),
+                "eikonal_loss": eikonal_loss.detach(),
+            }
+
+            if getattr(self, "use_eikonal_loss", False):
                 logs.update({
                     "eikonal_loss_signed": (grads - target).mean().detach(),
                     "eikonal_loss_abs": (grads - target).abs().mean().detach(),
