@@ -19,6 +19,9 @@ ALL_PROCESSED_DIR = Path(
     "/home/rizzardi/Schreibtisch/AF001_aligned_processed"
 )
 
+ALL_PROCESSED_DIR = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop")
+patient = "AF001"
+
 # asse apex -> base
 APEX_BASE_AXIS = np.array([-1.0, 1.0, 0.0])
 APEX_BASE_AXIS /= np.linalg.norm(APEX_BASE_AXIS)
@@ -260,6 +263,10 @@ mitral_cells = lv.extract_cells(
     lv.cell_data["mitral_patch"] == 1
 )
 
+mitral_centroid = mitral_cells.points.mean(axis=0)
+
+print("Mitral centroid:", mitral_centroid)
+
 other_patch_mask = (
     (lv.cell_data["isholepatch"] == 1) &
     (lv.cell_data["mitral_patch"] == 0)
@@ -294,6 +301,17 @@ plotter.add_mesh(
     color="lightblue",
     opacity=0.9,
     show_edges=True,
+)
+
+centroid_sphere = pv.Sphere(
+    radius=0.03,
+    center=mitral_centroid
+)
+
+plotter.add_mesh(
+    centroid_sphere,
+    color="magenta",
+    label="Mitral centroid"
 )
 # ============================================================
 # PUNTI RAPPRESENTATIVI
