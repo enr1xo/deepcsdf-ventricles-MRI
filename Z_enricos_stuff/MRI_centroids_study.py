@@ -347,5 +347,9 @@ print(f"Saved CSV to: {output_csv_path}")
 ok_df = df[df["status"] == "ok"]
 
 if len(ok_df) > 0:
-    print("\nDistance summary:")
+    print("\nDistance summary normalized / dimensionless:")
     print(ok_df["centroid_distance"].describe())
+
+    print("\nDistance summary in mm:")
+    print(ok_df["centroid_distance_mm"].describe())
+
