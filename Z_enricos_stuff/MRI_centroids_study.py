@@ -248,7 +248,7 @@ for patient_dir in patient_dirs:
         })
 
         continue
-    
+
     lv_path = patient_dir / lv_name
 
     print(f"\nProcessing {patient_id}")
@@ -291,9 +291,7 @@ for patient_dir in patient_dirs:
         )
         distance = np.linalg.norm(c_geom - c_mass)
 
-        distance *= scale_to_original_range
-
-        distance_mm = distance / 1000.0
+        distance_mm = scale_to_original_range * distance / 1000.0
 
         rows.append({
             "patient_id": patient_id,
