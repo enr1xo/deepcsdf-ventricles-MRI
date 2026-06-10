@@ -82,7 +82,7 @@ def find_mitral_patch(lv: pv.PolyData) -> tuple[pv.PolyData, dict]:
             scalars="RegionId"
         )
 
-        patch_surf = patch.extract_surface().triangulate()
+        patch_surf = patch.extract_surface(algorithm="dataset_surface").triangulate()
 
         if patch_surf.n_points == 0 or patch_surf.n_cells == 0:
             continue
@@ -185,7 +185,7 @@ def area_weighted_centroid(patch: pv.PolyData) -> np.ndarray:
     media dei centroidi triangolari pesata per l'area dei triangoli.
     """
 
-    surf = patch.extract_surface().triangulate()
+    surf = patch.extract_surface(algorithm="dataset_surface").triangulate()
 
     if surf.n_cells == 0:
         raise ValueError("Patch has no cells")
@@ -248,11 +248,19 @@ for patient_dir in patient_dirs:
     try:
         lv = pv.read(lv_path)
 
+        scale_to_original_range = (
+            lv.field_data[
+                "scale-tooriginalrange"
+            ][0]
+        )
+
+        print("original scale factor:", scale_to_original_range)
+
         mitral_cells, mitral_info = find_mitral_patch(lv)
 
         mitral_surface = (
             mitral_cells
-            .extract_surface()
+            .extract_surface(algorithm="dataset_surface")
             .triangulate()
         )
 
@@ -264,6 +272,10 @@ for patient_dir in patient_dirs:
             mitral_surface
         )
         distance = np.linalg.norm(c_geom - c_mass)
+
+        distance *= scale_to_original_range
+
+        distance_mm = distance / 1000.0
 
         rows.append({
             "patient_id": patient_id,
@@ -286,12 +298,14 @@ for patient_dir in patient_dirs:
             "mass_centroid_z": c_mass[2],
 
             "centroid_distance": distance,
+            "centroid_distance_mm": distance_mm,
         })
 
         print(f"  Mitral region: {mitral_info['rid']}")
         print(f"  Geometric centroid: {c_geom}")
         print(f"  Mass centroid:      {c_mass}")
-        print(f"  Distance:           {distance:.6f}")
+        print(f"  Distance (no units):           {distance:.6f}")
+        print(f"  Distance (mm):      {distance_mm:.6f}")
 
     except Exception as e:
 
