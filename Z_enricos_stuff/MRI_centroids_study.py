@@ -218,6 +218,13 @@ def area_weighted_centroid(patch: pv.PolyData) -> np.ndarray:
 # ============================================================
 # MAIN
 # ============================================================
+# patients excluded because of merged valves apatches
+exclude_patients = ["LEU_BBB_21027",
+                    "LEU_BBB_21047",
+                    "LEU_BBB_21392",
+                    "LEU_BBB_21445",
+                    "LEU_BBB_21499",
+                    "LEU_NORM_2288"]
 
 rows = []
 
@@ -231,6 +238,17 @@ print(f"Found {len(patient_dirs)} patient folders")
 for patient_dir in patient_dirs:
 
     patient_id = patient_dir.name
+
+    if patient_id in exclude_patients:
+        print(f"\nSkipping excluded patient: {patient_id}")
+
+        rows.append({
+            "patient_id": patient_id,
+            "status": "excluded",
+        })
+
+        continue
+    
     lv_path = patient_dir / lv_name
 
     print(f"\nProcessing {patient_id}")
