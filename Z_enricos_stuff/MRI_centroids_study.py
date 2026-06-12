@@ -339,7 +339,7 @@ for patient_dir in patient_dirs:
 # ============================================================
 
 df = pd.DataFrame(rows)
-df.to_csv(output_csv_path, index=False)
+df.to_csv(output_csv_path, index=False, sep=";")
 
 print("\nDone.")
 print(f"Saved CSV to: {output_csv_path}")
