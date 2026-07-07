@@ -1,0 +1,450 @@
+"""
+This script:
+1. loads the LV endocardial mesh;
+2. identifies the mitral patch among the hole patches;
+3. computes the area-weighted mitral centroid;
+4. estimates the LV apex using two methods:
+   - maximum distance from the mitral centroid;
+   - PCA long-axis projection;
+5. builds two apex-base axes;
+6. plots only:
+   - transparent LV mesh;
+   - mitral centroid;
+   - two apex points;
+   - two apex-base axes;
+   - two disks centered at the mitral centroid and normal to each axis.
+"""
+
+import sys
+from pathlib import Path
+
+import numpy as np
+import pyvista as pv
+
+
+# ============================================================
+# PATHS
+# ============================================================
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(PROJECT_ROOT))
+
+ALL_PROCESSED_DIR = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\processed_patients")
+patient = "AF001"
+# patient = "yrm0342_v1"
+patient = "LEU_NORM_0016"
+# patient = "LEU_BBB_21001"
+# patient = "LEU_BBB_21065"
+patient = "LEU_BBB_21350"
+
+patient_dir = ALL_PROCESSED_DIR / patient
+lv_path = patient_dir / "lv_endo-processed.vtp"
+rv_path = patient_dir / "rv_endo-processed.vtp"
+
+# ============================================================
+# PARAMETERS
+# ============================================================
+
+APEX_BASE_AXIS = np.array([-1.0, 1.0, 0.0])
+APEX_BASE_AXIS /= np.linalg.norm(APEX_BASE_AXIS)
+
+W_PROJ = 0.45
+W_AREA = 0.25
+W_YX = 0.30
+
+DISK_RADIUS = 1.0
+DISK_RESOLUTION = 100
+
+
+# ============================================================
+# LOAD LV
+# ============================================================
+
+lv = pv.read(lv_path)
+
+print("\nLV loaded")
+print(lv)
+
+rv = pv.read(rv_path)
+
+print("\nRV loaded")
+print(rv)
+
+
+# ============================================================
+# EXTRACT HOLE PATCHES
+# ============================================================
+
+patches = lv.extract_cells(
+    lv.cell_data["isholepatch"] == 1
+)
+
+patches_conn = patches.connectivity()
+
+region_ids = np.unique(
+    patches_conn.cell_data["RegionId"]
+)
+
+print("\nFound patch regions:", region_ids)
+
+
+# ============================================================
+# IDENTIFY MITRAL PATCH
+# ============================================================
+
+patch_infos = []
+
+for rid in region_ids:
+
+    patch = patches_conn.threshold(
+        [rid - 0.5, rid + 0.5],
+        scalars="RegionId"
+    )
+
+    point = patch.points[0]
+    x, y, z = point
+
+    projection = np.dot(point, APEX_BASE_AXIS)
+    area = patch.area
+    yx_value = y + x
+
+    projection_score = np.clip(
+        (projection + 1.0) / 2.0,
+        0.0,
+        1.0
+    )
+
+    area_score = np.clip(
+        area / 0.20,
+        0.0,
+        1.0
+    )
+
+    yx_score = np.clip(
+        (yx_value + 1.0) / 2.0,
+        0.0,
+        1.0
+    )
+
+    likelihood = (
+        W_PROJ * projection_score +
+        W_AREA * area_score +
+        W_YX * yx_score
+    )
+
+    patch_infos.append({
+        "rid": rid,
+        "patch": patch,
+        "point": point,
+        "area": area,
+        "projection": projection,
+        "yx_value": yx_value,
+        "likelihood": likelihood,
+    })
+
+    print(
+        f"Region {rid} | "
+        f"area={area:.4f} | "
+        f"proj={projection:.4f} | "
+        f"yx={yx_value:.4f} | "
+        f"LIK={likelihood:.3f}"
+    )
+
+
+mitral_patch_info = max(
+    patch_infos,
+    key=lambda p: p["likelihood"]
+)
+
+mitral_region = mitral_patch_info["rid"]
+
+print("\nChosen mitral region:", mitral_region)
+
+
+# ============================================================
+# CREATE MITRAL LABEL
+# ============================================================
+
+labels = np.zeros(
+    lv.n_cells,
+    dtype=np.int8
+)
+
+patch_region_ids = patches_conn.cell_data["RegionId"]
+
+patch_cell_ids = np.where(
+    lv.cell_data["isholepatch"] == 1
+)[0]
+
+mitral_mask = (
+    patch_region_ids == mitral_region
+)
+
+labels[
+    patch_cell_ids[mitral_mask]
+] = 1
+
+lv.cell_data["mitral_patch"] = labels
+
+
+# ============================================================
+# EXTRACT MITRAL PATCH
+# ============================================================
+
+mitral_cells = lv.extract_cells(
+    lv.cell_data["mitral_patch"] == 1
+)
+
+
+# ============================================================
+# AREA-WEIGHTED MITRAL CENTROID
+# ============================================================
+
+mitral_surf = mitral_cells.extract_surface().triangulate()
+
+faces = mitral_surf.faces.reshape(-1, 4)[:, 1:]
+points = mitral_surf.points
+
+weighted_sum = np.zeros(3)
+total_area = 0.0
+
+for tri in faces:
+
+    p0, p1, p2 = points[tri]
+
+    tri_area = np.linalg.norm(
+        np.cross(p1 - p0, p2 - p0)
+    ) / 2.0
+
+    tri_centroid = (p0 + p1 + p2) / 3.0
+
+    weighted_sum += tri_area * tri_centroid
+    total_area += tri_area
+
+mitral_centroid = weighted_sum / total_area
+
+print("\nArea-weighted mitral centroid:", mitral_centroid)
+
+
+# ============================================================
+# APEX METHOD 1: MAXIMUM DISTANCE
+# ============================================================
+
+lv_points = lv.points
+
+distances_from_mitral = np.linalg.norm(
+    lv_points - mitral_centroid,
+    axis=1
+)
+
+apex_dist_idx = np.argmax(distances_from_mitral)
+apex_dist_point = lv_points[apex_dist_idx]
+
+axis_dist = apex_dist_point - mitral_centroid
+axis_dist /= np.linalg.norm(axis_dist)
+
+print("\nApex by maximum distance")
+print("Index:", apex_dist_idx)
+print("Point:", apex_dist_point)
+print("Distance:", distances_from_mitral[apex_dist_idx])
+print("Axis mitral -> apex:", axis_dist)
+
+
+# ============================================================
+# APEX METHOD 2: PCA
+# ============================================================
+
+center_lv = lv_points.mean(axis=0)
+X = lv_points - center_lv
+
+cov = np.cov(X.T)
+
+eigvals, eigvecs = np.linalg.eigh(cov)
+
+idx = np.argsort(eigvals)[::-1]
+eigvals = eigvals[idx]
+eigvecs = eigvecs[:, idx]
+
+long_axis = eigvecs[:, 0]
+
+v_base_to_center = center_lv - mitral_centroid
+
+if np.dot(long_axis, v_base_to_center) < 0:
+    long_axis *= -1
+
+projections = np.dot(
+    lv_points - mitral_centroid,
+    long_axis
+)
+
+apex_pca_idx = np.argmax(projections)
+apex_pca_point = lv_points[apex_pca_idx]
+
+axis_pca = apex_pca_point - mitral_centroid
+axis_pca /= np.linalg.norm(axis_pca)
+
+print("\nApex by PCA")
+print("Eigenvalues:", eigvals)
+print("Long axis:", long_axis)
+print("Index:", apex_pca_idx)
+print("Point:", apex_pca_point)
+print("Projection:", projections[apex_pca_idx])
+print("Axis mitral -> apex:", axis_pca)
+
+print(
+    "\nDistance between apex estimates:",
+    np.linalg.norm(apex_dist_point - apex_pca_point)
+)
+
+
+# ============================================================
+# DISKS NORMAL TO THE TWO AXES
+# ============================================================
+
+disk_dist = pv.Disc(
+    center=mitral_centroid,
+    inner=0.0,
+    outer=DISK_RADIUS,
+    normal=axis_dist,
+    r_res=1,
+    c_res=DISK_RESOLUTION
+)
+
+disk_pca = pv.Disc(
+    center=mitral_centroid,
+    inner=0.0,
+    outer=DISK_RADIUS,
+    normal=axis_pca,
+    r_res=1,
+    c_res=DISK_RESOLUTION
+)
+
+# third old disk for comparison (the one with axis [-1, 1, 0])
+disk_old = pv.Disc(
+    center=mitral_centroid,
+    inner=0.0,
+    outer=DISK_RADIUS,
+    normal=np.array([-1.0, 1.0, 0.0]),
+    r_res=1,
+    c_res=DISK_RESOLUTION
+)
+
+# ============================================================
+# CLEAN PLOT
+# ============================================================
+
+plotter = pv.Plotter()
+
+# transparent LV mesh
+plotter.add_mesh(
+    lv,
+    color="lightgray",
+    opacity=0.48,
+)
+
+# transparent RV mesh
+plotter.add_mesh(
+    rv,
+    color="lightblue",
+    opacity=0.28,
+)
+
+# mitral centroid
+plotter.add_mesh(
+    pv.Sphere(
+        radius=0.02,
+        center=mitral_centroid
+    ),
+    color="magenta"
+)
+
+# apex from max distance
+plotter.add_mesh(
+    pv.Sphere(
+        radius=0.015,
+        center=apex_dist_point
+    ),
+    color="yellow"
+)
+
+# apex from PCA
+plotter.add_mesh(
+    pv.Sphere(
+        radius=0.015,
+        center=apex_pca_point
+    ),
+    color="green"
+)
+
+# axis from max distance
+plotter.add_mesh(
+    pv.Line(
+        mitral_centroid,
+        apex_dist_point
+    ),
+    color="yellow",
+    line_width=7
+)
+
+# axis from PCA
+plotter.add_mesh(
+    pv.Line(
+        mitral_centroid,
+        apex_pca_point
+    ),
+    color="lime",
+    line_width=5
+)
+
+# # disk normal to max-distance axis
+plotter.add_mesh(
+    disk_dist,
+    color="yellow",
+    opacity=0.35,
+    show_edges=True
+)
+
+# # disk normal to PCA axis
+plotter.add_mesh(
+    disk_pca,
+    color="green",
+    opacity=0.35,
+    show_edges=True
+)
+
+# disk normal to old axis
+plotter.add_mesh(
+    disk_old,
+    color="red",
+    opacity=0.35,
+    show_edges=True
+)
+
+# labels
+plotter.add_point_labels(
+    [mitral_centroid],
+    ["Mitral centroid"],
+    font_size=18
+)
+
+plotter.add_point_labels(
+    [apex_dist_point],
+    ["Apex distance"],
+    font_size=18
+)
+
+plotter.add_point_labels(
+    [apex_pca_point],
+    ["Apex PCA"],
+    font_size=18
+)
+
+plotter.show_bounds(
+    grid="front",
+    location="outer",
+    all_edges=True,
+)
+
+plotter.add_axes()
+
+plotter.show()
