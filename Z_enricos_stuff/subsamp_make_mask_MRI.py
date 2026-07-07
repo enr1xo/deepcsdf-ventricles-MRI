@@ -8,18 +8,25 @@ import matplotlib.pyplot as plt
 # INPUT
 # =========================================================
 
-patient_name = "AF021R"
+patient_name = "AF001"
+
+# npy_file = Path(
+#     "/home/rizzardi/Schreibtisch/sampling_noise_study_npy/5k/"
+#     "S_0.025-L_0.75-R_0.5/"
+#     f"{patient_name}-epi_lv_rv_5000_coords_and_sdf.npy"
+# )
 
 npy_file = Path(
-    "/home/rizzardi/Schreibtisch/sampling_noise_study_npy/5k/"
-    "S_0.025-L_0.75-R_0.5/"
-    f"{patient_name}-epi_lv_rv_5000_coords_and_sdf.npy"
-)
+    r"C:\Users\e.rizzardi\OneDrive\Desktop\graz_June\square_samples_min_dist_1mm\AF001_square_samples.npy")
+    
+# mesh_file = Path(
+#     "/home/rizzardi/Schreibtisch/all_processed_files/"
+#     f"{patient_name}/epicardium-processed.vtp"
+# )
 
-mesh_file = Path(
-    "/home/rizzardi/Schreibtisch/all_processed_files/"
-    f"{patient_name}/epicardium-processed.vtp"
-)
+
+mesh_file = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\processed_patients\AF001\epicardium-processed.vtp")
+
 
 # MRI-like parameters
 epsilon_mm = 0.4   # thickness
