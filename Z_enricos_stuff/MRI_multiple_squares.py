@@ -29,7 +29,9 @@ import pyvista as pv
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(PROJECT_ROOT))
 
-ALL_PROCESSED_DIR = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\processed_patients")
+# ALL_PROCESSED_DIR = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\processed_patients")
+ALL_PROCESSED_DIR = Path(r"/home/rizzardi/Schreibtisch/AF001_aligned_processed")
+
 patient = "AF001"
 # patient = "yrm0342_v1"
 # patient = "LEU_NORM_0016"

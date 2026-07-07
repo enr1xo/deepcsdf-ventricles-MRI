@@ -18,13 +18,21 @@ import pyvista as pv
 
 
 ALL_PROCESSED_DIR = Path(
-    r"C:\Users\e.rizzardi\OneDrive\Desktop\processed_patients"
+    r"/home/rizzardi/Schreibtisch/AF001_aligned_processed"
 )
 
 OUTPUT_CSV = Path(
-    r"C:\Users\e.rizzardi\OneDrive\Desktop\mitral_Carea_and_apex_MaxD.csv"
+    r"/home/rizzardi/Schreibtisch/MRI_model/mitral_Carea_apex_MaxD.csv"
 )
 
+EXCLUDED_PATIENTS = [
+                        "LEU_BBB_21027",
+                        "LEU_BBB_21047",
+                        "LEU_BBB_21392",
+                        "LEU_BBB_21445",
+                        "LEU_BBB_21499",
+                        "LEU_NORM_2288"
+]
 
 APEX_BASE_AXIS = np.array([-1.0, 1.0, 0.0])
 APEX_BASE_AXIS /= np.linalg.norm(APEX_BASE_AXIS)
@@ -129,7 +137,7 @@ def find_mitral_patch(lv):
 
 def compute_area_weighted_centroid(mitral_cells):
 
-    mitral_surf = mitral_cells.extract_surface().triangulate()
+    mitral_surf = mitral_cells.extract_surface(algorithm="dataset_surface").triangulate()
 
     faces = mitral_surf.faces.reshape(-1, 4)[:, 1:]
     points = mitral_surf.points
@@ -205,6 +213,7 @@ rows = []
 patient_dirs = sorted([
     p for p in ALL_PROCESSED_DIR.iterdir()
     if p.is_dir()
+    # if p.name not in EXCLUDED_PATIENTS
 ])
 
 print(f"Found {len(patient_dirs)} patient folders")
@@ -212,65 +221,71 @@ print(f"Found {len(patient_dirs)} patient folders")
 for patient_dir in patient_dirs:
 
     patient = patient_dir.name
-    lv_path = patient_dir / "lv_endo-processed.vtp"
 
-    print(f"\nProcessing {patient}")
-
-    if not lv_path.exists():
-        print(f"  Skipped: missing {lv_path.name}")
+    if patient in EXCLUDED_PATIENTS:
+        print(f"skipping {patient}")
         continue
 
-    try:
-        lv = pv.read(lv_path)
+    else:
+        lv_path = patient_dir / "lv_endo-processed.vtp"
 
-        mitral_cells, mitral_region = find_mitral_patch(lv)
+        print(f"\nProcessing {patient}")
 
-        C_area = compute_area_weighted_centroid(
-            mitral_cells
-        )
+        if not lv_path.exists():
+            print(f"  Skipped: missing {lv_path.name}")
+            continue
 
-        lv_points = lv.points
+        try:
+            lv = pv.read(lv_path)
 
-        A_maxD, A_maxD_idx, maxD_value = compute_apex_max_distance(
-            lv_points,
-            C_area
-        )
+            mitral_cells, mitral_region = find_mitral_patch(lv)
 
-        # A_PCA, A_PCA_idx, pca_projection, pca_axis = compute_apex_pca(
-        #     lv_points,
-        #     C_area
-        # )
+            C_area = compute_area_weighted_centroid(
+                mitral_cells
+            )
 
-        # apex_distance = np.linalg.norm(
-        #     A_maxD - A_PCA
-        # )
+            lv_points = lv.points
 
-        rows.append({
-            "patient": patient,
+            A_maxD, A_maxD_idx, maxD_value = compute_apex_max_distance(
+                lv_points,
+                C_area
+            )
 
-            "C_area_x": C_area[0],
-            "C_area_y": C_area[1],
-            "C_area_z": C_area[2],
+            # A_PCA, A_PCA_idx, pca_projection, pca_axis = compute_apex_pca(
+            #     lv_points,
+            #     C_area
+            # )
 
-            "A_maxD_x": A_maxD[0],
-            "A_maxD_y": A_maxD[1],
-            "A_maxD_z": A_maxD[2],
+            # apex_distance = np.linalg.norm(
+            #     A_maxD - A_PCA
+            # )
 
-            # "A_PCA_x": A_PCA[0],
-            # "A_PCA_y": A_PCA[1],
-            # "A_PCA_z": A_PCA[2],
+            rows.append({
+                "patient": patient,
 
-            # "apex_distance": apex_distance,
-        })
+                "C_area_x": C_area[0],
+                "C_area_y": C_area[1],
+                "C_area_z": C_area[2],
 
-        print("  OK")
-        print("  C_area:", C_area)
-        print("  A_maxD:", A_maxD)
-        # print("  A_PCA:", A_PCA)
-        # print("  distance A_maxD - A_PCA:", apex_distance)
+                "A_maxD_x": A_maxD[0],
+                "A_maxD_y": A_maxD[1],
+                "A_maxD_z": A_maxD[2],
 
-    except Exception as e:
-        print(f"  Failed: {e}")
+                # "A_PCA_x": A_PCA[0],
+                # "A_PCA_y": A_PCA[1],
+                # "A_PCA_z": A_PCA[2],
+
+                # "apex_distance": apex_distance,
+            })
+
+            print("  OK")
+            print("  C_area:", C_area)
+            print("  A_maxD:", A_maxD)
+            # print("  A_PCA:", A_PCA)
+            # print("  distance A_maxD - A_PCA:", apex_distance)
+
+        except Exception as e:
+            print(f"  Failed: {e}")
 
 
 df = pd.DataFrame(rows)

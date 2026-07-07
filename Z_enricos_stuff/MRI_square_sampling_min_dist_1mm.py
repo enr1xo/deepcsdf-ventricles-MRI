@@ -36,9 +36,13 @@ ALL_PROCESSED_DIR = Path(
 #     r"C:\Users\e.rizzardi\OneDrive\Desktop\graz_June\mitral_Carea_and_apex_MaxD.csv"
 # )
 
+# CSV_PATH = Path(
+#     r"/home/rizzardi/Schreibtisch/mitral_Carea_and_apex_MaxD.csv"
+# )
+
 CSV_PATH = Path(
-    r"/home/rizzardi/Schreibtisch/mitral_Carea_and_apex_MaxD.csv"
-)
+    r"/home/rizzardi/Schreibtisch/MRI_model/mitral_Carea_apex_MaxD.csv"
+    )
 
 patient = "AF001"
 # patient = "yrm0342_v1"

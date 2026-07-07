@@ -10,17 +10,17 @@ import pyvista as pv
 PATIENT = "S62"
 
 ALL_PROCESSED_DIR = Path(
-    r"C:\Users\e.rizzardi\OneDrive\Desktop\processed_patients"
+    r"/home/rizzardi/Schreibtisch/AF001_aligned_processed"
 )
 
 SAMPLES_DIR = Path(
-    r"C:\Users\e.rizzardi\OneDrive\Desktop\graz_June\square_samples_min_dist_1mm"
+    r"/home/rizzardi/Schreibtisch/graz_June/square_samples_min_dist_1mm"
 )
 
 SAMPLES_PATH = SAMPLES_DIR / f"{PATIENT}_square_samples.npy"
 
 # "epi", "lv", "rv", oppure None per punti rossi
-SDF_TO_PLOT = "epi"
+SDF_TO_PLOT = "rv"
 
 SURFACE_OPACITY = 0.15
 GLYPH_RADIUS = 0.010
