@@ -23,12 +23,21 @@ sys.path.append(str(PROJECT_ROOT))
 
 from utils.surface_utils import compute_signed_distance_libigl
 
+# ALL_PROCESSED_DIR = Path(
+#     r"C:\Users\e.rizzardi\OneDrive\Desktop\processed_patients"
+# )
+
 ALL_PROCESSED_DIR = Path(
-    r"C:\Users\e.rizzardi\OneDrive\Desktop\processed_patients"
+    r"/home/rizzardi/Schreibtisch/AF001_aligned_processed"
 )
 
+
+# CSV_PATH = Path(
+#     r"C:\Users\e.rizzardi\OneDrive\Desktop\graz_June\mitral_Carea_and_apex_MaxD.csv"
+# )
+
 CSV_PATH = Path(
-    r"C:\Users\e.rizzardi\OneDrive\Desktop\graz_June\mitral_Carea_and_apex_MaxD.csv"
+    r"/home/rizzardi/Schreibtisch/mitral_Carea_and_apex_MaxD.csv"
 )
 
 patient = "AF001"
