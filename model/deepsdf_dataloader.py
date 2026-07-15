@@ -100,6 +100,7 @@ class SDFSamples(Dataset):
         for i in range(self.num_scenes):
             self.data_tot[i]["coords"] = torch.from_numpy(self.data_tot[i]["coords"]).float()
             self.data_tot[i]["sdf"]    = torch.from_numpy(self.data_tot[i]["sdf"]).float()
+            self.data_tot[i]["mask"]   = torch.from_numpy(self.data_tot[i]["mask"]).float()
 
         if self.balance_pos_neg: # convert also these to torch already
             self.pos_idxs = [
@@ -114,17 +115,17 @@ class SDFSamples(Dataset):
     def _unpack_sdfdata_json(self, data_file):
         
         data_file = Path(data_file).resolve()
-        print("\n[DEBUG] data_file used:", data_file)
-        print("[DEBUG] data_source used:", self.data_source.resolve())
+        # print("\n[DEBUG] data_file used:", data_file)
+        # print("[DEBUG] data_source used:", self.data_source.resolve())
 
         loaded = json.load(open(data_file))
 
-        print("[DEBUG] contains 20000?", any("20000" in x for x in loaded))
-        print("[DEBUG] contains 5000?", any("5000" in x for x in loaded))
+        # print("[DEBUG] contains 20000?", any("20000" in x for x in loaded))
+        # print("[DEBUG] contains 5000?", any("5000" in x for x in loaded))
 
-        print("[DEBUG] first 10 entries:")
-        for x in loaded[:10]:
-            print("   ", x)
+        # print("[DEBUG] first 10 entries:")
+        # for x in loaded[:10]:
+        #     print("   ", x)
 
         data_tot = []
 
@@ -144,9 +145,14 @@ class SDFSamples(Dataset):
                 #new dataloader
                 dat_ = np.load(self.data_source / fname)
                 #end new dataloader
+                # data_tot.append({
+                #     "coords": dat_[:,:3],
+                #     "sdf": dat_[:,3:]
+                # })
                 data_tot.append({
-                    "coords": dat_[:,:3],
-                    "sdf": dat_[:,3:]
+                    "coords": dat_[:, :3],
+                    "sdf": dat_[:, 3:6],
+                    "mask": dat_[:, 6:9],
                 })
 
                 if self.balance_pos_neg: # build also lists of positive / negative sdf indexes per scene
@@ -176,7 +182,7 @@ class SDFSamples(Dataset):
             
         return data_tot
 
-    def balance_batch(self, index, coords, sdf):
+    def balance_batch(self, index, coords, sdf, mask):
         per_surface = self.num_samp_per_scene // self.sdf_dim
         half = per_surface // 2
 
@@ -218,7 +224,9 @@ class SDFSamples(Dataset):
         coords = coords[idxs_total]
         sdf    = sdf[idxs_total]
 
-        return coords, sdf
+        mask   = mask[idxs_total]
+
+        return coords, sdf, mask
 
     def __len__(self):
         return self.num_scenes
@@ -230,9 +238,10 @@ class SDFSamples(Dataset):
 
         coords = data["coords"]
         sdf = data["sdf"]
+        mask = data["mask"]
 
         if self.balance_pos_neg:
-            coords, sdf = self.balance_batch(index,coords,sdf)
+            coords, sdf, mask = self.balance_batch(index,coords,sdf, mask)
         else:
             # this sampling CAN REPEAT points !!!
             if self.sampling == "random":
@@ -246,10 +255,12 @@ class SDFSamples(Dataset):
 
             coords = coords[random_pos]
             sdf    = sdf[random_pos]
+            mask   = mask[random_pos]
 
         samples = {
             "coords": coords,
             "sdf": sdf,
+            "mask": mask
         }
 
         return samples, index 

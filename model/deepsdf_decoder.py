@@ -243,14 +243,14 @@ class DeepSDF(pl.LightningModule):
         self.lipschitz_alpha = specs.get("lipschitz_alpha", 2e-6)
 
         # EIKONAL terms
-        # self.use_eikonal = specs.get("use_eikonl_loss", False)
-        self.use_eikonal_loss = False
+        # self.use_eikonal = specs.get("use_eikonal_loss", False)
+        self.use_eikonal_loss = True
 
         # self.eikonal_weight = specs.get("eikonal_weight", 1e-2)
         self.eikonal_weight = 1e-3
         
         # self.ekional_frac = specs.get("eikonal_frac", 0.25)
-        self.eikonal_frac = 0.75
+        self.eikonal_frac = 1
 
 
         self.enforce_minmax = specs.get("enforce_minmax", False)
@@ -341,6 +341,19 @@ class DeepSDF(pl.LightningModule):
         self.lat_vecs["trainable"].to(self.device)
         return super().on_fit_start()
 
+    def regression_error(self, pred, gt):
+        if self.use_loss == "L1":
+            return F.l1_loss(pred, gt, reduction="none")
+
+        elif self.use_loss == "MSE":
+            return F.mse_loss(pred, gt, reduction="none")
+
+        elif self.use_loss == "SmoothL1":
+            return F.smooth_l1_loss(pred, gt, reduction="none")
+
+        else:
+            raise ValueError(f"Unknown loss: {self.use_loss}")
+    
     def training_step2(self, batch, batch_idx):
 
         data = batch[0]
@@ -348,6 +361,8 @@ class DeepSDF(pl.LightningModule):
 
         coords = data["coords"].to(self.device)
         sdf_gt = data["sdf"].to(self.device)
+
+        mask = data["mask"].to(self.device)
 
         num_samp_per_scene = data["coords"].shape[1]
 
@@ -358,6 +373,8 @@ class DeepSDF(pl.LightningModule):
 
         # if we '* self.Cs' is uncommented in the definition of xyz above, then uncomment it also in the definition of sdf_gt below.
         sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim)
+
+        mask = mask.reshape(-1, self.decoder.out_dim)
 
         if self.enforce_minmax:
             sdf_gt = torch.clamp(sdf_gt, min = -self.clamp_distance, max=self.clamp_distance)
@@ -380,7 +397,22 @@ class DeepSDF(pl.LightningModule):
             prediction = torch.clamp(prediction, min = -self.clamp_distance, max=self.clamp_distance)
         
         # REGRESSION LOSS
-        chunk_loss = self.loss_fn(prediction, sdf_gt) / (num_sdf_samples * self.decoder.out_dim) # divide by N only --> total error per sample, divide by N * out_dim --> average per scalar, most unit-free choice
+        # chunk_loss = self.loss_fn(prediction, sdf_gt) / (num_sdf_samples * self.decoder.out_dim) # divide by N only --> total error per sample, divide by N * out_dim --> average per scalar, most unit-free choice
+
+        err = self.regression_error(
+            prediction,
+            sdf_gt,
+        )
+
+        chunk_loss = 0.0
+
+        for j in range(self.decoder.out_dim):
+            denom = mask[:, j].sum() + 1e-8
+            loss_j = (err[:, j] * mask[:, j]).sum() / denom
+            chunk_loss = chunk_loss + loss_j
+
+        chunk_loss = chunk_loss / self.decoder.out_dim
+
 
         # REGULARIZATION LOSS  # was: reg_loss = torch.sum( torch.linalg.norm(batch_vecs, dim=1) ) / num_sdf_samples
         # don't waste computation on batch_vecs, in there are repeated latents !! was reg_loss = torch.sum( torch.linalg.norm(batch_vecs, dim=1) ** 2 ) / num_sdf_samples
@@ -470,8 +502,33 @@ class DeepSDF(pl.LightningModule):
             # target = 1.0 / self.Cs
             target = torch.tensor(1.0, device=self.device)
 
-            eikonal_loss = ((grads - target)**2).mean()
+            # eikonal_loss = ((grads - target)**2).mean()
 
+            # masked eikonal
+            eikonal_error = (grads - 1.0) ** 2
+
+            eikonal_loss = torch.zeros(
+                (),
+                device=self.device,
+                dtype=eikonal_error.dtype,
+            )
+
+            n_valid_surfaces = 0
+
+            for k in range(self.decoder.out_dim):
+                valid = mask[:, k] > 0.5
+
+                if valid.any():
+                    eikonal_loss = (
+                        eikonal_loss
+                        + eikonal_error[valid, k].mean()
+                    )
+                    n_valid_surfaces += 1
+
+            if n_valid_surfaces > 0:
+                eikonal_loss = eikonal_loss / n_valid_surfaces
+
+            #end masked eikonal
 
         # qua dovremo aggiungere il termine eikonale 
         training_loss = (chunk_loss 
@@ -524,6 +581,8 @@ class DeepSDF(pl.LightningModule):
         coords = data["coords"].to(self.device)
         sdf_gt = data["sdf"].to(self.device)
 
+        mask = data["mask"].to(self.device)
+
         num_samp_per_scene = coords.shape[1]
 
         # Coordinate originali
@@ -537,6 +596,7 @@ class DeepSDF(pl.LightningModule):
         xyz = xyz_raw * self.Cs
 
         sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim)
+        mask = mask.reshape(-1, self.decoder.out_dim)
 
         if self.enforce_minmax:
             sdf_gt = torch.clamp(
@@ -565,9 +625,24 @@ class DeepSDF(pl.LightningModule):
                 max=self.clamp_distance
             )
 
-        chunk_loss = self.loss_fn(prediction, sdf_gt) / (
-            num_sdf_samples * self.decoder.out_dim
+        # chunk_loss = self.loss_fn(prediction, sdf_gt) / (
+        #     num_sdf_samples * self.decoder.out_dim
+        # )
+
+        err = self.regression_error(
+            prediction,
+            sdf_gt,
         )
+
+        chunk_loss = 0.0
+
+        for j in range(self.decoder.out_dim):
+            denom = mask[:, j].sum() + 1e-8
+            loss_j = (err[:, j] * mask[:, j]).sum() / denom
+            chunk_loss = chunk_loss + loss_j
+
+        chunk_loss = chunk_loss / self.decoder.out_dim
+
 
         latents = self.lat_vecs["trainable"](torch.unique(indices))
         reg_loss = torch.mean(torch.linalg.norm(latents, dim=1) ** 2)
@@ -655,10 +730,13 @@ class DeepSDF(pl.LightningModule):
         xyz_gt = data["coords"].to(self.device)
         sdf_gt = data["sdf"].to(self.device)
 
+        mask = data["mask"].to(self.device)
+
         xyz_gt = xyz_gt.reshape(-1, 3) * self.Cs
 
         # if we '* self.Cs' is uncommented in the definition of xyz_gt above, then uncomment it also in the definition of sdf_gt below.
         sdf_gt = sdf_gt.reshape(-1, self.decoder.out_dim) #* self.cs
+        mask = mask.reshape(-1, self.decoder.out_dim)
 
         if self.enforce_minmax:
             sdf_gt = torch.clamp(sdf_gt, min=-self.clamp_distance, max=self.clamp_distance)
@@ -700,7 +778,22 @@ class DeepSDF(pl.LightningModule):
                 # vanilla loss : same loss as in training
                 reg_loss = torch.sum(latents ** 2, dim=1).mean() 
 
-                chunk_loss = self.loss_fn(sdf_pred, sdf_gt) / (num_sdf_samples *  self.decoder.out_dim)
+                # chunk_loss = self.loss_fn(sdf_pred, sdf_gt) / (num_sdf_samples *  self.decoder.out_dim)
+                
+                err = self.regression_error(
+                    sdf_pred,
+                    sdf_gt,
+                )
+
+                chunk_loss = 0.0
+
+                for j in range(self.decoder.out_dim):
+                    denom = mask[:, j].sum() + 1e-8
+                    loss_j = (err[:, j] * mask[:, j]).sum() / denom
+                    chunk_loss = chunk_loss + loss_j
+
+                chunk_loss = chunk_loss / self.decoder.out_dim
+
 
                 loss = chunk_loss + self.code_reg_lambda * reg_loss
 

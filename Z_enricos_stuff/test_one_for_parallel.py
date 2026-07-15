@@ -68,11 +68,22 @@ def get_dataset_patients_names(data: list[str]):
 
         if "-epi_lv_rv_" in fname:
             patient_name = fname.split("-epi_lv_rv_")[0]
+
         elif "_MRI_like_" in fname:
             patient_name = fname.split("_MRI_like_")[0]
-        else:
-            patient_name = fname.replace(".npy", "")
 
+        elif fname.endswith("_three_axis_mri_samples.npy"):
+            # patient_name = fname.replace("_three_axis_mri_samples.npy", "")
+            patient_name = fname.removesuffix("_three_axis_mri_samples.npy")
+
+        elif fname.endswith("_mri_samples.npy"):
+            patient_name = fname.replace("_mri_samples.npy", "")
+        
+        
+
+        else:
+            patient_name = Path(fname).stem
+        
         patient_names.append(patient_name)
 
     return patient_names
@@ -113,7 +124,7 @@ def save_latents_npz(experiment_name, version, which_shapes, code_reg_lambda, nu
     np.savez(output_path, **latent_codes)
 
 
-def find_pointcloud_noise(
+def find_pointcloud_noise_old(
     decoder: Decoder,
     model: DeepSDF,
     xyz_gt,
@@ -170,12 +181,141 @@ def find_pointcloud_noise(
     return epsilons[-1]
 
 
+def find_pointcloud_noise(
+    decoder: Decoder,
+    model: DeepSDF,
+    xyz_gt,
+    sdf_gt,
+    mask_gt,
+    num_epochs_fit_latent,
+    lr_fit_latent,
+    code_reg_lambda,
+    loss_type="MSE",
+    max_iter=10,
+):
+    """
+    Stima epsilon usando esclusivamente le SDF valide secondo mask_gt.
+
+    La loss usata qui è coerente con quella impiegata successivamente
+    per il fitting del latent code.
+    """
+
+    latent_size = decoder.latent_size
+    num_samp_per_scene = sdf_gt.shape[0]
+
+    epsilon = 0.0
+    epsilons = [epsilon]
+
+    for _ in range(max_iter):
+
+        latent = torch.zeros(
+            latent_size,
+            device=DEVICE,
+            requires_grad=True,
+        )
+
+        optimizer = torch.optim.Adam(
+            params=[latent],
+            lr=lr_fit_latent,
+        )
+
+        last_recon_loss = None
+
+        for epoch in range(num_epochs_fit_latent):
+            decoder.eval()
+            optimizer.zero_grad()
+
+            batch_vecs = latent.expand(num_samp_per_scene, -1)
+            input_ = torch.cat([batch_vecs, xyz_gt], dim=1)
+
+            sdf_pred = decoder(input_)
+
+            if model.enforce_minmax:
+                sdf_pred = torch.clamp(
+                    sdf_pred,
+                    min=-model.clamp_distance,
+                    max=model.clamp_distance,
+                )
+
+            recon_loss = masked_regression_loss(
+                pred=sdf_pred,
+                gt=sdf_gt,
+                mask=mask_gt,
+                loss_type=loss_type,
+            )
+
+            reg_loss = latent.pow(2).sum()
+
+            loss = (
+                recon_loss
+                + 100.0
+                * epsilon
+                * code_reg_lambda
+                * reg_loss
+            )
+
+            loss.backward()
+            optimizer.step()
+
+            last_recon_loss = recon_loss
+
+        if last_recon_loss is None:
+            raise RuntimeError(
+                "No reconstruction loss was computed "
+                "inside find_pointcloud_noise."
+            )
+
+        # masked_regression_loss restituisce già un errore medio.
+        # Per una MSE, epsilon è la RMSE.
+        epsilon_new = torch.sqrt(
+            torch.clamp(last_recon_loss.detach(), min=0.0)
+        ).item()
+
+        epsilons.append(epsilon_new)
+
+        tol = 1e-7
+
+        if abs(epsilons[-1] ** 2 - epsilons[-2] ** 2) < tol:
+            epsilon = epsilon_new
+            break
+
+        epsilon = epsilon_new
+
+    return epsilon
+
+
 def get_latest_version_dir(exp_dir: Path) -> Path:
     version_dirs = [p for p in exp_dir.iterdir() if p.is_dir() and p.name.startswith("version_")]
     if not version_dirs:
         raise FileNotFoundError(f"No version_* directories found in {exp_dir}")
     return max(version_dirs, key=lambda p: int(p.name.split("_")[-1]))
 
+
+
+def masked_regression_loss(pred, gt, mask, loss_type="MSE"):
+    if loss_type == "L1":
+        err = torch.abs(pred - gt)
+    elif loss_type == "MSE":
+        err = (pred - gt) ** 2
+    elif loss_type == "SmoothL1":
+        err = torch.nn.functional.smooth_l1_loss(
+            pred,
+            gt,
+            reduction="none",
+        )
+    else:
+        raise ValueError(f"Unknown loss type: {loss_type}")
+
+    loss = 0.0
+
+    for j in range(pred.shape[1]):
+        denom = mask[:, j].sum() + 1e-8
+        loss_j = (err[:, j] * mask[:, j]).sum() / denom
+        loss = loss + loss_j
+
+    loss = loss / pred.shape[1]
+
+    return loss
 
 # ======================== #
 # RUN TESTS
@@ -205,10 +345,27 @@ def run(
     compute_dice: bool = False,
     save_latent_codes: bool = True,
     use_old_chamfer_surface_metric: bool = False,
+    patient : str | None=None,
+    surface : str = "all",
+    reconstructed_meshes_dir_override: Path | None = None,
 ):
     experiments_dir = combo_dir / "experiments"
     images_dir = combo_config.IMAGES_DIR
-    reconstructed_meshes_dir = combo_config.RECONSTRUCTED_MESHES_DIR
+    
+    if reconstructed_meshes_dir_override is not None:
+        reconstructed_meshes_dir = Path(
+            reconstructed_meshes_dir_override
+        )
+    else:
+        reconstructed_meshes_dir = Path(
+            combo_config.RECONSTRUCTED_MESHES_DIR
+        )
+
+    reconstructed_meshes_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
     latents_dir = combo_config.LATENTS_DIR
     metrics_dir = combo_config.METRICS_DIR
     patient_meshes_dir = combo_config.PATIENT_MESHES_DIR
@@ -230,6 +387,8 @@ def run(
     specs = json.load(open(hparams_file, "r", encoding="utf-8"))
 
     specs["TestSplit"] = str((combo_dir / "test" / "data_fnames_test.json").resolve())
+    # specs["TestSplit"] = str((combo_dir / "train" / "data_fnames_train.json").resolve())
+    
     specs["TrainSplit"] = str((combo_dir / "train" / "data_fnames_train.json").resolve())
 
     # important: use combo-specific datasource
@@ -276,9 +435,30 @@ def run(
     dataloader.setup("test")
     dataset = dataloader.test_dataloader().dataset
 
+    # degbug
+
+    print("[DEBUG] len(dataset):", len(dataset))
+    
+
+    # fin debug
+
     data_file = dataset.data_file
     which_shapes = "test" if "test" in Path(data_file).name else "train"
     patient_names = get_dataset_patients_names(json.load(open(data_file, "r", encoding="utf-8")))
+
+    if patient is not None:
+        if patient not in patient_names:
+            raise ValueError(
+                f"Patient '{patient}' not found in dataset.\n"
+                f"Available patients: {patient_names}"
+            )
+
+        shape_indices = [patient_names.index(patient)]
+    else:
+        shape_indices = range(len(dataset))
+
+    print("[DEBUG]  len(patient_names):", len(patient_names))
+    print("[DEBUG]  data_file:", data_file)
 
     decoder_input_scale = specs.get("scale_spatial_inputs_by", 100)
 
@@ -312,7 +492,7 @@ def run(
     print(f"    - mahalanobis loss = {use_mahalanobis_loss}")
     print("\n")
 
-    for shape_idx in range(len(dataset)):
+    for shape_idx in shape_indices:
 
         patient_name = patient_names[shape_idx]
         print("\n\033[48;2;30;30;30;0;38;2;255;200;0m" + f"# {'='*10} PATIENT {patient_name} : {shape_idx+1}/{len(dataset)} {'='*10} #" + "\033[0m")
@@ -338,20 +518,29 @@ def run(
 
         xyz_gt = data["coords"]
         sdf_gt = data["sdf"]
+        mask_gt = data["mask"]
 
         if reconstruct_from == "la":
-            near_la = np.where(np.abs(sdf_gt[:, 1]) <= 0.005)
+            # near_la = np.where(np.abs(sdf_gt[:, 1]) <= 0.005)
+            near_la = (
+                (mask_gt[:, 1] > 0.5)
+                & (torch.abs(sdf_gt[:, 1]) <= 0.005)
+            )
+
             xyz_gt = xyz_gt[near_la]
             sdf_gt = sdf_gt[near_la]
+            mask_gt = mask_gt[near_la]
 
         xyz_gt = xyz_gt.reshape(-1, 3) * decoder_input_scale
         sdf_gt = sdf_gt.reshape(-1, decoder.out_dim)
+        mask_gt = mask_gt.reshape(-1, decoder.out_dim)
 
         if enforce_minmax:
             sdf_gt = torch.clamp(sdf_gt, min=-clamp_distance, max=clamp_distance)
 
         sdf_gt = sdf_gt.to(DEVICE)
         xyz = xyz_gt.to(DEVICE)
+        mask_gt = mask_gt.to(DEVICE)
 
         latent_size = decoder.latent_size
 
@@ -377,12 +566,20 @@ def run(
 
         latent.requires_grad = True
         code_reg_lambda = latent_reg_factor
-        beta = 100 * find_pointcloud_noise(
-            decoder, model, xyz, sdf_gt,
+
+        epsilon = find_pointcloud_noise(
+            decoder=decoder,
+            model=model,
+            xyz_gt=xyz,
+            sdf_gt=sdf_gt,
+            mask_gt=mask_gt,
             code_reg_lambda=code_reg_lambda,
             num_epochs_fit_latent=250,
-            lr_fit_latent=0.005
+            lr_fit_latent=0.005,
+            loss_type=specs.get("use_loss", "MSE"),
         )
+
+        beta = 100.0 * epsilon
 
         optimizer = torch.optim.Adam(params=[latent], lr=lr_fit_latent)
         num_samp_per_scene = sdf_gt.shape[0]
@@ -406,7 +603,14 @@ def run(
             else:
                 reg_loss = latent.pow(2).sum()
 
-            chunk_loss = loss_fn(sdf_pred, sdf_gt) / (num_samp_per_scene * decoder.out_dim)
+            # chunk_loss = loss_fn(sdf_pred, sdf_gt) / (num_samp_per_scene * decoder.out_dim)
+            chunk_loss = masked_regression_loss(
+                pred=sdf_pred,
+                gt=sdf_gt,
+                mask=mask_gt,
+                loss_type=specs.get("use_loss", "MSE"),
+            )
+                        
             loss = chunk_loss + beta * code_reg_lambda * reg_loss
 
             loss.backward()
@@ -478,14 +682,22 @@ def run(
             "rv_endo": data_[:, 2 + 3],
         }
 
-        organs_to_process = ["epicardium", "lv_endo", "rv_endo"]
+        if surface == "all":
+            organs_to_process = [
+                "epicardium",
+                "lv_endo",
+                "rv_endo",
+            ]
+        else:
+            organs_to_process = [surface]
+
         mesh_gt_dict = {}
         patient_dir = patient_meshes_dir / patient_name
 
         for organ_name in organs_to_process:
             mesh_file = next(patient_dir.rglob(f"{organ_name}-processed.vtp"), None)
             if mesh_file is None:
-                raise FileNotFoundError(f"Ground-truth mesh not found for {patient_name}, organ {organ_name}")
+                raise FileNotFoundError(f"Ground-truth mesh not found for {patient_name}, organ {organ_name}, dir {patient_meshes_dir}")
             mesh_gt_dict[organ_name] = pv.read(mesh_file)
 
         patient_start = time.time()
@@ -656,7 +868,7 @@ def run(
         loss_type = "L2" if not use_mahalanobis_loss else "Maha"
         save_latents_npz(
             experiment_name, version, which_shapes,
-            code_reg_lambda, num_epochs, initialize_latent_from,
+            code_reg_lambda, num_epochs, initialize_latent_from, 
             loss_type, latent_codes, latents_dir
         )
         print("Saved fitted latents.")
@@ -687,6 +899,18 @@ def parse_args():
     parser.add_argument("--compute_haussdorff", "-hauss", action="store_true")
     parser.add_argument("--compute_f1_score", "-f1", action="store_true")
     parser.add_argument("--compute_dice", "-dice", action="store_true")
+
+    parser.add_argument("--patient", type=str, default=None, help="Test only the specified patient")
+
+    parser.add_argument("--surface", type=str, default="all", choices=["all", "epicardium", "lv_endo", "rv_endo"], help="reconstruct and display only the selected surface",)
+    
+    parser.add_argument(
+        "--reconstructed_meshes_dir",
+        type=Path,
+        default=None,
+        help="Optional override for reconstructed meshes output directory.",
+    )
+    
     return parser.parse_args()
 
 
@@ -715,6 +939,9 @@ def main():
         "lr_fit_latent": args.lr,
         "initialize_latent_from": args.init_latent_from,
         "use_mahalanobis_loss": args.use_mahalanobis_loss,
+        "patient": args.patient,
+        "surface": args.surface,
+        "reconstructed_meshes_dir_override": args.reconstructed_meshes_dir,
     }
 
     if args.mode == 1:

@@ -13,7 +13,7 @@ Costruisce e visualizza quadrati MRI-like lungo l'asse C_area -> A_maxD.
 - calcoliamo la sdf: 
     - distanza locale l2 nella slice
     - segno dal winding number rispetto tutta la mesh
-- genriamo la maschera binaria della validità dei samples+
+- genriamo la maschera binaria della validità dei samples
 - plotting
 """
 
@@ -53,8 +53,9 @@ CSV_PATH = Path(
 patient = "S73"
 patient = "VT001_MUG1"
 patient = "yrm3438_v1"
-patient = "AF076"
-patient = "LEU_BBB_21036"
+patient = "AF010_P2"
+# patient = "AF011"
+# patient = "LEU_BBB_21036"
 # patient = "LEU_NORM_4590"
 
 patient_dir = ALL_PROCESSED_DIR / patient
@@ -690,12 +691,12 @@ if lv is not None:
         opacity=0.48,
     )
 
-# if rv is not None:
-#     plotter.add_mesh(
-#         rv,
-#         color="lightblue",
-#         opacity=0.48,
-#     )
+if rv is not None:
+    plotter.add_mesh(
+        rv,
+        color="lightblue",
+        opacity=0.48,
+    )
 
 # if epi is not None:
 #     plotter.add_mesh(
@@ -744,13 +745,14 @@ plotter.add_mesh(
 )
 
 # ============== quadrati
-# for square in squares:
-#     plotter.add_mesh(
-#         square,
-#         color="green",
-#         opacity=0.08,
-#         show_edges=True,
-#     )
+for square in squares:
+    plotter.add_mesh(
+        square,
+        color="green",
+        opacity=0.2,
+        show_edges=True,
+    )
+    break
 # #-------------------------
 
 plotter.add_point_labels(
@@ -765,19 +767,19 @@ plotter.add_point_labels(
     font_size=18,
 )
 
-plotter.show_bounds(
-    grid="front",
-    location="outer",
-    all_edges=True,
-)
+# plotter.show_bounds(
+#     grid="front",
+#     location="outer",
+#     all_edges=True,
+# )
 
 #========= punti che usiamo per trovare il lato del quadrato
-plotter.add_mesh(
-    pv.PolyData(epi_points_used_for_side),
-    color="blue",
-    point_size=10,
-    render_points_as_spheres=True,
-)
+# plotter.add_mesh(
+#     pv.PolyData(epi_points_used_for_side),
+#     color="blue",
+#     point_size=10,
+#     render_points_as_spheres=True,
+# )
 
 #=================== assi u e v 
 ARROW_LENGTH = SQUARE_SIDE_LENGTH / 10
@@ -866,35 +868,35 @@ plotter.add_point_labels(
 
 
 #============== cbar centerd in 0 and nonsymm
-from matplotlib.colors import LinearSegmentedColormap
-sdf = sdf_epi
+# from matplotlib.colors import LinearSegmentedColormap
+# sdf = sdf_lv
 
-sampled_cloud = pv.PolyData(all_sampled_points)
-sampled_cloud[f"{sdf}"] = sdf
+# sampled_cloud = pv.PolyData(all_sampled_points)
+# sampled_cloud[f"{sdf}"] = sdf
 
-vmin = np.nanmin(sdf)
-vmax = np.nanmax(sdf)
+# vmin = np.nanmin(sdf)
+# vmax = np.nanmax(sdf)
 
-zero_pos = (0 - vmin) / (vmax - vmin)
+# zero_pos = (0 - vmin) / (vmax - vmin)
 
-cmap = LinearSegmentedColormap.from_list(
-    "custom_bwr",
-    [
-        (0.0, "blue"),
-        (zero_pos, "white"),
-        (1.0, "red"),
-    ],
-)
+# cmap = LinearSegmentedColormap.from_list(
+#     "custom_bwr",
+#     [
+#         (0.0, "blue"),
+#         (zero_pos, "white"),
+#         (1.0, "red"),
+#     ],
+# )
 
-plotter.add_mesh(
-    sampled_cloud,
-    scalars=f"{sdf}",
-    cmap=cmap,
-    clim=[vmin, vmax],
-    point_size=5,
-    render_points_as_spheres=True,
-    show_scalar_bar=True,
-)
+# plotter.add_mesh(
+#     sampled_cloud,
+#     scalars=f"{sdf}",
+#     cmap=cmap,
+#     clim=[vmin, vmax],
+#     point_size=5,
+#     render_points_as_spheres=True,
+#     show_scalar_bar=True,
+# )
 #=============0
 
 

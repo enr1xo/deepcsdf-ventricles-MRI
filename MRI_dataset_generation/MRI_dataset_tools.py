@@ -19,8 +19,8 @@ class MRIDatasetParams:
     slab_width_mm: float = 0.75
     min_dist_mm: float = 1.0
     n_points_per_square: int = 1000
-    n_before_start: int = 2
-    n_after_apex: int = 2
+    n_before_start: int = 4 
+    n_after_apex: int = 3
     reference_slice_index: int = 4
     margin_factor: float = 1.25
     save_npy: bool = True

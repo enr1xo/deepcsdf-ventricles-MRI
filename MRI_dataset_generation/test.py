@@ -18,10 +18,42 @@
 
 # print(stats)
 
-import numpy as np
+# import numpy as np
 
-data = np.load("/home/rizzardi/Schreibtisch/MRI_model/generated_npy/AF001_mri_samples.npy")
+# data = np.load("/home/rizzardi/Schreibtisch/MRI_model/generated_npy/AF001_mri_samples.npy")
 
-print(data.shape)
-print(data.dtype)
-print(data[998:1002])
+# print(data.shape)
+# print(data.dtype)
+# print(data[998:1002])
+
+
+import json
+from pathlib import Path
+
+json_path = Path("/home/rizzardi/Schreibtisch/MRI_model/MRI_model/test/data_fnames_test.json")
+json_path = Path("/home/rizzardi/Schreibtisch/MRI_model/MRI_model/train/data_fnames_train.json")
+
+with open(json_path, "r") as f:
+    data = json.load(f)
+
+def rename(obj):
+    if isinstance(obj, str):
+        return obj.replace(
+            "_MRI_like_coords_and_sdf.npy",
+            "_mri_samples.npy",
+        )
+
+    elif isinstance(obj, list):
+        return [rename(x) for x in obj]
+
+    elif isinstance(obj, dict):
+        return {k: rename(v) for k, v in obj.items()}
+
+    return obj
+
+data = rename(data)
+
+with open(json_path, "w") as f:
+    json.dump(data, f, indent=4)
+
+print("Done.")
