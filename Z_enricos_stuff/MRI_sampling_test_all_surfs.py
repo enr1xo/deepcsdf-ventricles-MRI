@@ -21,7 +21,7 @@ from utils.surface_utils import (
 # PATIENT = "yrm0342_v1"
 # PATIENT = "VT001_MUG1"
 # PATIENT = "S72"
-PATIENT = "AF001"
+PATIENT = "AF013"
 #========
 # sampling inside myocardium
 #=========

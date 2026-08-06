@@ -49,6 +49,10 @@ except ImportError:
 from model.deepsdf_dataloader import SDFDataModule
 from model.deepsdf_decoder import Decoder, DeepSDF
 
+# print(
+#     "Decoder loaded from:",
+#     SDFDataModule.__file__,
+# )
 
 # =========== setup for H100 / A100 / L40S GPU =========== #
 torch.set_float32_matmul_precision("high")
@@ -252,7 +256,7 @@ def parse_args():
         help="Specs filename inside combo_dir/specs_files/"
     )
     parser.add_argument(
-        "--experiment_name", type=str, default=None,
+        "--experiment_name", "-e", type=str, default=None,
         help="Optional override for experiment name"
     )
     parser.add_argument(

@@ -244,10 +244,10 @@ class DeepSDF(pl.LightningModule):
 
         # EIKONAL terms
         # self.use_eikonal = specs.get("use_eikonal_loss", False)
-        self.use_eikonal_loss = True
+        self.use_eikonal_loss = False
 
         # self.eikonal_weight = specs.get("eikonal_weight", 1e-2)
-        self.eikonal_weight = 1e-3
+        self.eikonal_weight = 2e-4
         
         # self.ekional_frac = specs.get("eikonal_frac", 0.25)
         self.eikonal_frac = 1
@@ -680,8 +680,40 @@ class DeepSDF(pl.LightningModule):
 
             grads = torch.stack(grads, dim=1)
 
-            target = torch.tensor(1.0, device=self.device)
-            eikonal_loss = ((grads - target) ** 2).mean()
+            # target = torch.tensor(1.0, device=self.device)
+            # eikonal_loss = ((grads - target) ** 2).mean()
+
+            target = torch.tensor(
+                1.0,
+                device=self.device,
+                dtype=grads.dtype,
+            )
+
+            eikonal_error = (grads - target) ** 2
+
+            eikonal_loss = torch.zeros(
+                (),
+                device=self.device,
+                dtype=eikonal_error.dtype,
+            )
+
+            n_valid_surfaces = 0
+
+            for k in range(self.decoder.out_dim):
+                valid = mask[:, k] > 0.5
+
+                if valid.any():
+                    eikonal_loss = (
+                        eikonal_loss
+                        + eikonal_error[valid, k].mean()
+                    )
+                    n_valid_surfaces += 1
+
+            if n_valid_surfaces > 0:
+                eikonal_loss = (
+                    eikonal_loss / n_valid_surfaces
+                )
+
 
         training_loss = (
             chunk_loss

@@ -45,7 +45,7 @@
     "lr_decay_time_max": 40000,
     "log_every_n_epochs": 1000,
     "log_val_every_n_epochs" : 2000,
-    "val_batch_size" : 23,
+    "val_batch_size" : 1,
     "checkpoint_every_n_epochs": 200000000,
     "resume_training_from_version": "-"
 }

@@ -15,6 +15,9 @@ ALL_PROCESSED_DIR = Path(
     "/home/rizzardi/Schreibtisch/AF001_aligned_processed"
 )
 
+# VALVE = "TRICUSPID" # PULMUNARY
+VALVE = "PULMUNARY"
+
 APEX_BASE_AXIS = np.array([-1.0, 1.0, 0.0])
 APEX_BASE_AXIS /= np.linalg.norm(APEX_BASE_AXIS)
 
@@ -26,9 +29,9 @@ GRID_COLS = 8
 # PESI LIKELIHOOD TRICUSPIDE
 # ============================================================
 
-W_PROJ = 0.1
-W_AREA = 0.4
-W_PLANE = 0.5
+W_PROJ = 0.0
+W_AREA = 0.3
+W_PLANE = 0.7
 
 # ============================================================
 # LISTA PAZIENTI
@@ -170,7 +173,13 @@ for page_start in range(0, len(patient_dirs), PATIENTS_PER_PAGE):
                 # Come prima: x + y.
                 # Se seleziona la polmonare invece della tricuspide,
                 # prova x - y, -x, oppure x.
-                plane_value = z
+                if VALVE == "PULMUNARY":
+                    plane_value = z
+                elif VALVE == "TRICUSPID":
+                    plane_value = -z
+                else:
+                    print("invalid valve!")
+                    break
 
                 patch_infos.append({
                     "rid": rid,

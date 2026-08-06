@@ -43,8 +43,8 @@ ALL_PROCESSED_DIR = Path(
     "/home/rizzardi/Schreibtisch/AF001_aligned_processed"
 )
 
-patient = "AF006"
-# patient = "LEU_BBB_21248"
+patient = "AF001"
+patient = "LEU_BBB_21248"
 # # patient = "yrm9981_v1"
 # patient = "LEU_NORM_0194"
 # patient = "S65"
@@ -59,7 +59,7 @@ SQUARE_MARGIN_FACTOR = 1.5
 
 SLICE_THICKNESS_MM = 0.75
 
-plane_23_shitf_mm = 35.0
+plane_23_shitf_mm = 25.0
 
 SQUARE_SPACING_MM = 6
 
@@ -69,11 +69,22 @@ N_AFTER_APEX = 3
 # N_BEFORE_MITRAL = 2
 # N_AFTER_APEX = 2
 
-N_SAMPLED_POINTS_PER_SQUARE = 1500  
+N_SAMPLED_POINTS_PER_SQUARE = 1000  
 MIN_DIST_MM = 1
 
 CONTOUR_EXPANSION_MM = 25.0
 BATCH_SIZE = 5000
+
+# ============================================================
+# PARAMETRI SETTORE ECOGRAFICO / TRIANGOLO CURVILINEO
+# ============================================================
+
+ECHO_SPHERE_RADIUS = 1.5
+ECHO_ANGLE_DEG = 60.0
+ECHO_ARC_RESOLUTION = 150
+
+# Centro della sfera sulla quale si trova la sonda
+ECHO_SPHERE_CENTER = np.array([0.0, 0.0, 0.0])
 
 # ============================================================
 # FUNZIONI
@@ -503,6 +514,338 @@ def compute_sign_libigl(mesh, query_points):
         sign *= -1
 
     return sign
+
+def rotate_vector_in_plane(
+    bisector_direction,
+    lateral_direction,
+    angle_rad,
+):
+    """
+    Ruota bisector_direction nel piano generato da
+    bisector_direction e lateral_direction.
+
+    Entrambi i vettori devono essere ortonormali.
+    """
+
+    bisector_direction = normalize(
+        np.asarray(bisector_direction, dtype=float)
+    )
+
+    lateral_direction = normalize(
+        np.asarray(lateral_direction, dtype=float)
+    )
+
+    return normalize(
+        np.cos(angle_rad) * bisector_direction
+        + np.sin(angle_rad) * lateral_direction
+    )
+
+
+def second_ray_sphere_intersection(
+    vertex,
+    ray_direction,
+    sphere_center,
+    sphere_radius,
+    tolerance=1e-10,
+):
+    """
+    Trova la seconda intersezione tra una semiretta e una sfera.
+
+    La semiretta parte da vertex, che deve trovarsi sulla sfera:
+
+        x(t) = vertex + t * ray_direction
+
+    L'intersezione con t=0 è vertex.
+    La funzione restituisce l'altra intersezione.
+    """
+
+    vertex = np.asarray(vertex, dtype=float)
+    ray_direction = normalize(
+        np.asarray(ray_direction, dtype=float)
+    )
+    sphere_center = np.asarray(sphere_center, dtype=float)
+
+    relative_vertex = vertex - sphere_center
+
+    vertex_radius = np.linalg.norm(relative_vertex)
+
+    if not np.isclose(
+        vertex_radius,
+        sphere_radius,
+        rtol=1e-6,
+        atol=1e-8,
+    ):
+        raise ValueError(
+            "The sector vertex is not on the sphere: "
+            f"|V-C|={vertex_radius:.8f}, "
+            f"radius={sphere_radius:.8f}"
+        )
+
+    # Risolvendo l'intersezione:
+    #
+    # |V + t*d - C|² = r²
+    #
+    # dato che |V-C|² = r²:
+    #
+    # t [t + 2(V-C)·d] = 0
+    #
+    # t=0 è V; l'altra soluzione è:
+    second_t = -2.0 * np.dot(
+        relative_vertex,
+        ray_direction,
+    )
+
+    if second_t <= tolerance:
+        raise ValueError(
+            "The ray does not point toward the interior of the sphere. "
+            f"Second intersection parameter t={second_t:.8f}"
+        )
+
+    return vertex + second_t * ray_direction
+
+
+def make_curvilinear_triangle_on_sphere(
+    sphere_center,
+    sphere_radius,
+    vertex_direction,
+    lateral_direction,
+    opening_angle_deg,
+    arc_resolution=100,
+):
+    """
+    Costruisce un triangolo curvilineo piano inscritto nella sfera.
+
+    Il triangolo è delimitato da:
+    - due segmenti con origine nel vertice V;
+    - un arco della circonferenza ottenuta intersecando la sfera
+      con il piano di acquisizione.
+
+    Parametri
+    ---------
+    sphere_center:
+        Centro della sfera.
+
+    sphere_radius:
+        Raggio della sfera.
+
+    vertex_direction:
+        Direzione dal centro della sfera verso il vertice V.
+
+    lateral_direction:
+        Secondo asse appartenente al piano di acquisizione.
+
+    opening_angle_deg:
+        Angolo totale al vertice.
+
+    arc_resolution:
+        Numero di punti utilizzati per discretizzare l'arco.
+
+    Returns
+    -------
+    sector:
+        Superficie PyVista triangolata.
+
+    boundary:
+        Bordo completo del triangolo curvilineo.
+
+    vertex:
+        Vertice V sulla sfera.
+
+    intersection_1, intersection_2:
+        Intersezioni dei lati con la sfera.
+    """
+
+    sphere_center = np.asarray(
+        sphere_center,
+        dtype=float,
+    )
+
+    vertex_direction = normalize(
+        np.asarray(vertex_direction, dtype=float)
+    )
+
+    # Rendiamo lateral_direction ortogonale a vertex_direction
+    lateral_direction = np.asarray(
+        lateral_direction,
+        dtype=float,
+    )
+
+    lateral_direction = (
+        lateral_direction
+        - np.dot(
+            lateral_direction,
+            vertex_direction,
+        ) * vertex_direction
+    )
+
+    lateral_direction = normalize(lateral_direction)
+
+    alpha = np.deg2rad(opening_angle_deg)
+    beta = alpha / 2.0
+
+    if not 0.0 < alpha < np.pi:
+        raise ValueError(
+            "opening_angle_deg must be between 0 and 180 degrees."
+        )
+
+    # Vertice sulla sfera
+    vertex = (
+        sphere_center
+        + sphere_radius * vertex_direction
+    )
+
+    # La bisettrice è orientata dal vertice verso il centro
+    bisector_direction = normalize(
+        sphere_center - vertex
+    )
+
+    # Direzioni dei due lati
+    ray_direction_1 = rotate_vector_in_plane(
+        bisector_direction=bisector_direction,
+        lateral_direction=lateral_direction,
+        angle_rad=-beta,
+    )
+
+    ray_direction_2 = rotate_vector_in_plane(
+        bisector_direction=bisector_direction,
+        lateral_direction=lateral_direction,
+        angle_rad=beta,
+    )
+
+    intersection_1 = second_ray_sphere_intersection(
+        vertex=vertex,
+        ray_direction=ray_direction_1,
+        sphere_center=sphere_center,
+        sphere_radius=sphere_radius,
+    )
+
+    intersection_2 = second_ray_sphere_intersection(
+        vertex=vertex,
+        ray_direction=ray_direction_2,
+        sphere_center=sphere_center,
+        sphere_radius=sphere_radius,
+    )
+
+    # Il punto diametralmente opposto a V è nella direzione
+    # della bisettrice rispetto al centro.
+    arc_axis = bisector_direction
+
+    # Gli estremi dell'arco risultano agli angoli -alpha e +alpha
+    # rispetto all'asse arc_axis.
+    arc_angles = np.linspace(
+        -alpha,
+        alpha,
+        arc_resolution,
+    )
+
+    arc_points = (
+        sphere_center[None, :]
+        + sphere_radius
+        * (
+            np.cos(arc_angles)[:, None]
+            * arc_axis[None, :]
+            + np.sin(arc_angles)[:, None]
+            * lateral_direction[None, :]
+        )
+    )
+
+    # Forziamo esattamente i punti estremi, per evitare
+    # piccoli errori numerici.
+    arc_points[0] = intersection_1
+    arc_points[-1] = intersection_2
+
+    # Punto 0 = vertice
+    # Punti 1...N = arco
+    points = np.vstack([
+        vertex,
+        arc_points,
+    ])
+
+    # Ventaglio di triangoli:
+    # V, arco_i, arco_i+1
+    faces = []
+
+    for i in range(arc_resolution - 1):
+        faces.extend([
+            3,
+            0,
+            i + 1,
+            i + 2,
+        ])
+
+    sector = pv.PolyData(
+        points,
+        np.asarray(faces, dtype=np.int64),
+    )
+
+    sector = sector.clean().triangulate()
+
+    # Bordo: V -> P1 -> arco -> P2 -> V
+    boundary_points = np.vstack([
+        vertex,
+        arc_points,
+        vertex,
+    ])
+
+    boundary = pv.lines_from_points(
+        boundary_points,
+        close=False,
+    )
+
+    return (
+        sector,
+        boundary,
+        vertex,
+        intersection_1,
+        intersection_2,
+    )
+
+
+def intersect_surface_with_sector(
+    anatomical_surface,
+    sector,
+):
+    """
+    Calcola la curva di intersezione tra una superficie anatomica
+    chiusa e il triangolo curvilineo.
+
+    Restituisce None se non viene trovata alcuna intersezione.
+    """
+
+    if anatomical_surface is None:
+        return None
+
+    anatomical_surface = (
+        anatomical_surface
+        .extract_surface()
+        .triangulate()
+        .clean()
+    )
+
+    sector_clean = (
+        sector
+        .extract_surface()
+        .triangulate()
+        .clean()
+    )
+
+    try:
+        intersection, _, _ = anatomical_surface.intersection(
+            sector_clean,
+            split_first=False,
+            split_second=False,
+        )
+    except Exception as error:
+        print(
+            "WARNING: sector/surface intersection failed:",
+            error,
+        )
+        return None
+
+    if intersection.n_points == 0:
+        return None
+
+    return intersection.clean()
 # ============================================================
 # READ CSV
 # ============================================================
@@ -820,6 +1163,65 @@ square_normal_e3 = make_square(
 )
 
 # ============================================================
+# TRIANGOLO CURVILINEO ECOGRAFICO
+# ============================================================
+
+# Posizioniamo il vertice sul lato opposto all'apice.
+#
+# e1 punta dalla mitrale verso l'apice.
+# Quindi -e1 porta il vertice verso la regione basale/esterna.
+echo_vertex_direction = -e1
+
+# Il secondo asse del piano di acquisizione è e2.
+# Il triangolo curvilineo giace quindi nel piano e1-e2,
+# normale a e3.
+echo_lateral_direction = e2
+
+(
+    echo_sector,
+    echo_sector_boundary,
+    echo_vertex,
+    echo_intersection_1,
+    echo_intersection_2,
+) = make_curvilinear_triangle_on_sphere(
+    sphere_center=ECHO_SPHERE_CENTER,
+    sphere_radius=ECHO_SPHERE_RADIUS,
+    vertex_direction=echo_vertex_direction,
+    lateral_direction=echo_lateral_direction,
+    opening_angle_deg=ECHO_ANGLE_DEG,
+    arc_resolution=ECHO_ARC_RESOLUTION,
+)
+
+print("\nEcho curvilinear triangle")
+print("Vertex:", echo_vertex)
+print("Intersection 1:", echo_intersection_1)
+print("Intersection 2:", echo_intersection_2)
+print(
+    "Distance V-P1:",
+    np.linalg.norm(echo_intersection_1 - echo_vertex),
+)
+print(
+    "Distance V-P2:",
+    np.linalg.norm(echo_intersection_2 - echo_vertex),
+)
+
+# Intersezioni con le tre superfici
+echo_epi_intersection = intersect_surface_with_sector(
+    anatomical_surface=epi,
+    sector=echo_sector,
+)
+
+echo_lv_intersection = intersect_surface_with_sector(
+    anatomical_surface=lv,
+    sector=echo_sector,
+)
+
+echo_rv_intersection = intersect_surface_with_sector(
+    anatomical_surface=rv,
+    sector=echo_sector,
+)
+
+# ============================================================
 # PIANI PARALLELI AL PIANO 1 / SHORT-AXIS
 # ============================================================
 
@@ -1071,26 +1473,26 @@ axis_e1 = make_axis_line(C_area, e1, AXIS_LENGTH)
 axis_e2 = make_axis_line(C_area, e2, AXIS_LENGTH)
 axis_e3 = make_axis_line(C_area, e3, AXIS_LENGTH)
 
-plotter.add_mesh(
-    axis_e1,
-    color="green",
-    line_width=5,
-    label="e1 apex-base"
-)
+# plotter.add_mesh(
+#     axis_e1,
+#     color="green",
+#     line_width=5,
+#     label="e1 apex-base"
+# )
 
-plotter.add_mesh(
-    axis_e2,
-    color="orange",
-    line_width=5,
-    label="e2 mitral-tricuspid"
-)
+# plotter.add_mesh(
+#     axis_e2,
+#     color="orange",
+#     line_width=5,
+#     label="e2 mitral-tricuspid"
+# )
 
-plotter.add_mesh(
-    axis_e3,
-    color="purple",
-    line_width=5,
-    label="e3 third axis"
-)
+# plotter.add_mesh(
+#     axis_e3,
+#     color="purple",
+#     line_width=5,
+#     label="e3 third axis"
+# )
 
 # frecce
 plotter.add_mesh(
@@ -1109,19 +1511,19 @@ plotter.add_mesh(
 )
 
 # piani
-for i, square in enumerate(short_axis_squares):
+# for i, square in enumerate(short_axis_squares):
 
-    opacity = 0.22 if i == N_BEFORE_MITRAL else 0.08
-    if i == 4:
-        plotter.add_mesh(
-            square,
-            color="green",
-            opacity=opacity,
-            show_edges=True,
-        )
-        break
-    else:
-        continue
+#     opacity = 0.22 if i == N_BEFORE_MITRAL else 0.08
+#     if i == 4:
+#         plotter.add_mesh(
+#             square,
+#             color="green",
+#             opacity=opacity,
+#             show_edges=True,
+#         )
+#         break
+#     else:
+#         continue
     
 
 # plotter.add_mesh(
@@ -1132,22 +1534,22 @@ for i, square in enumerate(short_axis_squares):
 #     label="Vertical Long-axis Plane normal e2"
 # )
 
-plotter.add_mesh(
-    square_normal_e3,
-    color="purple",
-    opacity=0.30,
-    show_edges=True,
-    label="Horizonral Long-axis Plane normal e3"
-)
+# plotter.add_mesh(
+#     square_normal_e3,
+#     color="purple",
+#     opacity=0.30,
+#     show_edges=True,
+#     label="Horizonral Long-axis Plane normal e3"
+# )
 
 # centri dei piani
-plotter.add_points(
-    short_axis_plane_points,
-    color="black",
-    point_size=9,
-    render_points_as_spheres=True,
-    label="Short-axis plane centers"
-)
+# plotter.add_points(
+#     short_axis_plane_points,
+#     color="black",
+#     point_size=9,
+#     render_points_as_spheres=True,
+#     label="Short-axis plane centers"
+# )
 
 # punti di intersezione dell'epi con i piani
 # plotter.add_points(
@@ -1191,29 +1593,129 @@ plotter.add_mesh(
 )
 
 # samples
-plotter.add_mesh(
-    pv.PolyData(all_sampled_points[all_sampled_plane_types == "short_axis"]),
-    color="green",
-    point_size=4,
-    render_points_as_spheres=True,
-)
+# plotter.add_mesh(
+#     pv.PolyData(all_sampled_points[all_sampled_plane_types == "short_axis"]),
+#     color="green",
+#     point_size=4,
+#     render_points_as_spheres=True,
+# )
 
-plotter.add_mesh(
-    pv.PolyData(all_sampled_points[all_sampled_plane_types == "normal_e2"]),
-    color="orange",
-    point_size=4,
-    render_points_as_spheres=True,
-)
+# plotter.add_mesh(
+#     pv.PolyData(all_sampled_points[all_sampled_plane_types == "normal_e2"]),
+#     color="orange",
+#     point_size=4,
+#     render_points_as_spheres=True,
+# )
 
-plotter.add_mesh(
-    pv.PolyData(all_sampled_points[all_sampled_plane_types == "normal_e3"]),
-    color="purple",
-    point_size=4,
-    render_points_as_spheres=True,
-)
+# plotter.add_mesh(
+#     pv.PolyData(all_sampled_points[all_sampled_plane_types == "normal_e3"]),
+#     color="purple",
+#     point_size=4,
+#     render_points_as_spheres=True,
+# )
 
 #---------------
 
+# ============================================================
+# PLOT TRIANGOLO CURVILINEO
+# ============================================================
+
+plotter.add_mesh(
+    echo_sector,
+    color="gold",
+    opacity=0.20,
+    show_edges=False,
+    label="Echo fan-shaped sector",
+)
+
+plotter.add_mesh(
+    echo_sector_boundary,
+    color="black",
+    line_width=5,
+    label="Echo sector boundary",
+)
+
+# Vertice del settore / posizione della sonda
+plotter.add_mesh(
+    pv.Sphere(
+        radius=0.045,
+        center=echo_vertex,
+    ),
+    color="yellow",
+    label="Echo probe vertex",
+)
+
+# Intersezioni dei due lati con la sfera
+plotter.add_points(
+    np.vstack([
+        echo_intersection_1,
+        echo_intersection_2,
+    ]),
+    color="black",
+    point_size=12,
+    render_points_as_spheres=True,
+    label="Sector-sphere intersections",
+)
+
+# Asse centrale del settore
+echo_bisector_line = pv.Line(
+    echo_vertex,
+    ECHO_SPHERE_CENTER
+    + ECHO_SPHERE_RADIUS * e1,
+)
+
+plotter.add_mesh(
+    echo_bisector_line,
+    color="yellow",
+    line_width=3,
+    label="Echo sector bisector",
+)
+
+# ============================================================
+# INTERSEZIONI SETTORE - SUPERFICI CARDIACHE
+# ============================================================
+
+if (
+    echo_epi_intersection is not None
+    and echo_epi_intersection.n_points > 0
+):
+    plotter.add_mesh(
+        echo_epi_intersection,
+        color="green",
+        line_width=8,
+        render_lines_as_tubes=True,
+        label="Echo sector / epicardium",
+    )
+else:
+    print("No intersection between echo sector and epicardium")
+
+if (
+    echo_lv_intersection is not None
+    and echo_lv_intersection.n_points > 0
+):
+    plotter.add_mesh(
+        echo_lv_intersection,
+        color="red",
+        line_width=8,
+        render_lines_as_tubes=True,
+        label="Echo sector / LV endocardium",
+    )
+else:
+    print("No intersection between echo sector and LV")
+
+if (
+    echo_rv_intersection is not None
+    and echo_rv_intersection.n_points > 0
+):
+    plotter.add_mesh(
+        echo_rv_intersection,
+        color="blue",
+        line_width=8,
+        render_lines_as_tubes=True,
+        label="Echo sector / RV endocardium",
+    )
+else:
+    print("No intersection between echo sector and RV")
 
 plotter.show_bounds(
     grid="front",

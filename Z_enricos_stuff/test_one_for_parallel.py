@@ -79,6 +79,9 @@ def get_dataset_patients_names(data: list[str]):
         elif fname.endswith("_mri_samples.npy"):
             patient_name = fname.replace("_mri_samples.npy", "")
         
+        elif fname.endswith("_three_axis_mri_grid_samples.npy"):
+            patient_name = fname.replace("_three_axis_mri_grid_samples.npy", "")
+        
         
 
         else:
