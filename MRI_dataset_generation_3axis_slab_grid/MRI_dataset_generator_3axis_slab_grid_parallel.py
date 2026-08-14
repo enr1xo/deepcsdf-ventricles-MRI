@@ -65,7 +65,7 @@ LANDMARKS_CSV = Path(
 
 OUTPUT_DIR = Path(
     "/home/rizzardi/Schreibtisch/"
-    "MRI_model/generated_npy_three_axis_grid_dense"
+    "MRI_model/generated_npy_short_axis_grid_dense"
 )
 
 
@@ -85,7 +85,7 @@ PARAMS = GridMRIParams(
     square_margin_factor=1.5,
 
     n_points_per_short_axis_plane=1000,
-    n_points_per_long_axis_volume=2000,
+    n_points_per_long_axis_volume=0,
 
     grid_spacing_mm=1.0,
     contour_expansion_mm=25.0,
