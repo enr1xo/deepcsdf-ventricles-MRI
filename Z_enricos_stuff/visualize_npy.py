@@ -7,15 +7,21 @@ from pathlib import Path
 import numpy as np
 import pyvista as pv
 
-NPY_PATH = Path("/home/rizzardi/Schreibtisch/MRI_model/generated_npy_three_axis_LA_volume_2mm")
-CARDIUAC_SURFS_PATH = Path("/home/rizzardi/Schreibtisch/AF001_aligned_processed")
+#NPY_PATH = Path("/home/rizzardi/Schreibtisch/MRI_model/generated_npy_three_axis_LA_volume_2mm")
+#CARDIUAC_SURFS_PATH = Path("/home/rizzardi/Schreibtisch/AF001_aligned_processed")
 
-patient_id = "AF001"
-npy_file = NPY_PATH / f"{patient_id}_three_axis_mri_samples.npy"
+NPY_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop")
+CARDIAC_SURFS_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\AF001_aligned_processed")
 
-epi_surf_file = CARDIUAC_SURFS_PATH / f"{patient_id}" /f"epicardium-processed.vtp"
-lv_surf_file = CARDIUAC_SURFS_PATH / f"{patient_id}" /f"lv_endo-processed.vtp"
-rv_surf_file = CARDIUAC_SURFS_PATH / f"{patient_id}" /f"rv_endo-processed.vtp"
+NPY_SUFFIX = "_echo_samples.npy"
+
+PATIENT_ID = "AF074"
+#npy_file = NPY_PATH / f"{patient_id}_three_axis_mri_samples.npy"
+npy_file = NPY_PATH / f"{PATIENT_ID}_{NPY_SUFFIX}"
+
+epi_surf_file = CARDIAC_SURFS_PATH / f"{PATIENT_ID}" /f"epicardium-processed.vtp"
+lv_surf_file = CARDIAC_SURFS_PATH / f"{PATIENT_ID}" /f"lv_endo-processed.vtp"
+rv_surf_file = CARDIAC_SURFS_PATH / f"{PATIENT_ID}" /f"rv_endo-processed.vtp"
 
 """
 Visualizziamo un file NPY con i punti campionati di un ventricolo
@@ -43,17 +49,15 @@ import pyvista as pv
 # PARAMETRI
 # ============================================================
 
-NPY_PATH = Path(
-    "/home/rizzardi/Schreibtisch/MRI_model/generated_npy_three_axis_grid"
-)
+#NPY_PATH = Path(
+    #"/home/rizzardi/Schreibtisch/MRI_model/generated_npy_three_axis_grid")
 
-CARDIAC_SURFS_PATH = Path(
-    "/home/rizzardi/Schreibtisch/AF001_aligned_processed"
-)
+#CARDIAC_SURFS_PATH = Path(
+    #"/home/rizzardi/Schreibtisch/AF001_aligned_processed")
 
-PATIENT_ID = "AF013"
+#PATIENT_ID = "AF013"
 
-NPY_SUFFIX = "_three_axis_mri_grid_samples.npy"
+#NPY_SUFFIX = "_three_axis_mri_grid_samples.npy"
 
 # Modalità con cui colorare i punti:
 #
@@ -64,7 +68,7 @@ NPY_SUFFIX = "_three_axis_mri_grid_samples.npy"
 # "mask_lv"
 # "mask_rv"
 # "constant"
-POINT_COLOR_MODE = "sdf_lv"
+POINT_COLOR_MODE = "sdf_epi"
 
 POINT_SIZE = 5.0
 SURFACE_OPACITY = 0.30
@@ -139,7 +143,7 @@ def load_surface(path: Path, scale: float = 1.0) -> pv.PolyData:
         )
 
     surface = surface.extract_surface(
-        algorithm="dataset_surface"
+        #algorithm="dataset_surface"
     ).triangulate()
 
     if scale != 1.0:
@@ -418,6 +422,39 @@ def main() -> None:
         scale=SURFACE_SCALE,
     )
 
+    # ========================================================
+    # DEBUG COORDINATE / SCALA
+    # ========================================================
+
+    points_debug = data[:, :3]
+
+    print("\n" + "=" * 60)
+    print("DEBUG COORDINATE")
+    print("=" * 60)
+
+    print("\nNPY bounds:")
+    print("  min:", points_debug.min(axis=0))
+    print("  max:", points_debug.max(axis=0))
+    print("  centro:", points_debug.mean(axis=0))
+
+    print("\nEPI bounds:")
+    print(epi_surface.bounds)
+    print("EPI center:")
+    print(epi_surface.center)
+
+    print("\nDimensioni NPY:")
+    print(points_debug.max(axis=0) - points_debug.min(axis=0))
+
+    print("\nDimensioni EPI:")
+    print([
+        epi_surface.bounds.x_max - epi_surface.bounds.x_min,
+        epi_surface.bounds.y_max - epi_surface.bounds.y_min,
+        epi_surface.bounds.z_max - epi_surface.bounds.z_min,
+    ])
+
+    print("=" * 60)
+    # fine debug
+
     lv_surface = load_surface(
         lv_surf_file,
         scale=SURFACE_SCALE,
@@ -450,6 +487,14 @@ def main() -> None:
         data=data,
         color_mode=POINT_COLOR_MODE,
     )
+
+    # debug
+    print("\nDEBUG POINT CLOUD")
+    print("Numero punti point_cloud:", point_cloud.n_points)
+    print("Numero celle point_cloud:", point_cloud.n_cells)
+    print("Bounds point_cloud:", point_cloud.bounds)
+    # fine debug
+
 
     # --------------------------------------------------------
     # Plotter
@@ -487,62 +532,103 @@ def main() -> None:
     )
 
     # Punti
+    # if scalar_name is None:
+    #     points_actor = plotter.add_mesh(
+    #         point_cloud,
+    #         color="black",
+    #         point_size=POINT_SIZE,
+    #         render_points_as_spheres=True,
+    #         label="Punti NPY",
+    #     )
+
+    # else:
+    #     scalar_values = point_cloud[scalar_name]
+
+    #     add_mesh_kwargs = {
+    #         "scalars": scalar_name,
+    #         "point_size": POINT_SIZE,
+    #         "render_points_as_spheres": True,
+    #         "label": f"Punti: {scalar_name}",
+    #         "show_scalar_bar": True,
+    #     }
+
+    #     # Le mask hanno valori discreti 0 e 1.
+    #     if scalar_name.startswith("mask"):
+    #         add_mesh_kwargs.update(
+    #             {
+    #                 "cmap": ["darkred", "limegreen"],
+    #                 "clim": [0.0, 1.0],
+    #                 "categories": True,
+    #                 "scalar_bar_args": {
+    #                     "title": scalar_name,
+    #                     "n_labels": 2,
+    #                 },
+    #             }
+    #         )
+
+    #     else:
+    #         # Per gli SDF usiamo una scala simmetrica rispetto a zero.
+    #         max_abs = float(
+    #             np.nanmax(np.abs(scalar_values))
+    #         )
+
+    #         if max_abs == 0:
+    #             max_abs = 1.0
+
+    #         add_mesh_kwargs.update(
+    #             {
+    #                 "cmap": "coolwarm",
+    #                 "clim": [-max_abs, max_abs],
+    #                 "scalar_bar_args": {
+    #                     "title": scalar_name,
+    #                 },
+    #             }
+    #         )
+
+    #     points_actor = plotter.add_mesh(
+    #         point_cloud,
+    #         **add_mesh_kwargs,
+    #     )
+
+    # # Punti - TEST SEMPLICE
+    # points_actor = plotter.add_points(
+    #     data[:, :3],
+    #     color="black",
+    #     point_size=15,
+    #     render_points_as_spheres=True,
+    #     label="Punti NPY",
+    # )
+    
+    # Punti
     if scalar_name is None:
-        points_actor = plotter.add_mesh(
-            point_cloud,
+        points_actor = plotter.add_points(
+            data[:, :3],
             color="black",
             point_size=POINT_SIZE,
-            render_points_as_spheres=True,
+            render_points_as_spheres=False,
             label="Punti NPY",
         )
 
     else:
         scalar_values = point_cloud[scalar_name]
 
-        add_mesh_kwargs = {
-            "scalars": scalar_name,
-            "point_size": POINT_SIZE,
-            "render_points_as_spheres": True,
-            "label": f"Punti: {scalar_name}",
-            "show_scalar_bar": True,
-        }
+        max_abs = float(np.nanmax(np.abs(scalar_values)))
 
-        # Le mask hanno valori discreti 0 e 1.
-        if scalar_name.startswith("mask"):
-            add_mesh_kwargs.update(
-                {
-                    "cmap": ["darkred", "limegreen"],
-                    "clim": [0.0, 1.0],
-                    "categories": True,
-                    "scalar_bar_args": {
-                        "title": scalar_name,
-                        "n_labels": 2,
-                    },
-                }
-            )
+        if max_abs == 0:
+            max_abs = 1.0
 
-        else:
-            # Per gli SDF usiamo una scala simmetrica rispetto a zero.
-            max_abs = float(
-                np.nanmax(np.abs(scalar_values))
-            )
-
-            if max_abs == 0:
-                max_abs = 1.0
-
-            add_mesh_kwargs.update(
-                {
-                    "cmap": "coolwarm",
-                    "clim": [-max_abs, max_abs],
-                    "scalar_bar_args": {
-                        "title": scalar_name,
-                    },
-                }
-            )
-
-        points_actor = plotter.add_mesh(
-            point_cloud,
-            **add_mesh_kwargs,
+        points_actor = plotter.add_points(
+            data[:, :3],
+            scalars=scalar_values,
+            point_size=POINT_SIZE,
+            render_points_as_spheres=False,
+            cmap="coolwarm",
+            clim=[-max_abs, max_abs],
+            show_scalar_bar=True,
+            scalar_bar_args={
+                "title": scalar_name,
+            },
+            label=f"Punti: {scalar_name}",
         )
 
     # --------------------------------------------------------
