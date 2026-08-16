@@ -14,6 +14,7 @@ NPY_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop")
 CARDIAC_SURFS_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\AF001_aligned_processed")
 
 NPY_SUFFIX = "_echo_samples.npy"
+# NPY_SUFFIX = "_three_axis_mri_grid_samples.npy"
 
 PATIENT_ID = "AF074"
 #npy_file = NPY_PATH / f"{patient_id}_three_axis_mri_samples.npy"

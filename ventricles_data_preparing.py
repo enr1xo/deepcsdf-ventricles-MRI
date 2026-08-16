@@ -888,20 +888,29 @@ if __name__ == "__main__":
         reference_patient = reference_patient_list[5]
 
     # 5k
-    num_epi_samples = 1500
-    num_lendo_samples = 1750
-    num_rendo_samples = 1750
+    # num_epi_samples = 1500
+    # num_lendo_samples = 1750
+    # num_rendo_samples = 1750
 
     # 3k
     # num_epi_samples = 900
     # num_lendo_samples = 1050
     # num_rendo_samples = 1050
 
+    # samples number comparable to MRI-specific models samples count
+    num_epi_samples = 500
+    num_lendo_samples = 750 
+    num_rendo_samples = 750
+    
     num = num_epi_samples + num_lendo_samples + num_rendo_samples
 
-    sigmas = [0.25, 0.025, 0.0025]
-    lambdas = [0.25, 0.5, 0.75]
-    rhos = [0.5, 1, 2]
+    # sigmas = [0.25, 0.025, 0.0025]
+    # lambdas = [0.25, 0.5, 0.75]
+    # rhos = [0.5, 1, 2]
+
+    sigmas = [0.025]
+    lambdas = [0.75]
+    rhos = [0.5]
 
     combination = 1
     combs = len(sigmas) * len(lambdas) * len(rhos)
