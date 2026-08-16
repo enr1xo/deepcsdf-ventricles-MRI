@@ -89,8 +89,9 @@ else:
     # PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/rizzardi/Schreibtisch/sampling_noise_study_npy/3k")
     PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/rizzardi/Schreibtisch/all_npy_files_5k")
     PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/rizzardi/Schreibtisch/MRI_model/generated_npy_three_axis_grid")
+    PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/rizzardi/Schreibtisch/expanded_dataset_19500pts_npy")
 
-PATIENTS_NPY_DATA_DIR =  PATIENTS_COORDS_AND_SDFS_DIR #/ "single_VT_100000pts_npy"
+PATIENTS_NPY_DATA_DIR =  PATIENTS_COORDS_AND_SDFS_DIR / "_expanded_dataset_19500pts_npy" 
 
 # PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/davidenava_linux/DATASETS/AtriaPointsAndSDFs")
 
