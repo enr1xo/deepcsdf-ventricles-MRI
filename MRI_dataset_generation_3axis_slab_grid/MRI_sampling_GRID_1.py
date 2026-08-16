@@ -1892,6 +1892,10 @@ def generate_single_patient_grid_dataset(
 
     plane_specs = []
 
+    # --------------------------------------------------------
+    # Short-axis: sempre sampling planare
+    # --------------------------------------------------------
+
     for center in short_axis_centers:
         plane_specs.append({
             "type": "short_axis",
@@ -1903,6 +1907,20 @@ def generate_single_patient_grid_dataset(
             "sampling_mode": "plane",
         })
 
+
+    # --------------------------------------------------------
+    # Long-axis:
+    # se lo spessore è minore del grid spacing,
+    # campioniamo su un singolo piano centrale.
+    # Altrimenti manteniamo il volume 3D.
+    # --------------------------------------------------------
+
+    if params.long_axis_volume_width_mm < params.grid_spacing_mm:
+        long_axis_sampling_mode = "plane"
+    else:
+        long_axis_sampling_mode = "volume"
+
+
     plane_specs.append({
         "type": "normal_e2",
         "center": c_long,
@@ -1910,7 +1928,7 @@ def generate_single_patient_grid_dataset(
         "u": e1,
         "v": e3,
         "slab_half_width": long_half_width,
-        "sampling_mode": "volume",
+        "sampling_mode": long_axis_sampling_mode,
     })
 
     plane_specs.append({
@@ -1920,7 +1938,7 @@ def generate_single_patient_grid_dataset(
         "u": e1,
         "v": e2,
         "slab_half_width": long_half_width,
-        "sampling_mode": "volume",
+        "sampling_mode": long_axis_sampling_mode,
     })
 
     # --------------------------------------------------------
@@ -1984,9 +2002,15 @@ def generate_single_patient_grid_dataset(
                 )
             )
 
-            n_requested = (
-                params.n_points_per_short_axis_plane
-            )
+            # Short-axis e long-axis usano budget diversi
+            if spec["type"] == "short_axis":
+                n_requested = (
+                    params.n_points_per_short_axis_plane
+                )
+            else:
+                n_requested = (
+                    params.n_points_per_long_axis_volume
+                )
 
             stratification_bins = (
                 params.stratification_bins_2d
