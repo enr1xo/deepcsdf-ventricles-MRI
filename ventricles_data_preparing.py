@@ -898,9 +898,9 @@ if __name__ == "__main__":
     # num_rendo_samples = 1050
 
     # samples number comparable to MRI-specific models samples count
-    num_epi_samples = 500
-    num_lendo_samples = 750 
-    num_rendo_samples = 750
+    num_epi_samples = 5850
+    num_lendo_samples = 6825 
+    num_rendo_samples = 6825
     
     num = num_epi_samples + num_lendo_samples + num_rendo_samples
 

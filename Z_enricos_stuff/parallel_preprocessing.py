@@ -162,7 +162,7 @@ def process_single_patient(
             query_sets.append(
                 sample_surface_for_deepsdf(
                     epicardium.copy(),
-                    number_of_points=num_lendo_samples,
+                    number_of_points=num_epi_samples,
                     use_deepsdf_convention=True,
                     sigma=sigma,
                     rho=rho,
@@ -175,7 +175,7 @@ def process_single_patient(
             query_sets.append(
                 sample_surface_for_deepsdf(
                     LV_endo.copy(),
-                    number_of_points=num_rendo_samples,
+                    number_of_points=num_lendo_samples,
                     use_deepsdf_convention=True,
                     sigma=sigma,
                     rho=rho,
@@ -188,7 +188,7 @@ def process_single_patient(
             query_sets.append(
                 sample_surface_for_deepsdf(
                     RV_endo.copy(),
-                    number_of_points=num_epi_samples,
+                    number_of_points=num_rendo_samples,
                     use_deepsdf_convention=True,
                     sigma=sigma,
                     rho=rho,
