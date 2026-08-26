@@ -1220,30 +1220,30 @@ def run(
                     }
                 )
 
-                if show_la_zero_levels or save_la_zero_levels:
+            if show_la_zero_levels or save_la_zero_levels:
 
-                    if save_la_zero_levels:
+                if save_la_zero_levels:
 
-                        la_image_dir = (
-                            images_dir
-                            / experiment_name
-                            / "la_zero_levels"
-                        )
-
-                        la_save_path = (
-                            la_image_dir
-                            / f"{version}-{patient_name}-LAX-both-zero-level.png"
-                        )
-
-                    else:
-                        la_save_path = None
-
-                    plot_both_la_zero_levels(
-                        planes_data=planes_data,
-                        patient_name=patient_name,
-                        save_path=la_save_path,
-                        show=show_la_zero_levels,
+                    la_image_dir = (
+                        images_dir
+                        / experiment_name
+                        / "la_zero_levels"
                     )
+
+                    la_save_path = (
+                        la_image_dir
+                        / f"{version}-{patient_name}-LAX-both-zero-level.png"
+                    )
+
+                else:
+                    la_save_path = None
+
+                plot_both_la_zero_levels(
+                    planes_data=planes_data,
+                    patient_name=patient_name,
+                    save_path=la_save_path,
+                    show=show_la_zero_levels,
+                )
 
             print("=" * 70)
 
