@@ -77,7 +77,7 @@ OUTPUT_DIR = Path(
 PARAMS = GridMRIParams(
     square_spacing_mm=6.0,
     short_axis_slab_width_mm=0.75,
-    long_axis_volume_width_mm=2.0,
+    long_axis_volume_width_mm=0.75,
 
     n_before_mitral=3,
     n_after_apex=3,
