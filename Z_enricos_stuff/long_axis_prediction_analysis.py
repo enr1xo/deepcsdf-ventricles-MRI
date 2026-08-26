@@ -398,7 +398,7 @@ def plot_la_zero_level(
     mask: np.ndarray,
     patient_name: str,
     plane_name: str,
-    grid_resolution: int = 300,
+    grid_resolution: int = 1000,
     save_path: Path | None = None,
     show: bool = True,
 ):
@@ -549,6 +549,224 @@ def print_la_sdf_error_summary(
             f"RMSE={rmse:.6e} | "
             f"bias(pred-GT)={bias:.6e}"
         )
+
+
+
+def plot_both_la_zero_levels(
+    planes_data,
+    patient_name: str,
+    grid_resolution: int = 1000,
+    save_path: Path | None = None,
+    show: bool = True,
+):
+    """
+    Plot both LAX planes in a single 3x2 panel.
+
+    Rows:
+        epicardium
+        lv_endo
+        rv_endo
+
+    Columns:
+        LAX 1
+        LAX 2
+
+    Black = GT zero level
+    Red   = predicted zero level
+    """
+
+    organ_names = ["epicardium", "lv_endo", "rv_endo"]
+
+    n_planes = len(planes_data)
+
+    if n_planes != 2:
+        raise ValueError(
+            f"Expected exactly 2 LAX planes, got {n_planes}"
+        )
+
+    fig, axes = plt.subplots(
+        3,
+        2,
+        figsize=(12, 16),
+        squeeze=False,
+    )
+
+    for plane_idx, plane_data in enumerate(planes_data):
+
+        xyz = plane_data["xyz"]
+        sdf_gt = plane_data["sdf_gt"]
+        sdf_pred = plane_data["sdf_pred"]
+        mask = plane_data["mask"]
+        plane_name = plane_data["name"]
+
+        # Important: compute the planar coordinates independently
+        # for each LAX plane
+        u, v = project_points_to_plane(xyz)
+
+        ui = np.linspace(
+            u.min(),
+            u.max(),
+            grid_resolution,
+        )
+
+        vi = np.linspace(
+            v.min(),
+            v.max(),
+            grid_resolution,
+        )
+
+        uu, vv = np.meshgrid(ui, vi)
+
+        for organ_idx, organ_name in enumerate(organ_names):
+
+            ax = axes[organ_idx, plane_idx]
+
+            valid = mask[:, organ_idx] > 0.5
+
+            gt_grid = _interpolate_sdf_on_plane(
+                u,
+                v,
+                sdf_gt[:, organ_idx],
+                valid,
+                uu,
+                vv,
+            )
+
+            pred_grid = _interpolate_sdf_on_plane(
+                u,
+                v,
+                sdf_pred[:, organ_idx],
+                valid,
+                uu,
+                vv,
+            )
+
+            # sampled points
+            ax.scatter(
+                u[valid],
+                v[valid],
+                s=4,
+                alpha=0.15,
+            )
+
+            gt_has_zero = False
+            pred_has_zero = False
+
+            # -------------------------
+            # Ground truth zero level
+            # -------------------------
+            if (
+                gt_grid is not None
+                and np.isfinite(gt_grid).any()
+            ):
+                gt_min = np.nanmin(gt_grid)
+                gt_max = np.nanmax(gt_grid)
+
+                gt_has_zero = (
+                    gt_min <= 0.0 <= gt_max
+                )
+
+                if gt_has_zero:
+                    ax.contour(
+                        uu,
+                        vv,
+                        gt_grid,
+                        levels=[0.0],
+                        colors="black",
+                        linewidths=2.5,
+                    )
+
+            # -------------------------
+            # Predicted zero level
+            # -------------------------
+            if (
+                pred_grid is not None
+                and np.isfinite(pred_grid).any()
+            ):
+                pred_min = np.nanmin(pred_grid)
+                pred_max = np.nanmax(pred_grid)
+
+                pred_has_zero = (
+                    pred_min <= 0.0 <= pred_max
+                )
+
+                if pred_has_zero:
+                    ax.contour(
+                        uu,
+                        vv,
+                        pred_grid,
+                        levels=[0.0],
+                        colors="red",
+                        linewidths=2.0,
+                    )
+
+            ax.set_title(
+                f"{organ_name} - {plane_name}\n"
+                f"GT zero: {gt_has_zero} | "
+                f"pred zero: {pred_has_zero}"
+            )
+
+            ax.set_xlabel("plane u")
+            ax.set_ylabel("plane v")
+
+            ax.set_aspect(
+                "equal",
+                adjustable="box",
+            )
+
+            # dummy artists for legend
+            ax.plot(
+                [],
+                [],
+                color="black",
+                linewidth=2.5,
+                label="GT SDF = 0",
+            )
+
+            ax.plot(
+                [],
+                [],
+                color="red",
+                linewidth=2.0,
+                label="Pred SDF = 0",
+            )
+
+            ax.legend()
+
+    fig.suptitle(
+        f"{patient_name}\n"
+        "Zero-level comparison on both LAX planes",
+        fontsize=16,
+    )
+
+    plt.tight_layout(
+        rect=[0, 0, 1, 0.96]
+    )
+
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        fig.savefig(
+            save_path,
+            dpi=200,
+            bbox_inches="tight",
+        )
+
+        print(
+            f"Saved combined LAX zero-level image: "
+            f"{save_path}"
+        )
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
 # ======================== #
 # RUN TESTS
 # ======================== #
@@ -963,9 +1181,19 @@ def run(
                 f"{n_points_per_la_plane} points each."
             )
 
+            planes_data = []
+
             for la_plane_idx in range(n_planes):
-                start = la_plane_idx * n_points_per_la_plane
-                stop = start + n_points_per_la_plane
+
+                start = (
+                    la_plane_idx
+                    * n_points_per_la_plane
+                )
+
+                stop = (
+                    start
+                    + n_points_per_la_plane
+                )
 
                 xyz_plane = xyz_la[start:stop]
                 sdf_gt_plane = sdf_la_gt[start:stop]
@@ -982,23 +1210,37 @@ def run(
                     mask=mask_plane,
                 )
 
+                planes_data.append(
+                    {
+                        "xyz": xyz_plane,
+                        "sdf_gt": sdf_gt_plane,
+                        "sdf_pred": sdf_pred_plane,
+                        "mask": mask_plane,
+                        "name": plane_name,
+                    }
+                )
+
                 if show_la_zero_levels or save_la_zero_levels:
+
                     if save_la_zero_levels:
-                        la_image_dir = images_dir / experiment_name / "la_zero_levels"
+
+                        la_image_dir = (
+                            images_dir
+                            / experiment_name
+                            / "la_zero_levels"
+                        )
+
                         la_save_path = (
                             la_image_dir
-                            / f"{version}-{patient_name}-LAX{la_plane_idx + 1}-zero-level.png"
+                            / f"{version}-{patient_name}-LAX-both-zero-level.png"
                         )
+
                     else:
                         la_save_path = None
 
-                    plot_la_zero_level(
-                        xyz=xyz_plane,
-                        sdf_gt=sdf_gt_plane,
-                        sdf_pred=sdf_pred_plane,
-                        mask=mask_plane,
+                    plot_both_la_zero_levels(
+                        planes_data=planes_data,
                         patient_name=patient_name,
-                        plane_name=plane_name,
                         save_path=la_save_path,
                         show=show_la_zero_levels,
                     )
