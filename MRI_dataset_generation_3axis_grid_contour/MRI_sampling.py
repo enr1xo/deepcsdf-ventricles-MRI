@@ -346,8 +346,14 @@ def generate_one_plane_samples(name, center, normal, u, v, side, n_requested,
     c_lv  = slice_surface_with_plane(lv,  center, normal)
     c_rv  = slice_surface_with_plane(rv,  center, normal)
 
+    #if c_epi is None:
+    #    raise RuntimeError(f"{name}: epicardial contour is empty")
+
     if c_epi is None:
-        raise RuntimeError(f"{name}: epicardial contour is empty")
+        print(
+            f"WARNING {name}: epicardial contour is empty; "
+            "SDF will be 0 and mask 0 for that surface."
+        )
 
     grid, local = generate_planar_grid(center, u, v, side, grid_spacing_norm,
                                        params.random_grid_offset, rng)
@@ -358,11 +364,34 @@ def generate_one_plane_samples(name, center, normal, u, v, side, n_requested,
     d_lv = contour_unsigned_distance(grid, c_lv, center, u, v) if c_lv is not None else np.full(len(grid), np.nan)
     d_rv = contour_unsigned_distance(grid, c_rv, center, u, v) if c_rv is not None else np.full(len(grid), np.nan)
 
-    inside_epi = compute_sign_libigl(epi, grid) < 0
-    near_epi = np.isfinite(d_epi) & (d_epi <= contour_expansion_norm)
-    valid_ids = np.flatnonzero(inside_epi | near_epi)
+    if c_epi is None:
+        # Nessun contour epicardico su questo piano:
+        # teniamo comunque i punti del piano come campioni,
+        # ma più avanti sdf_epi = 0 e mask_epi = 0.
+        valid_ids = np.arange(
+            len(grid),
+            dtype=int,
+        )
+
+    else:
+        inside_epi = compute_sign_libigl(
+            epi,
+            grid,
+        ) < 0
+
+        near_epi = (
+            np.isfinite(d_epi)
+            & (d_epi <= contour_expansion_norm)
+        )
+
+        valid_ids = np.flatnonzero(
+            inside_epi | near_epi
+        )
+
     if len(valid_ids) == 0:
-        raise RuntimeError(f"{name}: no valid grid nodes")
+        raise RuntimeError(
+            f"{name}: no valid grid nodes"
+        )
 
     chosen = select_training_nodes(valid_ids, local, (d_epi, d_lv, d_rv),
                                    n_requested, params, scale_mm, rng)
