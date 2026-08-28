@@ -365,21 +365,62 @@ def generate_one_plane_samples(name, center, normal, u, v, side, n_requested,
 
     if plane_type == "short_axis":
 
-        # -----------------------------
-        # SHORT AXIS:
-        # contour + background
-        # -----------------------------
+    # --------------------------------------------------
+    # SHORT AXIS
+    # contour + background
+    # --------------------------------------------------
 
-        inside_epi = compute_sign_libigl(epi, grid) < 0
+        if c_epi is None:
 
-        near_epi = (
-            np.isfinite(d_epi)
-            & (d_epi <= contour_expansion_norm)
-        )
+            # Il piano non interseca l'epicardio.
+            # Se non interseca NESSUNA superficie, non c'è
+            # alcuna SDF da supervisionare: saltiamo il piano.
+            if c_lv is None and c_rv is None:
 
-        valid_ids = np.flatnonzero(
-            inside_epi | near_epi
-        )
+                return (
+                    np.empty((0, 9), dtype=np.float32),
+                    {
+                        "plane_name": name,
+                        "n_grid": len(grid),
+                        "n_valid": 0,
+                        "n_selected": 0,
+                        "has_epi_contour": False,
+                        "has_lv_contour": False,
+                        "has_rv_contour": False,
+                    },
+                    {
+                        "selected_points": np.empty((0, 3)),
+                        "contour_epi": c_epi,
+                        "contour_lv": c_lv,
+                        "contour_rv": c_rv,
+                        "center": np.asarray(center),
+                        "normal": np.asarray(normal),
+                        "u": np.asarray(u),
+                        "v": np.asarray(v),
+                    },
+                )
+
+                # Se EPI manca ma LV/RV esistono, permettiamo
+                # comunque il sampling SA.
+                valid_ids = np.arange(
+                    len(grid),
+                    dtype=int,
+                )
+
+        else:
+
+            inside_epi = (
+                compute_sign_libigl(epi, grid) < 0
+            )
+
+            near_epi = (
+                np.isfinite(d_epi)
+                & (d_epi <= contour_expansion_norm)
+            )
+
+            valid_ids = np.flatnonzero(
+                inside_epi | near_epi
+            )
 
         if len(valid_ids) == 0:
             raise RuntimeError(
