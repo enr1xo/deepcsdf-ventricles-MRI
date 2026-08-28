@@ -1,17 +1,32 @@
 #!/usr/bin/env python3
 """
-visualize_SA_LAX_one_plane_SDF_3d.py
+visualize_SDF_curves_on_LAX_plane.py
+====================================
 
 Per un paziente:
-- prende un piano SA scelto (default: 9° piano, indice 8)
-- prende LAX1 e LAX2
-- campiona N punti sulle rette SAxLAX1 e SAxLAX2
-- calcola la SDF dei punti rispetto al contour SA e al contour LAX
-- mostra tutto in PyVista in 4 pannelli interattivi
+- seleziona un piano SA (default: il 9° piano -> indice 8)
+- usa entrambi i piani LAX (LAX1 e LAX2)
+- per ciascuna retta di intersezione SA x LAX campiona N punti
+- calcola, sugli stessi punti:
+      SDF rispetto al contour SA
+      SDF rispetto al contour del LAX corrispondente
+- costruisce DUE curve 3D per ogni LAX:
+      curva_SA  = q + sdf_SA  * g
+      curva_LAX = q + sdf_LAX * g
+  dove:
+      q = punto sulla retta di intersezione
+      g = direzione nel piano LAX, ortogonale alla retta di intersezione
 
-Output:
-- due CSV con i punti campionati e le SDF
-- finestra interattiva PyVista
+Quindi le curve SDF stanno nel piano LAX, come richiesto.
+
+La scena 3D mostra:
+- le superfici
+- il contour SA della superficie scelta
+- i due contour LAX della superficie scelta
+- le due rette di intersezione
+- per ciascun LAX, due curve:
+      una per SDF rispetto al contour SA
+      una per SDF rispetto al contour LAX
 """
 
 from __future__ import annotations
@@ -24,6 +39,10 @@ import numpy as np
 import pandas as pd
 import pyvista as pv
 
+
+# ============================================================
+# BASE GEOMETRICA
+# ============================================================
 
 def normalize(v, name="vector"):
     v = np.asarray(v, dtype=float)
@@ -57,6 +76,7 @@ def read_landmarks(csv_path, patient):
         raise ValueError(f"Patient {patient} not found in CSV")
     if len(rows) != 1:
         raise ValueError(f"Patient {patient} appears {len(rows)} times in CSV")
+
     row = rows.iloc[0]
     c_area = read_point(row, ["C_area_x", "C_area_y", "C_area_z"], "C_area")
     a_maxd = read_point(row, ["A_maxD_x", "A_maxD_y", "A_maxD_z"], "A_maxD")
@@ -86,20 +106,31 @@ def make_parallel_plane_points(start_point, apex_point, axis, spacing, n_before_
     start_point = np.asarray(start_point, dtype=float)
     apex_point = np.asarray(apex_point, dtype=float)
     axis = normalize(axis, "axis")
+
     axial_distance = float(np.dot(apex_point - start_point, axis))
     if axial_distance <= 0 or spacing <= 0:
-        raise ValueError("Invalid spacing or geometry")
-    n_full_steps = int(np.floor(axial_distance / spacing))
-    out = []
-    for i in range(n_before_start, 0, -1):
-        out.append(start_point - i * spacing * axis)
-    for i in range(n_full_steps + 1):
-        out.append(start_point + i * spacing * axis)
-    last_regular_distance = n_full_steps * spacing
-    for i in range(1, n_after_apex + 1):
-        out.append(start_point + (last_regular_distance + i * spacing) * axis)
-    return np.asarray(out, dtype=float)
+        raise ValueError("Invalid geometry or spacing")
 
+    n_full_steps = int(np.floor(axial_distance / spacing))
+    points = []
+
+    for i in range(n_before_start, 0, -1):
+        points.append(start_point - i * spacing * axis)
+
+    for i in range(n_full_steps + 1):
+        points.append(start_point + i * spacing * axis)
+
+    last_regular_distance = n_full_steps * spacing
+
+    for i in range(1, n_after_apex + 1):
+        points.append(start_point + (last_regular_distance + i * spacing) * axis)
+
+    return np.asarray(points, dtype=float)
+
+
+# ============================================================
+# CONTOUR E SDF
+# ============================================================
 
 def compute_sign_libigl(mesh, query_points):
     V = np.asarray(mesh.points, dtype=np.float64)
@@ -134,10 +165,12 @@ def plane_coords(points, origin, u, v):
 def contour_segments_2d(contour, origin, u, v):
     if contour is None:
         return np.empty((0, 2)), np.empty((0, 2))
+
     p2 = plane_coords(contour.points, origin, u, v)
     lines = np.asarray(contour.lines)
     starts, ends = [], []
     k = 0
+
     while k < len(lines):
         n = int(lines[k])
         ids = lines[k + 1 : k + 1 + n]
@@ -145,8 +178,10 @@ def contour_segments_2d(contour, origin, u, v):
             starts.append(p2[ids[j]])
             ends.append(p2[ids[j + 1]])
         k += n + 1
+
     if not starts:
         return np.empty((0, 2)), np.empty((0, 2))
+
     return np.asarray(starts), np.asarray(ends)
 
 
@@ -154,17 +189,23 @@ def point_to_segment_distance_2d(query_2d, seg_a, seg_b, chunk=3000):
     q = np.asarray(query_2d, dtype=float)
     a = np.asarray(seg_a, dtype=float)
     b = np.asarray(seg_b, dtype=float)
+
     if len(a) == 0:
         return np.full(len(q), np.nan)
+
     ab = b - a
     ab2 = np.sum(ab * ab, axis=1)
+
     ok = ab2 > 1e-20
     a = a[ok]
     ab = ab[ok]
     ab2 = ab2[ok]
+
     if len(a) == 0:
         return np.full(len(q), np.nan)
+
     out = np.empty(len(q), dtype=float)
+
     for start in range(0, len(q), chunk):
         stop = min(start + chunk, len(q))
         qq = q[start:stop]
@@ -174,6 +215,7 @@ def point_to_segment_distance_2d(query_2d, seg_a, seg_b, chunk=3000):
         closest = a[None, :, :] + t[:, :, None] * ab[None, :, :]
         d2 = np.sum((qq[:, None, :] - closest) ** 2, axis=2)
         out[start:stop] = np.sqrt(np.min(d2, axis=1))
+
     return out
 
 
@@ -185,14 +227,67 @@ def contour_unsigned_distance(query_points, contour, origin, u, v):
 
 def signed_contour_sdf(query_points, surface, contour, origin, u, v):
     n = len(query_points)
+
     if contour is None:
         return np.zeros(n, dtype=float), np.zeros(n, dtype=np.float32)
+
     distance = contour_unsigned_distance(query_points, contour, origin, u, v)
     valid = np.isfinite(distance)
     sign = compute_sign_libigl(surface, query_points)
+
     sdf = np.zeros(n, dtype=float)
     sdf[valid] = distance[valid] * sign[valid]
+
     return sdf, valid.astype(np.float32)
+
+
+# ============================================================
+# PIANI E INTERSEZIONI
+# ============================================================
+
+def build_plane_specs(c_area, a_maxd, t_area, scale_mm, square_spacing_mm, n_before_mitral, n_after_apex, plane_23_shift_mm):
+    e1, e2, e3 = build_three_axes(c_area, a_maxd, t_area)
+    spacing_norm = square_spacing_mm / scale_mm
+    shift_lax_norm = plane_23_shift_mm / scale_mm
+
+    sa_centers = make_parallel_plane_points(
+        start_point=c_area,
+        apex_point=a_maxd,
+        axis=e1,
+        spacing=spacing_norm,
+        n_before_start=n_before_mitral,
+        n_after_apex=n_after_apex,
+    )
+
+    c_long = c_area + shift_lax_norm * e1
+
+    sa_specs = []
+    for i, center in enumerate(sa_centers):
+        sa_specs.append({
+            "name": f"SA_{i:02d}",
+            "center": center,
+            "normal": e1,
+            "u": e2,
+            "v": e3,
+        })
+
+    lax1 = {
+        "name": "LAX1",
+        "center": c_long,
+        "normal": e2,
+        "u": e1,
+        "v": e3,
+    }
+
+    lax2 = {
+        "name": "LAX2",
+        "center": c_long,
+        "normal": e3,
+        "u": e1,
+        "v": e2,
+    }
+
+    return sa_specs, lax1, lax2
 
 
 def plane_plane_intersection(origin1, normal1, origin2, normal2):
@@ -200,13 +295,18 @@ def plane_plane_intersection(origin1, normal1, origin2, normal2):
     o2 = np.asarray(origin2, dtype=float)
     n1 = normalize(normal1, "plane 1 normal")
     n2 = normalize(normal2, "plane 2 normal")
+
     direction = np.cross(n1, n2)
     norm_dir = np.linalg.norm(direction)
+
     if norm_dir < 1e-10:
         raise ValueError("Planes are parallel or nearly parallel")
+
     direction /= norm_dir
+
     A = np.vstack([n1, n2, direction])
     b = np.array([np.dot(n1, o1), np.dot(n2, o2), 0.0], dtype=float)
+
     point = np.linalg.solve(A, b)
     return point, direction
 
@@ -223,34 +323,48 @@ def sample_line_with_n_points(line_point, line_direction, t_min, t_max, n_points
     return t, points
 
 
-def build_plane_specs(c_area, a_maxd, t_area, scale_mm, square_spacing_mm, n_before_mitral, n_after_apex, plane_23_shift_mm):
-    e1, e2, e3 = build_three_axes(c_area, a_maxd, t_area)
-    spacing_norm = square_spacing_mm / scale_mm
-    shift_lax_norm = plane_23_shift_mm / scale_mm
-    sa_centers = make_parallel_plane_points(
-        start_point=c_area,
-        apex_point=a_maxd,
-        axis=e1,
-        spacing=spacing_norm,
-        n_before_start=n_before_mitral,
-        n_after_apex=n_after_apex,
-    )
-    c_long = c_area + shift_lax_norm * e1
-    sa_specs = []
-    for i, center in enumerate(sa_centers):
-        sa_specs.append({
-            "name": f"SA_{i:02d}",
-            "center": center,
-            "normal": e1,
-            "u": e2,
-            "v": e3,
-        })
-    lax1 = {"name": "LAX1", "center": c_long, "normal": e2, "u": e1, "v": e3}
-    lax2 = {"name": "LAX2", "center": c_long, "normal": e3, "u": e1, "v": e2}
-    return sa_specs, lax1, lax2
+def plane_patch(center, u, v, size_u, size_v):
+    u = normalize(u)
+    v = normalize(v)
+    c = np.asarray(center, dtype=float)
+    p0 = c - size_u * u - size_v * v
+    p1 = c + size_u * u - size_v * v
+    p2 = c - size_u * u + size_v * v
+    p3 = c + size_u * u + size_v * v
+    return pv.Quadrilateral([p0, p1, p3, p2])
 
 
-def analyze_one_pair(surface, sa_spec, lax_spec, extent_mesh_points, scale_mm, n_line_points, line_margin_mm):
+def polyline_from_points(points):
+    return pv.lines_from_points(np.asarray(points, dtype=float), close=False)
+
+
+# ============================================================
+# COSTRUZIONE CURVE SDF NEL PIANO LAX
+# ============================================================
+
+def build_sdf_graph_curve(base_points, sdf_norm, lax_normal, line_direction, scale_visual=1.0):
+    """
+    La curva resta nel piano LAX.
+
+    base_points: punti q sulla retta SA x LAX
+    sdf_norm: SDF in unità normalizzate
+    lax_normal: normale del piano LAX
+    line_direction: direzione della retta di intersezione
+
+    graph_dir = cross(lax_normal, line_direction)
+    così graph_dir è:
+      - nel piano LAX
+      - ortogonale alla retta di intersezione
+    """
+    n = normalize(lax_normal, "lax normal")
+    d = normalize(line_direction, "line direction")
+    g = normalize(np.cross(n, d), "graph direction in LAX plane")
+
+    curve_points = np.asarray(base_points, dtype=float) + (scale_visual * sdf_norm)[:, None] * g[None, :]
+    return curve_points, g
+
+
+def analyze_pair(surface, epi_surface, sa_spec, lax_spec, scale_mm, n_line_points, line_margin_mm, sdf_visual_scale=1.0):
     contour_sa = slice_surface_with_plane(surface, sa_spec["center"], sa_spec["normal"])
     contour_lax = slice_surface_with_plane(surface, lax_spec["center"], lax_spec["normal"])
 
@@ -262,13 +376,19 @@ def analyze_one_pair(surface, sa_spec, lax_spec, extent_mesh_points, scale_mm, n
     t_min, t_max = line_sampling_interval_from_mesh(
         line_point=line_point,
         line_direction=line_direction,
-        mesh_points=extent_mesh_points,
+        mesh_points=epi_surface.points,
         margin_norm=line_margin_mm / scale_mm,
     )
 
-    t_norm, q = sample_line_with_n_points(line_point, line_direction, t_min, t_max, n_line_points)
+    t_norm, q = sample_line_with_n_points(
+        line_point=line_point,
+        line_direction=line_direction,
+        t_min=t_min,
+        t_max=t_max,
+        n_points=n_line_points,
+    )
 
-    sdf_sa, mask_sa = signed_contour_sdf(
+    sdf_sa_norm, mask_sa = signed_contour_sdf(
         query_points=q,
         surface=surface,
         contour=contour_sa,
@@ -276,7 +396,8 @@ def analyze_one_pair(surface, sa_spec, lax_spec, extent_mesh_points, scale_mm, n
         u=sa_spec["u"],
         v=sa_spec["v"],
     )
-    sdf_lax, mask_lax = signed_contour_sdf(
+
+    sdf_lax_norm, mask_lax = signed_contour_sdf(
         query_points=q,
         surface=surface,
         contour=contour_lax,
@@ -285,58 +406,65 @@ def analyze_one_pair(surface, sa_spec, lax_spec, extent_mesh_points, scale_mm, n
         v=lax_spec["v"],
     )
 
-    df = pd.DataFrame({
+    curve_sa_pts, graph_dir = build_sdf_graph_curve(
+        base_points=q,
+        sdf_norm=sdf_sa_norm,
+        lax_normal=lax_spec["normal"],
+        line_direction=line_direction,
+        scale_visual=sdf_visual_scale,
+    )
+
+    curve_lax_pts, _ = build_sdf_graph_curve(
+        base_points=q,
+        sdf_norm=sdf_lax_norm,
+        lax_normal=lax_spec["normal"],
+        line_direction=line_direction,
+        scale_visual=sdf_visual_scale,
+    )
+
+    table = pd.DataFrame({
         "t_mm": t_norm * scale_mm,
-        "x": q[:, 0],
-        "y": q[:, 1],
-        "z": q[:, 2],
+        "x_base": q[:, 0],
+        "y_base": q[:, 1],
+        "z_base": q[:, 2],
         "mask_sa": mask_sa.astype(int),
         "mask_lax": mask_lax.astype(int),
-        "valid_both": ((mask_sa > 0.5) & (mask_lax > 0.5)).astype(int),
-        "sdf_from_sa_mm": sdf_sa * scale_mm,
-        "sdf_from_lax_mm": sdf_lax * scale_mm,
-        "delta_mm": (sdf_lax - sdf_sa) * scale_mm,
+        "sdf_sa_mm": sdf_sa_norm * scale_mm,
+        "sdf_lax_mm": sdf_lax_norm * scale_mm,
+        "delta_mm": (sdf_lax_norm - sdf_sa_norm) * scale_mm,
+        "curve_sa_x": curve_sa_pts[:, 0],
+        "curve_sa_y": curve_sa_pts[:, 1],
+        "curve_sa_z": curve_sa_pts[:, 2],
+        "curve_lax_x": curve_lax_pts[:, 0],
+        "curve_lax_y": curve_lax_pts[:, 1],
+        "curve_lax_z": curve_lax_pts[:, 2],
     })
 
     return {
-        "contour_sa": contour_sa,
-        "contour_lax": contour_lax,
         "q": q,
         "t_mm": t_norm * scale_mm,
-        "sdf_sa_mm": sdf_sa * scale_mm,
-        "sdf_lax_mm": sdf_lax * scale_mm,
-        "mask_sa": mask_sa,
-        "mask_lax": mask_lax,
-        "table": df,
-        "line_poly": pv.Line(q[0], q[-1], resolution=n_line_points - 1),
+        "line_direction": line_direction,
+        "graph_direction": graph_dir,
+        "contour_sa": contour_sa,
+        "contour_lax": contour_lax,
+        "sdf_sa_norm": sdf_sa_norm,
+        "sdf_lax_norm": sdf_lax_norm,
+        "sdf_sa_mm": sdf_sa_norm * scale_mm,
+        "sdf_lax_mm": sdf_lax_norm * scale_mm,
+        "curve_sa_pts": curve_sa_pts,
+        "curve_lax_pts": curve_lax_pts,
+        "base_line_poly": polyline_from_points(q),
+        "curve_sa_poly": polyline_from_points(curve_sa_pts),
+        "curve_lax_poly": polyline_from_points(curve_lax_pts),
+        "table": table,
     }
 
 
-def add_common_geometry(plotter, surfaces_all, organ_name, pair_data, sa_spec, lax_spec):
-    for name, surf in surfaces_all.items():
-        if name == organ_name:
-            plotter.add_mesh(surf, opacity=0.15, color="lightgray")
-        else:
-            plotter.add_mesh(surf, opacity=0.05, color="silver")
+# ============================================================
+# VISUALIZZAZIONE
+# ============================================================
 
-    if pair_data["contour_sa"] is not None:
-        plotter.add_mesh(pair_data["contour_sa"], color="red", line_width=4)
-    if pair_data["contour_lax"] is not None:
-        plotter.add_mesh(pair_data["contour_lax"], color="blue", line_width=4)
-
-    plotter.add_mesh(pair_data["line_poly"], color="black", line_width=2)
-    plotter.add_points(np.asarray([sa_spec["center"]]), color="red", point_size=12, render_points_as_spheres=True)
-    plotter.add_points(np.asarray([lax_spec["center"]]), color="blue", point_size=12, render_points_as_spheres=True)
-    plotter.add_axes()
-
-
-def build_point_cloud(points, scalar_name, values):
-    poly = pv.PolyData(np.asarray(points, dtype=float))
-    poly[scalar_name] = np.asarray(values, dtype=float)
-    return poly
-
-
-def visualize_patient(
+def visualize(
     patient,
     all_processed_dir,
     landmarks_csv,
@@ -349,7 +477,8 @@ def visualize_patient(
     n_after_apex=3,
     plane_23_shift_mm=25.0,
     line_margin_mm=10.0,
-    clim=None,
+    sdf_visual_scale=1.0,
+    show_other_surfaces=True,
 ):
     patient_dir = Path(all_processed_dir) / patient
 
@@ -357,16 +486,21 @@ def visualize_patient(
     lv = prepare_surface(pv.read(patient_dir / "lv_endo-processed.vtp"), "lv_endo")
     rv = prepare_surface(pv.read(patient_dir / "rv_endo-processed.vtp"), "rv_endo")
 
-    surfaces_all = {"epicardium": epi, "lv_endo": lv, "rv_endo": rv}
+    surfaces_all = {
+        "epicardium": epi,
+        "lv_endo": lv,
+        "rv_endo": rv,
+    }
+
     if organ not in surfaces_all:
-        raise ValueError(f"Unsupported organ: {organ}")
+        raise ValueError(f"Unsupported organ '{organ}'")
 
     target_surface = surfaces_all[organ]
 
     c_area, a_maxd, t_area = read_landmarks(landmarks_csv, patient)
 
     if "scale-tooriginalrange" not in epi.field_data:
-        raise KeyError("Missing field_data['scale-tooriginalrange']")
+        raise KeyError("Missing epicardium field_data['scale-tooriginalrange']")
     scale_um = float(np.asarray(epi.field_data["scale-tooriginalrange"]).ravel()[0])
     scale_mm = scale_um / 1000.0
 
@@ -386,101 +520,165 @@ def visualize_patient(
 
     sa_spec = sa_specs[sa_index]
 
-    pair1 = analyze_one_pair(target_surface, sa_spec, lax1, epi.points, scale_mm, n_line_points, line_margin_mm)
-    pair2 = analyze_one_pair(target_surface, sa_spec, lax2, epi.points, scale_mm, n_line_points, line_margin_mm)
+    pair1 = analyze_pair(
+        surface=target_surface,
+        epi_surface=epi,
+        sa_spec=sa_spec,
+        lax_spec=lax1,
+        scale_mm=scale_mm,
+        n_line_points=n_line_points,
+        line_margin_mm=line_margin_mm,
+        sdf_visual_scale=sdf_visual_scale,
+    )
+
+    pair2 = analyze_pair(
+        surface=target_surface,
+        epi_surface=epi,
+        sa_spec=sa_spec,
+        lax_spec=lax2,
+        scale_mm=scale_mm,
+        n_line_points=n_line_points,
+        line_margin_mm=line_margin_mm,
+        sdf_visual_scale=sdf_visual_scale,
+    )
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    csv1 = output_dir / f"{patient}_{organ}_{sa_spec['name']}_LAX1_points.csv"
-    csv2 = output_dir / f"{patient}_{organ}_{sa_spec['name']}_LAX2_points.csv"
+    csv1 = output_dir / f"{patient}_{organ}_{sa_spec['name']}_LAX1_sdf_curves.csv"
+    csv2 = output_dir / f"{patient}_{organ}_{sa_spec['name']}_LAX2_sdf_curves.csv"
     pair1["table"].to_csv(csv1, index=False)
     pair2["table"].to_csv(csv2, index=False)
 
-    all_vals = np.concatenate([pair1["sdf_sa_mm"], pair1["sdf_lax_mm"], pair2["sdf_sa_mm"], pair2["sdf_lax_mm"]])
-    finite_vals = all_vals[np.isfinite(all_vals)]
-    if finite_vals.size == 0:
-        auto_clim = (-1.0, 1.0)
+    # patches dei piani
+    bbox = np.asarray(epi.bounds, dtype=float)
+    dx = bbox[1] - bbox[0]
+    dy = bbox[3] - bbox[2]
+    dz = bbox[5] - bbox[4]
+    size = 0.6 * max(dx, dy, dz)
+
+    sa_patch = plane_patch(sa_spec["center"], sa_spec["u"], sa_spec["v"], size, size)
+    lax1_patch = plane_patch(lax1["center"], lax1["u"], lax1["v"], size, size)
+    lax2_patch = plane_patch(lax2["center"], lax2["u"], lax2["v"], size, size)
+
+    pl = pv.Plotter(window_size=(1600, 1200))
+
+    # superfici
+    if show_other_surfaces:
+        for name, surf in surfaces_all.items():
+            if name == organ:
+                pl.add_mesh(surf, color="lightgray", opacity=0.16)
+            else:
+                pl.add_mesh(surf, color="silver", opacity=0.05)
     else:
-        vmax = max(abs(float(np.min(finite_vals))), abs(float(np.max(finite_vals))))
-        auto_clim = (-vmax, vmax)
-    if clim is None:
-        clim = auto_clim
+        pl.add_mesh(target_surface, color="lightgray", opacity=0.16)
 
-    plotter = pv.Plotter(shape=(2, 2), window_size=(1700, 1200))
+    # piani
+    pl.add_mesh(sa_patch, color="red", opacity=0.10)
+    pl.add_mesh(lax1_patch, color="dodgerblue", opacity=0.10)
+    pl.add_mesh(lax2_patch, color="limegreen", opacity=0.10)
 
-    plotter.subplot(0, 0)
-    add_common_geometry(plotter, surfaces_all, organ, pair1, sa_spec, lax1)
-    cloud = build_point_cloud(pair1["q"], "sdf_sa_mm", pair1["sdf_sa_mm"])
-    plotter.add_mesh(cloud, scalars="sdf_sa_mm", render_points_as_spheres=True, point_size=12, clim=clim, scalar_bar_args={"title": "SDF from SA [mm]"})
-    plotter.add_text(f"{patient} | {organ}\n{sa_spec['name']} x LAX1\nColor = SDF from SA", font_size=10)
+    # contour della superficie scelta
+    if pair1["contour_sa"] is not None:
+        pl.add_mesh(pair1["contour_sa"], color="red", line_width=5)
+    if pair1["contour_lax"] is not None:
+        pl.add_mesh(pair1["contour_lax"], color="dodgerblue", line_width=5)
+    if pair2["contour_lax"] is not None:
+        pl.add_mesh(pair2["contour_lax"], color="limegreen", line_width=5)
 
-    plotter.subplot(0, 1)
-    add_common_geometry(plotter, surfaces_all, organ, pair1, sa_spec, lax1)
-    cloud = build_point_cloud(pair1["q"], "sdf_lax_mm", pair1["sdf_lax_mm"])
-    plotter.add_mesh(cloud, scalars="sdf_lax_mm", render_points_as_spheres=True, point_size=12, clim=clim, scalar_bar_args={"title": "SDF from LAX1 [mm]"})
-    plotter.add_text(f"{patient} | {organ}\n{sa_spec['name']} x LAX1\nColor = SDF from LAX1", font_size=10)
+    # rette di intersezione
+    pl.add_mesh(pair1["base_line_poly"], color="black", line_width=2)
+    pl.add_mesh(pair2["base_line_poly"], color="dimgray", line_width=2)
 
-    plotter.subplot(1, 0)
-    add_common_geometry(plotter, surfaces_all, organ, pair2, sa_spec, lax2)
-    cloud = build_point_cloud(pair2["q"], "sdf_sa_mm", pair2["sdf_sa_mm"])
-    plotter.add_mesh(cloud, scalars="sdf_sa_mm", render_points_as_spheres=True, point_size=12, clim=clim, scalar_bar_args={"title": "SDF from SA [mm]"})
-    plotter.add_text(f"{patient} | {organ}\n{sa_spec['name']} x LAX2\nColor = SDF from SA", font_size=10)
+    # curve SDF LAX1
+    pl.add_mesh(pair1["curve_sa_poly"], color="crimson", line_width=6)
+    pl.add_mesh(pair1["curve_lax_poly"], color="navy", line_width=6)
 
-    plotter.subplot(1, 1)
-    add_common_geometry(plotter, surfaces_all, organ, pair2, sa_spec, lax2)
-    cloud = build_point_cloud(pair2["q"], "sdf_lax_mm", pair2["sdf_lax_mm"])
-    plotter.add_mesh(cloud, scalars="sdf_lax_mm", render_points_as_spheres=True, point_size=12, clim=clim, scalar_bar_args={"title": "SDF from LAX2 [mm]"})
-    plotter.add_text(f"{patient} | {organ}\n{sa_spec['name']} x LAX2\nColor = SDF from LAX2", font_size=10)
+    # curve SDF LAX2
+    pl.add_mesh(pair2["curve_sa_poly"], color="orange", line_width=6)
+    pl.add_mesh(pair2["curve_lax_poly"], color="purple", line_width=6)
+
+    # punti campionati sulla retta
+    pl.add_points(pair1["q"], color="black", point_size=8, render_points_as_spheres=True)
+    pl.add_points(pair2["q"], color="dimgray", point_size=8, render_points_as_spheres=True)
+
+    # centri dei piani
+    pl.add_points(np.asarray([sa_spec["center"]]), color="red", point_size=14, render_points_as_spheres=True)
+    pl.add_points(np.asarray([lax1["center"]]), color="dodgerblue", point_size=14, render_points_as_spheres=True)
+    pl.add_points(np.asarray([lax2["center"]]), color="limegreen", point_size=14, render_points_as_spheres=True)
+
+    legend_entries = [
+        ["SA plane / contour", "red"],
+        ["LAX1 plane / contour", "dodgerblue"],
+        ["LAX2 plane / contour", "limegreen"],
+        ["Intersection SAxLAX1", "black"],
+        ["Intersection SAxLAX2", "dimgray"],
+        ["Curve SA on LAX1", "crimson"],
+        ["Curve LAX1 on LAX1", "navy"],
+        ["Curve SA on LAX2", "orange"],
+        ["Curve LAX2 on LAX2", "purple"],
+    ]
+    pl.add_legend(legend_entries, bcolor="white")
+
+    pl.add_axes()
+    pl.add_text(
+        f"{patient} | {organ}\n"
+        f"Selected SA: {sa_spec['name']} (index {sa_index})\n"
+        f"N points/line: {n_line_points} | visual scale: {sdf_visual_scale}",
+        font_size=11,
+    )
 
     print("\n" + "=" * 80)
-    print("3D VISUALIZATION READY")
+    print("3D SDF CURVE VISUALIZATION READY")
     print("=" * 80)
     print("Patient:", patient)
     print("Organ:", organ)
     print("Selected SA plane:", sa_spec["name"], f"(index {sa_index})")
     print("N points per line:", n_line_points)
     print("Scale:", scale_mm, "mm / normalized unit")
-    print("CSV saved:")
+    print("Visual scale multiplier:", sdf_visual_scale)
+    print("Saved CSV:")
     print(" ", csv1)
     print(" ", csv2)
-    print("Color range [mm]:", clim)
     print("=" * 80)
 
-    plotter.link_views()
-    plotter.show()
+    pl.show()
+
+    return {
+        "csv_lax1": csv1,
+        "csv_lax2": csv2,
+    }
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
+
     parser.add_argument("--patient", type=str, default="AF001")
-    parser.add_argument("--all_processed_dir", required=True, type=Path)
-    parser.add_argument("--landmarks_csv", required=True, type=Path)
-    parser.add_argument("--output_dir", type=Path, default=Path("visualize_sa_lax_one_plane"))
+    parser.add_argument("--all_processed_dir", type=Path, required=True)
+    parser.add_argument("--landmarks_csv", type=Path, required=True)
+    parser.add_argument("--output_dir", type=Path, default=Path("visualize_sdf_curves_on_lax_plane"))
+
     parser.add_argument("--organ", type=str, default="epicardium", choices=["epicardium", "lv_endo", "rv_endo"])
-    parser.add_argument("--sa_index", type=int, default=8, help="0-based. sa_index=8 means the 9th SA plane.")
+    parser.add_argument("--sa_index", type=int, default=8, help="0-based index. 8 means the 9th SA plane.")
     parser.add_argument("--n_line_points", type=int, default=120)
+
     parser.add_argument("--square_spacing_mm", type=float, default=6.0)
     parser.add_argument("--n_before_mitral", type=int, default=3)
     parser.add_argument("--n_after_apex", type=int, default=3)
     parser.add_argument("--plane_23_shift_mm", type=float, default=25.0)
     parser.add_argument("--line_margin_mm", type=float, default=10.0)
-    parser.add_argument("--clim_min", type=float, default=None)
-    parser.add_argument("--clim_max", type=float, default=None)
+
+    parser.add_argument("--sdf_visual_scale", type=float, default=1.0,
+                        help="Moltiplicatore visivo delle curve SDF. 1.0 = nessuna esagerazione.")
+    parser.add_argument("--hide_other_surfaces", action="store_true")
+
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
 
-    if (args.clim_min is None) ^ (args.clim_max is None):
-        raise ValueError("Provide both --clim_min and --clim_max, or none.")
-
-    clim = None
-    if args.clim_min is not None and args.clim_max is not None:
-        clim = (float(args.clim_min), float(args.clim_max))
-
-    visualize_patient(
+    visualize(
         patient=args.patient,
         all_processed_dir=args.all_processed_dir,
         landmarks_csv=args.landmarks_csv,
@@ -493,7 +691,8 @@ def main():
         n_after_apex=args.n_after_apex,
         plane_23_shift_mm=args.plane_23_shift_mm,
         line_margin_mm=args.line_margin_mm,
-        clim=clim,
+        sdf_visual_scale=args.sdf_visual_scale,
+        show_other_surfaces=not args.hide_other_surfaces,
     )
 
 
