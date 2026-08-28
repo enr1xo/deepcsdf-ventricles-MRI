@@ -10,9 +10,7 @@ Ordine:
 2) LAX 1 (normale e2)
 3) LAX 2 (normale e3)
 
-Se n_points_per_long_axis_volume=2000:
-    samples[-4000:-2000] -> LAX 1
-    samples[-2000:]      -> LAX 2
+
 
 La magnitudine della SDF e' 2D, cioe' la distanza minima dal contour
 mesh ∩ plane. Il segno resta inside/outside rispetto alla mesh 3D completa.
@@ -51,6 +49,7 @@ class GridMRIParams:
     save_npy: bool = False
     save_csv: bool = False
     plot_debug: bool = False
+    lax_contour_band_mm: float = 2.0
 
 
 def normalize(v, name="vector"):
@@ -339,7 +338,7 @@ def select_training_nodes(valid_ids, local_2d, dists, n_requested, params, scale
 
 def generate_one_plane_samples(name, center, normal, u, v, side, n_requested,
                                grid_spacing_norm, contour_expansion_norm,
-                               scale_mm, epi, lv, rv, params, seed):
+                               scale_mm, epi, lv, rv, params, seed, plane_type,):
     rng = np.random.default_rng(seed)
 
     c_epi = slice_surface_with_plane(epi, center, normal)
@@ -364,20 +363,14 @@ def generate_one_plane_samples(name, center, normal, u, v, side, n_requested,
     d_lv = contour_unsigned_distance(grid, c_lv, center, u, v) if c_lv is not None else np.full(len(grid), np.nan)
     d_rv = contour_unsigned_distance(grid, c_rv, center, u, v) if c_rv is not None else np.full(len(grid), np.nan)
 
-    if c_epi is None:
-        # Nessun contour epicardico su questo piano:
-        # teniamo comunque i punti del piano come campioni,
-        # ma più avanti sdf_epi = 0 e mask_epi = 0.
-        valid_ids = np.arange(
-            len(grid),
-            dtype=int,
-        )
+    if plane_type == "short_axis":
 
-    else:
-        inside_epi = compute_sign_libigl(
-            epi,
-            grid,
-        ) < 0
+        # -----------------------------
+        # SHORT AXIS:
+        # contour + background
+        # -----------------------------
+
+        inside_epi = compute_sign_libigl(epi, grid) < 0
 
         near_epi = (
             np.isfinite(d_epi)
@@ -388,13 +381,73 @@ def generate_one_plane_samples(name, center, normal, u, v, side, n_requested,
             inside_epi | near_epi
         )
 
-    if len(valid_ids) == 0:
-        raise RuntimeError(
-            f"{name}: no valid grid nodes"
+        if len(valid_ids) == 0:
+            raise RuntimeError(
+                f"{name}: no valid grid nodes"
+            )
+
+        chosen = select_training_nodes(
+            valid_ids,
+            local,
+            (d_epi, d_lv, d_rv),
+            n_requested,
+            params,
+            scale_mm,
+            rng,
         )
 
-    chosen = select_training_nodes(valid_ids, local, (d_epi, d_lv, d_rv),
-                                   n_requested, params, scale_mm, rng)
+    else:
+
+        # -----------------------------
+        # LONG AXIS:
+        # solo punti entro la banda
+        # nessun background
+        # -----------------------------
+
+        band_norm = (
+            params.lax_contour_band_mm
+            / scale_mm
+        )
+
+        near_epi = (
+            np.isfinite(d_epi)
+            & (d_epi <= band_norm)
+        )
+
+        near_lv = (
+            np.isfinite(d_lv)
+            & (d_lv <= band_norm)
+        )
+
+        near_rv = (
+            np.isfinite(d_rv)
+            & (d_rv <= band_norm)
+        )
+
+        valid_ids = np.flatnonzero(
+            near_epi
+            | near_lv
+            | near_rv
+        )
+
+        if len(valid_ids) == 0:
+            raise RuntimeError(
+                f"{name}: no nodes within "
+                f"{params.lax_contour_band_mm} mm "
+                "of any LAX contour"
+            )
+
+        chosen = distributed_pick(
+            valid_ids,
+            local,
+            min(
+                n_requested,
+                len(valid_ids),
+            ),
+            params.stratification_bins_2d,
+            rng,
+        )
+
     if len(chosen) == 0:
         raise RuntimeError(f"{name}: no selected nodes")
 
@@ -402,6 +455,48 @@ def generate_one_plane_samples(name, center, normal, u, v, side, n_requested,
     sdf_epi, m_epi = signed_contour_sdf(pts, epi, c_epi, center, u, v)
     sdf_lv,  m_lv  = signed_contour_sdf(pts, lv,  c_lv,  center, u, v)
     sdf_rv,  m_rv  = signed_contour_sdf(pts, rv,  c_rv,  center, u, v)
+
+    # ==========================================================
+    # MASK LAX: solo superficie vicina
+    # ==========================================================
+
+    if plane_type != "short_axis":
+
+        band_norm = (
+            params.lax_contour_band_mm
+            / scale_mm
+        )
+
+        near_epi_chosen = (
+            np.isfinite(d_epi[chosen])
+            & (d_epi[chosen] <= band_norm)
+        )
+
+        near_lv_chosen = (
+            np.isfinite(d_lv[chosen])
+            & (d_lv[chosen] <= band_norm)
+        )
+
+        near_rv_chosen = (
+            np.isfinite(d_rv[chosen])
+            & (d_rv[chosen] <= band_norm)
+        )
+
+        m_epi *= near_epi_chosen.astype(
+            np.float32
+        )
+
+        m_lv *= near_lv_chosen.astype(
+            np.float32
+        )
+
+        m_rv *= near_rv_chosen.astype(
+            np.float32
+        )
+
+        sdf_epi[m_epi == 0] = 0.0
+        sdf_lv[m_lv == 0] = 0.0
+        sdf_rv[m_rv == 0] = 0.0
 
     samples = np.column_stack([
         pts, sdf_epi, sdf_lv, sdf_rv, m_epi, m_lv, m_rv
@@ -505,11 +600,20 @@ def generate_single_patient_grid_dataset(patient, all_processed_dir, csv_path,
     all_samples, stats, debug_planes = [], [], []
     for i, s in enumerate(specs):
         print(f"[{i+1}/{len(specs)}] {s['name']}")
+        
+        #arr, st, dbg = generate_one_plane_samples(
+        #    s["name"], s["center"], s["normal"], s["u"], s["v"],
+        #    s["side"], s["n"], spacing_grid, expansion, scale_mm,
+        #    epi, lv, rv, params, params.random_seed + i
+        #)
+
         arr, st, dbg = generate_one_plane_samples(
             s["name"], s["center"], s["normal"], s["u"], s["v"],
             s["side"], s["n"], spacing_grid, expansion, scale_mm,
-            epi, lv, rv, params, params.random_seed + i
+            epi, lv, rv, params, params.random_seed + i,
+            plane_type=s["type"],
         )
+        
         st["plane_index"] = i
         st["plane_type"] = s["type"]
         all_samples.append(arr)
@@ -585,6 +689,7 @@ if __name__ == "__main__":
         save_npy=True,
         save_csv=False,
         plot_debug=True,
+        lax_contour_band_mm=2.0,
     )
 
     generate_single_patient_grid_dataset(
