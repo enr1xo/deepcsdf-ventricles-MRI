@@ -157,7 +157,7 @@ class SDFSamples(Dataset):
 
                 if self.balance_pos_neg: # build also lists of positive / negative sdf indexes per scene
                     coords = dat_[:,:3]
-                    sdf = dat_[:,3:]
+                    sdf = dat_[:,3:6]
 
                     pos_list = []
                     neg_list = []
