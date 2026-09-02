@@ -8,16 +8,17 @@ import numpy as np
 import pyvista as pv
 
 #NPY_PATH = Path("/home/rizzardi/Schreibtisch/MRI_model/generated_npy_three_axis_LA_volume_2mm")
-#CARDIUAC_SURFS_PATH = Path("/home/rizzardi/Schreibtisch/AF001_aligned_processed")
+#CARDIAC_SURFS_PATH = Path("/home/rizzardi/Schreibtisch/AF001_aligned_processed")
 
 NPY_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop")
 CARDIAC_SURFS_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\AF001_aligned_processed")
 
 NPY_SUFFIX = "_echo_samples.npy"
-# NPY_SUFFIX = "_three_axis_mri_grid_samples.npy"
+NPY_SUFFIX = "_three_axis_mri_grid_samples.npy"
+#NPY_SUFFIX = "-epi_lv_rv_19500_coords_and_sdf.npy"
 
-PATIENT_ID = "AF074"
-#npy_file = NPY_PATH / f"{patient_id}_three_axis_mri_samples.npy"
+PATIENT_ID = "AF001"
+#npy_file = NPY_PATH / f"{PATIENT_ID}_three_axis_mri_samples.npy"
 npy_file = NPY_PATH / f"{PATIENT_ID}_{NPY_SUFFIX}"
 
 epi_surf_file = CARDIAC_SURFS_PATH / f"{PATIENT_ID}" /f"epicardium-processed.vtp"

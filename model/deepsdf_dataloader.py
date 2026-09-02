@@ -115,8 +115,8 @@ class SDFSamples(Dataset):
     def _unpack_sdfdata_json(self, data_file):
         
         data_file = Path(data_file).resolve()
-        # print("\n[DEBUG] data_file used:", data_file)
-        # print("[DEBUG] data_source used:", self.data_source.resolve())
+        print("\n[DEBUG] data_file used:", data_file)
+        print("[DEBUG] data_source used:", self.data_source.resolve())
 
         loaded = json.load(open(data_file))
 

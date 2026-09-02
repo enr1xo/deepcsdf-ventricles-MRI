@@ -312,6 +312,7 @@ def main():
     print(f"Using train split: {specs['TrainSplit']}")
     print(f"Using test split: {specs['TestSplit']}")
     print(f"Using npy dir: {combo_config.PATIENTS_NPY_DATA_DIR}")
+    print(f"Using npy dir: {specs.get('DataSource', combo_config.PATIENTS_NPY_DATA_DIR)}")
 
     version = train_one(
         specs=specs,
