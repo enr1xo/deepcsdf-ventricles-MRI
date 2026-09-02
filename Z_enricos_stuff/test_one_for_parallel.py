@@ -529,6 +529,77 @@ def run(
         sdf_gt = data["sdf"]
         mask_gt = data["mask"]
 
+        # debug
+        print("\n" + "=" * 60)
+        print(f"MASK STATISTICS - {patient_name}")
+        print("=" * 60)
+
+        names = ["EPI", "LV_ENDO", "RV_ENDO"]
+
+        for j, name in enumerate(names):
+            valid = mask_gt[:, j] > 0.5
+
+            n_valid = int(valid.sum().item())
+            n_total = int(valid.numel())
+            percentage = 100.0 * n_valid / n_total
+
+            print(
+                f"{name:8s}: "
+                f"{n_valid:6d} / {n_total:6d} "
+                f"({percentage:6.2f}%)"
+            )
+
+        epi = mask_gt[:, 0] > 0.5
+        lv  = mask_gt[:, 1] > 0.5
+        rv  = mask_gt[:, 2] > 0.5
+
+        print("\nMASK COMBINATIONS")
+
+        print(
+            "EPI only :",
+            int((epi & ~lv & ~rv).sum().item())
+        )
+
+        print(
+            "LV only  :",
+            int((~epi & lv & ~rv).sum().item())
+        )
+
+        print(
+            "RV only  :",
+            int((~epi & ~lv & rv).sum().item())
+        )
+
+        print(
+            "EPI + LV :",
+            int((epi & lv & ~rv).sum().item())
+        )
+
+        print(
+            "EPI + RV :",
+            int((epi & ~lv & rv).sum().item())
+        )
+
+        print(
+            "LV + RV  :",
+            int((~epi & lv & rv).sum().item())
+        )
+
+        print(
+            "ALL 3    :",
+            int((epi & lv & rv).sum().item())
+        )
+
+        print(
+            "NONE     :",
+            int((~epi & ~lv & ~rv).sum().item())
+        )
+
+        print("=" * 60)
+
+        # fien debug
+
+
         if reconstruct_from == "la":
             # near_la = np.where(np.abs(sdf_gt[:, 1]) <= 0.005)
             near_la = (
@@ -544,6 +615,19 @@ def run(
         sdf_gt = sdf_gt.reshape(-1, decoder.out_dim)
         mask_gt = mask_gt.reshape(-1, decoder.out_dim)
 
+        # debug
+        print("\nMASKS ACTUALLY USED FOR LATENT FIT")
+
+        for j, name in enumerate(["EPI", "LV_ENDO", "RV_ENDO"]):
+            n_valid = int((mask_gt[:, j] > 0.5).sum().item())
+
+            print(
+                f"{name:8s}: "
+                f"{n_valid:6d} / {mask_gt.shape[0]:6d} "
+                f"({100.0 * n_valid / mask_gt.shape[0]:6.2f}%)"
+            )
+
+        # fine debug
         if enforce_minmax:
             sdf_gt = torch.clamp(sdf_gt, min=-clamp_distance, max=clamp_distance)
 
