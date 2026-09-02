@@ -68,7 +68,7 @@ LANDMARKS_CSV = Path(
 
 OUTPUT_DIR = Path(
     "/home/rizzardi/Schreibtisch/"
-    "MRI_model/generated_npy_three_axis_grid_contourSDF_LAXband2mm_SAXband2mm"
+    "MRI_model/generated_npy_three_axis_grid_contourSDF_LAXband2mm_SAXband2mm_SAglobal_LAlocal_supervision_"
 )
 
 
