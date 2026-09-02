@@ -50,6 +50,7 @@ class GridMRIParams:
     save_csv: bool = False
     plot_debug: bool = False
     lax_contour_band_mm: float = 2.0
+    sax_contour_band_mm: float | None = None  
 
 
 def normalize(v, name="vector"):
@@ -336,17 +337,44 @@ def select_training_nodes(valid_ids, local_2d, dists, n_requested, params, scale
 # UN PIANO
 # ---------------------------------------------------------------------
 
-def generate_one_plane_samples(name, center, normal, u, v, side, n_requested,
-                               grid_spacing_norm, contour_expansion_norm,
-                               scale_mm, epi, lv, rv, params, seed, plane_type,):
+
+def generate_one_plane_samples(
+    name, 
+    center,
+    normal,
+    u,
+    v,
+    side,
+    n_requested,
+    grid_spacing_norm,
+    contour_expansion_norm,
+    scale_mm,
+    epi,
+    lv,
+    rv,
+    params,
+    seed,
+    plane_type,
+):
     rng = np.random.default_rng(seed)
 
-    c_epi = slice_surface_with_plane(epi, center, normal)
-    c_lv  = slice_surface_with_plane(lv,  center, normal)
-    c_rv  = slice_surface_with_plane(rv,  center, normal)
+    c_epi = slice_surface_with_plane(
+        epi,
+        center,
+        normal,
+    )
 
-    #if c_epi is None:
-    #    raise RuntimeError(f"{name}: epicardial contour is empty")
+    c_lv = slice_surface_with_plane(
+        lv,
+        center,
+        normal,
+    )
+
+    c_rv = slice_surface_with_plane(
+        rv,
+        center,
+        normal,
+    )
 
     if c_epi is None:
         print(
@@ -354,42 +382,229 @@ def generate_one_plane_samples(name, center, normal, u, v, side, n_requested,
             "SDF will be 0 and mask 0 for that surface."
         )
 
-    grid, local = generate_planar_grid(center, u, v, side, grid_spacing_norm,
-                                       params.random_grid_offset, rng)
-    if len(grid) == 0:
-        raise RuntimeError(f"{name}: grid is empty")
+    # ==========================================================
+    # GENERAZIONE GRIGLIA PLANARE
+    # ==========================================================
 
-    d_epi = contour_unsigned_distance(grid, c_epi, center, u, v)
-    d_lv = contour_unsigned_distance(grid, c_lv, center, u, v) if c_lv is not None else np.full(len(grid), np.nan)
-    d_rv = contour_unsigned_distance(grid, c_rv, center, u, v) if c_rv is not None else np.full(len(grid), np.nan)
+    grid, local = generate_planar_grid(
+        center,
+        u,
+        v,
+        side,
+        grid_spacing_norm,
+        params.random_grid_offset,
+        rng,
+    )
+
+    if len(grid) == 0:
+        raise RuntimeError(
+            f"{name}: grid is empty"
+        )
+
+    # ==========================================================
+    # DISTANZE 2D DAI CONTOUR
+    # ==========================================================
+
+    d_epi = contour_unsigned_distance(
+        grid,
+        c_epi,
+        center,
+        u,
+        v,
+    )
+
+    if c_lv is not None:
+        d_lv = contour_unsigned_distance(
+            grid,
+            c_lv,
+            center,
+            u,
+            v,
+        )
+    else:
+        d_lv = np.full(
+            len(grid),
+            np.nan,
+        )
+
+    if c_rv is not None:
+        d_rv = contour_unsigned_distance(
+            grid,
+            c_rv,
+            center,
+            u,
+            v,
+        )
+    else:
+        d_rv = np.full(
+            len(grid),
+            np.nan,
+        )
+
+    # ==========================================================
+    # SHORT AXIS
+    # ==========================================================
 
     if plane_type == "short_axis":
 
-    # --------------------------------------------------
-    # SHORT AXIS
-    # contour + background
-    # --------------------------------------------------
+        # ------------------------------------------------------
+        # SAX ORIGINALE
+        #
+        # sax_contour_band_mm = None
+        #
+        # Mantiene il comportamento precedente:
+        #   - punti dentro EPI
+        #   - punti entro contour_expansion_mm da EPI
+        #   - selezione surface-biased + background
+        # ------------------------------------------------------
 
-        if c_epi is None:
+        if params.sax_contour_band_mm is None:
 
-            # Il piano non interseca l'epicardio.
-            # Se non interseca NESSUNA superficie, non c'è
-            # alcuna SDF da supervisionare: saltiamo il piano.
-            if c_lv is None and c_rv is None:
+            if c_epi is None:
+
+                # Nessuna superficie presente:
+                # saltiamo completamente il piano.
+                if c_lv is None and c_rv is None:
+
+                    return (
+                        np.empty(
+                            (0, 9),
+                            dtype=np.float32,
+                        ),
+                        {
+                            "plane_name": name,
+                            "n_grid": len(grid),
+                            "n_valid": 0,
+                            "n_selected": 0,
+                            "has_epi_contour": False,
+                            "has_lv_contour": False,
+                            "has_rv_contour": False,
+                        },
+                        {
+                            "selected_points": np.empty(
+                                (0, 3)
+                            ),
+                            "contour_epi": c_epi,
+                            "contour_lv": c_lv,
+                            "contour_rv": c_rv,
+                            "center": np.asarray(center),
+                            "normal": np.asarray(normal),
+                            "u": np.asarray(u),
+                            "v": np.asarray(v),
+                        },
+                    )
+
+                # EPI assente ma LV/RV presenti:
+                # manteniamo il comportamento precedente.
+                valid_ids = np.arange(
+                    len(grid),
+                    dtype=int,
+                )
+
+            else:
+
+                inside_epi = (
+                    compute_sign_libigl(
+                        epi,
+                        grid,
+                    )
+                    < 0
+                )
+
+                near_epi = (
+                    np.isfinite(d_epi)
+                    & (
+                        d_epi
+                        <= contour_expansion_norm
+                    )
+                )
+
+                valid_ids = np.flatnonzero(
+                    inside_epi
+                    | near_epi
+                )
+
+            if len(valid_ids) == 0:
+                raise RuntimeError(
+                    f"{name}: no valid grid nodes"
+                )
+
+            chosen = select_training_nodes(
+                valid_ids,
+                local,
+                (
+                    d_epi,
+                    d_lv,
+                    d_rv,
+                ),
+                n_requested,
+                params,
+                scale_mm,
+                rng,
+            )
+
+        # ------------------------------------------------------
+        # SAX NARROW BAND
+        #
+        # sax_contour_band_mm = valore numerico
+        #
+        # Considera solo punti vicini ad almeno un contour.
+        # ------------------------------------------------------
+
+        else:
+
+            band_norm = (
+                params.sax_contour_band_mm
+                / scale_mm
+            )
+
+            near_epi = (
+                np.isfinite(d_epi)
+                & (d_epi <= band_norm)
+            )
+
+            near_lv = (
+                np.isfinite(d_lv)
+                & (d_lv <= band_norm)
+            )
+
+            near_rv = (
+                np.isfinite(d_rv)
+                & (d_rv <= band_norm)
+            )
+
+            valid_ids = np.flatnonzero(
+                near_epi
+                | near_lv
+                | near_rv
+            )
+
+            if len(valid_ids) == 0:
 
                 return (
-                    np.empty((0, 9), dtype=np.float32),
+                    np.empty(
+                        (0, 9),
+                        dtype=np.float32,
+                    ),
                     {
                         "plane_name": name,
                         "n_grid": len(grid),
                         "n_valid": 0,
                         "n_selected": 0,
-                        "has_epi_contour": False,
-                        "has_lv_contour": False,
-                        "has_rv_contour": False,
+                        "has_epi_contour": (
+                            c_epi is not None
+                        ),
+                        "has_lv_contour": (
+                            c_lv is not None
+                        ),
+                        "has_rv_contour": (
+                            c_rv is not None
+                        ),
                     },
                     {
-                        "selected_points": np.empty((0, 3)),
+                        "selected_points": np.empty(
+                            (0, 3)
+                        ),
                         "contour_epi": c_epi,
                         "contour_lv": c_lv,
                         "contour_rv": c_rv,
@@ -400,50 +615,22 @@ def generate_one_plane_samples(name, center, normal, u, v, side, n_requested,
                     },
                 )
 
-                # Se EPI manca ma LV/RV esistono, permettiamo
-                # comunque il sampling SA.
-                valid_ids = np.arange(
-                    len(grid),
-                    dtype=int,
-                )
-
-        else:
-
-            inside_epi = (
-                compute_sign_libigl(epi, grid) < 0
+            chosen = distributed_pick(
+                valid_ids,
+                local,
+                min(
+                    n_requested,
+                    len(valid_ids),
+                ),
+                params.stratification_bins_2d,
+                rng,
             )
 
-            near_epi = (
-                np.isfinite(d_epi)
-                & (d_epi <= contour_expansion_norm)
-            )
-
-            valid_ids = np.flatnonzero(
-                inside_epi | near_epi
-            )
-
-        if len(valid_ids) == 0:
-            raise RuntimeError(
-                f"{name}: no valid grid nodes"
-            )
-
-        chosen = select_training_nodes(
-            valid_ids,
-            local,
-            (d_epi, d_lv, d_rv),
-            n_requested,
-            params,
-            scale_mm,
-            rng,
-        )
+    # ==========================================================
+    # LONG AXIS
+    # ==========================================================
 
     else:
-
-        # -----------------------------
-        # LONG AXIS:
-        # solo punti entro la banda
-        # nessun background
-        # -----------------------------
 
         band_norm = (
             params.lax_contour_band_mm
@@ -489,68 +676,181 @@ def generate_one_plane_samples(name, center, normal, u, v, side, n_requested,
             rng,
         )
 
+    # ==========================================================
+    # CONTROLLO SELEZIONE
+    # ==========================================================
+
     if len(chosen) == 0:
-        raise RuntimeError(f"{name}: no selected nodes")
+        raise RuntimeError(
+            f"{name}: no selected nodes"
+        )
 
     pts = grid[chosen]
-    sdf_epi, m_epi = signed_contour_sdf(pts, epi, c_epi, center, u, v)
-    sdf_lv,  m_lv  = signed_contour_sdf(pts, lv,  c_lv,  center, u, v)
-    sdf_rv,  m_rv  = signed_contour_sdf(pts, rv,  c_rv,  center, u, v)
 
     # ==========================================================
-    # MASK LAX: solo superficie vicina
+    # SDF + MASK INIZIALI
     # ==========================================================
 
-    if plane_type != "short_axis":
+    sdf_epi, m_epi = signed_contour_sdf(
+        pts,
+        epi,
+        c_epi,
+        center,
+        u,
+        v,
+    )
+
+    sdf_lv, m_lv = signed_contour_sdf(
+        pts,
+        lv,
+        c_lv,
+        center,
+        u,
+        v,
+    )
+
+    sdf_rv, m_rv = signed_contour_sdf(
+        pts,
+        rv,
+        c_rv,
+        center,
+        u,
+        v,
+    )
+
+    # ==========================================================
+    # MASK NARROW BAND
+    #
+    # LAX:
+    #     sempre applicata.
+    #
+    # SAX:
+    #     applicata solo se
+    #     sax_contour_band_mm != None.
+    #
+    # Questo permette a:
+    #
+    # sax_contour_band_mm = None
+    #
+    # di mantenere ESATTAMENTE la vecchia logica SAX.
+    # ==========================================================
+
+    apply_contour_band_mask = (
+        plane_type != "short_axis"
+        or params.sax_contour_band_mm
+        is not None
+    )
+
+    if apply_contour_band_mask:
+
+        if plane_type == "short_axis":
+            band_mm = (
+                params.sax_contour_band_mm
+            )
+        else:
+            band_mm = (
+                params.lax_contour_band_mm
+            )
 
         band_norm = (
-            params.lax_contour_band_mm
+            band_mm
             / scale_mm
         )
 
         near_epi_chosen = (
-            np.isfinite(d_epi[chosen])
-            & (d_epi[chosen] <= band_norm)
+            np.isfinite(
+                d_epi[chosen]
+            )
+            & (
+                d_epi[chosen]
+                <= band_norm
+            )
         )
 
         near_lv_chosen = (
-            np.isfinite(d_lv[chosen])
-            & (d_lv[chosen] <= band_norm)
+            np.isfinite(
+                d_lv[chosen]
+            )
+            & (
+                d_lv[chosen]
+                <= band_norm
+            )
         )
 
         near_rv_chosen = (
-            np.isfinite(d_rv[chosen])
-            & (d_rv[chosen] <= band_norm)
+            np.isfinite(
+                d_rv[chosen]
+            )
+            & (
+                d_rv[chosen]
+                <= band_norm
+            )
         )
 
-        m_epi *= near_epi_chosen.astype(
-            np.float32
+        m_epi *= (
+            near_epi_chosen.astype(
+                np.float32
+            )
         )
 
-        m_lv *= near_lv_chosen.astype(
-            np.float32
+        m_lv *= (
+            near_lv_chosen.astype(
+                np.float32
+            )
         )
 
-        m_rv *= near_rv_chosen.astype(
-            np.float32
+        m_rv *= (
+            near_rv_chosen.astype(
+                np.float32
+            )
         )
 
-        sdf_epi[m_epi == 0] = 0.0
-        sdf_lv[m_lv == 0] = 0.0
-        sdf_rv[m_rv == 0] = 0.0
+        # Se una struttura non è supervisionata
+        # per quel punto, azzeriamo anche la SDF.
+        sdf_epi[
+            m_epi == 0
+        ] = 0.0
 
-    samples = np.column_stack([
-        pts, sdf_epi, sdf_lv, sdf_rv, m_epi, m_lv, m_rv
-    ]).astype(np.float32)
+        sdf_lv[
+            m_lv == 0
+        ] = 0.0
+
+        sdf_rv[
+            m_rv == 0
+        ] = 0.0
+
+    # ==========================================================
+    # OUTPUT
+    # ==========================================================
+
+    samples = np.column_stack(
+        [
+            pts,
+            sdf_epi,
+            sdf_lv,
+            sdf_rv,
+            m_epi,
+            m_lv,
+            m_rv,
+        ]
+    ).astype(
+        np.float32
+    )
 
     stats = {
         "plane_name": name,
         "n_grid": len(grid),
         "n_valid": len(valid_ids),
         "n_selected": len(chosen),
-        "has_epi_contour": c_epi is not None,
-        "has_lv_contour": c_lv is not None,
-        "has_rv_contour": c_rv is not None,
+        "has_epi_contour": (
+            c_epi is not None
+        ),
+        "has_lv_contour": (
+            c_lv is not None
+        ),
+        "has_rv_contour": (
+            c_rv is not None
+        ),
     }
 
     debug = {
@@ -563,7 +863,12 @@ def generate_one_plane_samples(name, center, normal, u, v, side, n_requested,
         "u": np.asarray(u),
         "v": np.asarray(v),
     }
-    return samples, stats, debug
+
+    return (
+        samples,
+        stats,
+        debug,
+    )
 
 
 # ---------------------------------------------------------------------
