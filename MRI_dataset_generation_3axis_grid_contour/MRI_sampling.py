@@ -18,6 +18,7 @@ mesh ∩ plane. Il segno resta inside/outside rispetto alla mesh 3D completa.
 
 from dataclasses import dataclass
 from pathlib import Path
+from scipy.spatial import cKDTree
 import numpy as np
 import pandas as pd
 import pyvista as pv
@@ -186,7 +187,7 @@ def contour_segments_2d(contour, origin, u, v):
     return np.asarray(starts), np.asarray(ends)
 
 
-def point_to_segment_distance_2d(query_2d, seg_a, seg_b, chunk=3000):
+def point_to_segment_distance_2d_old(query_2d, seg_a, seg_b, chunk=3000):
     q = np.asarray(query_2d, float)
     a = np.asarray(seg_a, float)
     b = np.asarray(seg_b, float)
@@ -210,6 +211,103 @@ def point_to_segment_distance_2d(query_2d, seg_a, seg_b, chunk=3000):
         out[s:e] = np.sqrt(np.min(d2, axis=1))
     return out
 
+
+def point_to_segment_distance_2d(
+    query_2d,
+    seg_a,
+    seg_b,
+    k_candidates=32,
+):
+    q = np.asarray(query_2d, dtype=float)
+    a = np.asarray(seg_a, dtype=float)
+    b = np.asarray(seg_b, dtype=float)
+
+    if len(a) == 0:
+        return np.full(len(q), np.nan)
+
+    ab = b - a
+    ab2 = np.sum(ab * ab, axis=1)
+
+    valid = ab2 > 1e-20
+
+    a = a[valid]
+    b = b[valid]
+    ab = ab[valid]
+    ab2 = ab2[valid]
+
+    if len(a) == 0:
+        return np.full(len(q), np.nan)
+
+    # ==========================================================
+    # INDICE SPAZIALE DEI SEGMENTI
+    # ==========================================================
+
+    mid = 0.5 * (a + b)
+
+    tree = cKDTree(mid)
+
+    k = min(
+        int(k_candidates),
+        len(a),
+    )
+
+    _, candidate_ids = tree.query(
+        q,
+        k=k,
+        workers=1,
+    )
+
+    # Con k=1 scipy restituisce shape (N,), quindi uniformiamo.
+    if k == 1:
+        candidate_ids = candidate_ids[:, None]
+
+    # ==========================================================
+    # DISTANZA ESATTA SOLO DAI SEGMENTI CANDIDATI
+    # ==========================================================
+
+    cand_a = a[candidate_ids]
+    cand_ab = ab[candidate_ids]
+    cand_ab2 = ab2[candidate_ids]
+
+    ap = (
+        q[:, None, :]
+        - cand_a
+    )
+
+    t = (
+        np.sum(
+            ap * cand_ab,
+            axis=2,
+        )
+        / cand_ab2
+    )
+
+    t = np.clip(
+        t,
+        0.0,
+        1.0,
+    )
+
+    closest = (
+        cand_a
+        + t[:, :, None]
+        * cand_ab
+    )
+
+    d2 = np.sum(
+        (
+            q[:, None, :]
+            - closest
+        ) ** 2,
+        axis=2,
+    )
+
+    return np.sqrt(
+        np.min(
+            d2,
+            axis=1,
+        )
+    )
 
 def contour_unsigned_distance(query_points, contour, origin, u, v):
     q2 = plane_coords(query_points, origin, u, v)
@@ -338,7 +436,7 @@ def select_training_nodes(valid_ids, local_2d, dists, n_requested, params, scale
 # ---------------------------------------------------------------------
 
 
-def generate_one_plane_samples(
+def generate_one_plane_samples_old(
     name, 
     center,
     normal,
@@ -818,6 +916,583 @@ def generate_one_plane_samples(
         sdf_rv[
             m_rv == 0
         ] = 0.0
+
+    # ==========================================================
+    # OUTPUT
+    # ==========================================================
+
+    samples = np.column_stack(
+        [
+            pts,
+            sdf_epi,
+            sdf_lv,
+            sdf_rv,
+            m_epi,
+            m_lv,
+            m_rv,
+        ]
+    ).astype(
+        np.float32
+    )
+
+    stats = {
+        "plane_name": name,
+        "n_grid": len(grid),
+        "n_valid": len(valid_ids),
+        "n_selected": len(chosen),
+        "has_epi_contour": (
+            c_epi is not None
+        ),
+        "has_lv_contour": (
+            c_lv is not None
+        ),
+        "has_rv_contour": (
+            c_rv is not None
+        ),
+    }
+
+    debug = {
+        "selected_points": pts,
+        "contour_epi": c_epi,
+        "contour_lv": c_lv,
+        "contour_rv": c_rv,
+        "center": np.asarray(center),
+        "normal": np.asarray(normal),
+        "u": np.asarray(u),
+        "v": np.asarray(v),
+    }
+
+    return (
+        samples,
+        stats,
+        debug,
+    )
+
+def generate_one_plane_samples(
+    name,
+    center,
+    normal,
+    u,
+    v,
+    side,
+    n_requested,
+    grid_spacing_norm,
+    contour_expansion_norm,
+    scale_mm,
+    epi,
+    lv,
+    rv,
+    params,
+    seed,
+    plane_type,
+):
+    rng = np.random.default_rng(seed)
+
+    # ==========================================================
+    # CONTOUR
+    # ==========================================================
+
+    c_epi = slice_surface_with_plane(
+        epi,
+        center,
+        normal,
+    )
+
+    c_lv = slice_surface_with_plane(
+        lv,
+        center,
+        normal,
+    )
+
+    c_rv = slice_surface_with_plane(
+        rv,
+        center,
+        normal,
+    )
+
+    if c_epi is None:
+        print(
+            f"WARNING {name}: epicardial contour is empty; "
+            "SDF will be 0 and mask 0 for that surface."
+        )
+
+    # ==========================================================
+    # GRID
+    # ==========================================================
+
+    grid, local = generate_planar_grid(
+        center,
+        u,
+        v,
+        side,
+        grid_spacing_norm,
+        params.random_grid_offset,
+        rng,
+    )
+
+    if len(grid) == 0:
+        raise RuntimeError(
+            f"{name}: grid is empty"
+        )
+
+    # ==========================================================
+    # DISTANZE 2D DAI CONTOUR
+    #
+    # Le calcoliamo UNA SOLA VOLTA sull'intera griglia.
+    # Successivamente useremo direttamente d_xxx[chosen].
+    # ==========================================================
+
+    if c_epi is not None:
+        d_epi = contour_unsigned_distance(
+            grid,
+            c_epi,
+            center,
+            u,
+            v,
+        )
+    else:
+        d_epi = np.full(
+            len(grid),
+            np.nan,
+            dtype=float,
+        )
+
+    if c_lv is not None:
+        d_lv = contour_unsigned_distance(
+            grid,
+            c_lv,
+            center,
+            u,
+            v,
+        )
+    else:
+        d_lv = np.full(
+            len(grid),
+            np.nan,
+            dtype=float,
+        )
+
+    if c_rv is not None:
+        d_rv = contour_unsigned_distance(
+            grid,
+            c_rv,
+            center,
+            u,
+            v,
+        )
+    else:
+        d_rv = np.full(
+            len(grid),
+            np.nan,
+            dtype=float,
+        )
+
+    # ==========================================================
+    # SHORT AXIS
+    # ==========================================================
+
+    if plane_type == "short_axis":
+
+        # ------------------------------------------------------
+        # SAX ORIGINALE
+        # ------------------------------------------------------
+
+        if params.sax_contour_band_mm is None:
+
+            if c_epi is None:
+
+                if c_lv is None and c_rv is None:
+
+                    return (
+                        np.empty(
+                            (0, 9),
+                            dtype=np.float32,
+                        ),
+                        {
+                            "plane_name": name,
+                            "n_grid": len(grid),
+                            "n_valid": 0,
+                            "n_selected": 0,
+                            "has_epi_contour": False,
+                            "has_lv_contour": False,
+                            "has_rv_contour": False,
+                        },
+                        {
+                            "selected_points": np.empty(
+                                (0, 3)
+                            ),
+                            "contour_epi": c_epi,
+                            "contour_lv": c_lv,
+                            "contour_rv": c_rv,
+                            "center": np.asarray(center),
+                            "normal": np.asarray(normal),
+                            "u": np.asarray(u),
+                            "v": np.asarray(v),
+                        },
+                    )
+
+                valid_ids = np.arange(
+                    len(grid),
+                    dtype=int,
+                )
+
+            else:
+
+                inside_epi = (
+                    compute_sign_libigl(
+                        epi,
+                        grid,
+                    )
+                    < 0
+                )
+
+                near_epi = (
+                    np.isfinite(d_epi)
+                    & (
+                        d_epi
+                        <= contour_expansion_norm
+                    )
+                )
+
+                valid_ids = np.flatnonzero(
+                    inside_epi
+                    | near_epi
+                )
+
+            if len(valid_ids) == 0:
+                raise RuntimeError(
+                    f"{name}: no valid grid nodes"
+                )
+
+            chosen = select_training_nodes(
+                valid_ids,
+                local,
+                (
+                    d_epi,
+                    d_lv,
+                    d_rv,
+                ),
+                n_requested,
+                params,
+                scale_mm,
+                rng,
+            )
+
+        # ------------------------------------------------------
+        # SAX NARROW BAND
+        # ------------------------------------------------------
+
+        else:
+
+            band_norm = (
+                params.sax_contour_band_mm
+                / scale_mm
+            )
+
+            near_epi = (
+                np.isfinite(d_epi)
+                & (d_epi <= band_norm)
+            )
+
+            near_lv = (
+                np.isfinite(d_lv)
+                & (d_lv <= band_norm)
+            )
+
+            near_rv = (
+                np.isfinite(d_rv)
+                & (d_rv <= band_norm)
+            )
+
+            valid_ids = np.flatnonzero(
+                near_epi
+                | near_lv
+                | near_rv
+            )
+
+            if len(valid_ids) == 0:
+
+                return (
+                    np.empty(
+                        (0, 9),
+                        dtype=np.float32,
+                    ),
+                    {
+                        "plane_name": name,
+                        "n_grid": len(grid),
+                        "n_valid": 0,
+                        "n_selected": 0,
+                        "has_epi_contour": (
+                            c_epi is not None
+                        ),
+                        "has_lv_contour": (
+                            c_lv is not None
+                        ),
+                        "has_rv_contour": (
+                            c_rv is not None
+                        ),
+                    },
+                    {
+                        "selected_points": np.empty(
+                            (0, 3)
+                        ),
+                        "contour_epi": c_epi,
+                        "contour_lv": c_lv,
+                        "contour_rv": c_rv,
+                        "center": np.asarray(center),
+                        "normal": np.asarray(normal),
+                        "u": np.asarray(u),
+                        "v": np.asarray(v),
+                    },
+                )
+
+            chosen = distributed_pick(
+                valid_ids,
+                local,
+                min(
+                    n_requested,
+                    len(valid_ids),
+                ),
+                params.stratification_bins_2d,
+                rng,
+            )
+
+    # ==========================================================
+    # LONG AXIS
+    # ==========================================================
+
+    else:
+
+        band_norm = (
+            params.lax_contour_band_mm
+            / scale_mm
+        )
+
+        near_epi = (
+            np.isfinite(d_epi)
+            & (d_epi <= band_norm)
+        )
+
+        near_lv = (
+            np.isfinite(d_lv)
+            & (d_lv <= band_norm)
+        )
+
+        near_rv = (
+            np.isfinite(d_rv)
+            & (d_rv <= band_norm)
+        )
+
+        valid_ids = np.flatnonzero(
+            near_epi
+            | near_lv
+            | near_rv
+        )
+
+        if len(valid_ids) == 0:
+            raise RuntimeError(
+                f"{name}: no nodes within "
+                f"{params.lax_contour_band_mm} mm "
+                "of any LAX contour"
+            )
+
+        chosen = distributed_pick(
+            valid_ids,
+            local,
+            min(
+                n_requested,
+                len(valid_ids),
+            ),
+            params.stratification_bins_2d,
+            rng,
+        )
+
+    # ==========================================================
+    # CONTROLLO
+    # ==========================================================
+
+    if len(chosen) == 0:
+        raise RuntimeError(
+            f"{name}: no selected nodes"
+        )
+
+    pts = grid[chosen]
+
+    # ==========================================================
+    # RIUSO DELLE DISTANZE GIÀ CALCOLATE
+    # ==========================================================
+
+    d_epi_chosen = d_epi[chosen]
+    d_lv_chosen = d_lv[chosen]
+    d_rv_chosen = d_rv[chosen]
+
+    # ==========================================================
+    # MASK
+    # ==========================================================
+
+    if plane_type == "short_axis":
+
+        if params.sax_contour_band_mm is None:
+
+            # Vecchia logica SAX:
+            # se il contour esiste, la SDF è valida per tutti
+            # i punti selezionati.
+            m_epi = np.isfinite(
+                d_epi_chosen
+            ).astype(np.float32)
+
+            m_lv = np.isfinite(
+                d_lv_chosen
+            ).astype(np.float32)
+
+            m_rv = np.isfinite(
+                d_rv_chosen
+            ).astype(np.float32)
+
+        else:
+
+            band_norm = (
+                params.sax_contour_band_mm
+                / scale_mm
+            )
+
+            m_epi = (
+                np.isfinite(d_epi_chosen)
+                & (
+                    d_epi_chosen
+                    <= band_norm
+                )
+            ).astype(np.float32)
+
+            m_lv = (
+                np.isfinite(d_lv_chosen)
+                & (
+                    d_lv_chosen
+                    <= band_norm
+                )
+            ).astype(np.float32)
+
+            m_rv = (
+                np.isfinite(d_rv_chosen)
+                & (
+                    d_rv_chosen
+                    <= band_norm
+                )
+            ).astype(np.float32)
+
+    else:
+
+        band_norm = (
+            params.lax_contour_band_mm
+            / scale_mm
+        )
+
+        m_epi = (
+            np.isfinite(d_epi_chosen)
+            & (
+                d_epi_chosen
+                <= band_norm
+            )
+        ).astype(np.float32)
+
+        m_lv = (
+            np.isfinite(d_lv_chosen)
+            & (
+                d_lv_chosen
+                <= band_norm
+            )
+        ).astype(np.float32)
+
+        m_rv = (
+            np.isfinite(d_rv_chosen)
+            & (
+                d_rv_chosen
+                <= band_norm
+            )
+        ).astype(np.float32)
+
+    # ==========================================================
+    # SDF
+    #
+    # La distanza è già disponibile.
+    # Calcoliamo soltanto il SEGNO 3D sui punti realmente
+    # supervisionati per ciascuna superficie.
+    # ==========================================================
+
+    sdf_epi = np.zeros(
+        len(pts),
+        dtype=float,
+    )
+
+    sdf_lv = np.zeros(
+        len(pts),
+        dtype=float,
+    )
+
+    sdf_rv = np.zeros(
+        len(pts),
+        dtype=float,
+    )
+
+    # ----------------------------------------------------------
+    # EPI
+    # ----------------------------------------------------------
+
+    ids_epi = np.flatnonzero(
+        m_epi > 0
+    )
+
+    if len(ids_epi) > 0:
+
+        sign_epi = compute_sign_libigl(
+            epi,
+            pts[ids_epi],
+        )
+
+        sdf_epi[ids_epi] = (
+            d_epi_chosen[ids_epi]
+            * sign_epi
+        )
+
+    # ----------------------------------------------------------
+    # LV
+    # ----------------------------------------------------------
+
+    ids_lv = np.flatnonzero(
+        m_lv > 0
+    )
+
+    if len(ids_lv) > 0:
+
+        sign_lv = compute_sign_libigl(
+            lv,
+            pts[ids_lv],
+        )
+
+        sdf_lv[ids_lv] = (
+            d_lv_chosen[ids_lv]
+            * sign_lv
+        )
+
+    # ----------------------------------------------------------
+    # RV
+    # ----------------------------------------------------------
+
+    ids_rv = np.flatnonzero(
+        m_rv > 0
+    )
+
+    if len(ids_rv) > 0:
+
+        sign_rv = compute_sign_libigl(
+            rv,
+            pts[ids_rv],
+        )
+
+        sdf_rv[ids_rv] = (
+            d_rv_chosen[ids_rv]
+            * sign_rv
+        )
 
     # ==========================================================
     # OUTPUT
