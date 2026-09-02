@@ -120,6 +120,8 @@ PARAMS = GridMRIParams(
     plot_debug=False,
     lax_contour_band_mm=2.0,
     sax_contour_band_mm=2.0, # put None if you don't want to sample in a band around the contour
+
+    sax_supervision_mode = "global", # "global" or "local"s
 )
 
 

@@ -50,8 +50,11 @@ class GridMRIParams:
     save_npy: bool = False
     save_csv: bool = False
     plot_debug: bool = False
+
     lax_contour_band_mm: float = 2.0
     sax_contour_band_mm: float | None = None  
+
+    sax_supervision_mode: str = "local"
 
 
 def normalize(v, name="vector"):
@@ -386,6 +389,172 @@ def distributed_pick(candidate_indices, local_2d, n, bins, rng):
     o = stratified_order(local_2d[ids], bins, rng)
     return ids[o[:n]]
 
+def select_band_nodes_with_surface_labels(
+    local_2d,
+    near_epi,
+    near_lv,
+    near_rv,
+    n_requested,
+    params,
+    rng,
+):
+    """
+    Seleziona punti dalle tre bande mantenendo l'identità
+    della superficie da cui ogni punto è stato campionato.
+
+    Returns
+    -------
+    chosen : (N,) int
+        Indici dei punti selezionati nella griglia.
+
+    source_surface : (N,) int
+        0 = epicardium
+        1 = lv_endo
+        2 = rv_endo
+    """
+
+    near_masks = [
+        np.asarray(near_epi, dtype=bool),
+        np.asarray(near_lv, dtype=bool),
+        np.asarray(near_rv, dtype=bool),
+    ]
+
+    weights = np.asarray(
+        [
+            params.epi_fraction,
+            params.lv_fraction,
+            params.rv_fraction,
+        ],
+        dtype=float,
+    )
+
+    if weights.sum() <= 0:
+        weights[:] = 1.0
+
+    weights /= weights.sum()
+
+    # Budget iniziale per le tre superfici
+    budgets = np.floor(
+        n_requested * weights
+    ).astype(int)
+
+    while budgets.sum() < n_requested:
+        deficit = (
+            n_requested - budgets.sum()
+        )
+
+        order = np.argsort(-weights)
+
+        for j in order[:deficit]:
+            budgets[j] += 1
+
+    chosen = []
+    source_surface = []
+
+    used = set()
+
+    # =========================================================
+    # PRIMO PASS:
+    # prendiamo il budget richiesto da ciascuna superficie
+    # =========================================================
+
+    for surf_id in range(3):
+
+        candidates = np.flatnonzero(
+            near_masks[surf_id]
+        )
+
+        candidates = np.asarray(
+            [
+                i
+                for i in candidates
+                if int(i) not in used
+            ],
+            dtype=int,
+        )
+
+        picked = distributed_pick(
+            candidates,
+            local_2d,
+            min(
+                budgets[surf_id],
+                len(candidates),
+            ),
+            params.stratification_bins_2d,
+            rng,
+        )
+
+        for idx in picked:
+            idx = int(idx)
+
+            chosen.append(idx)
+            source_surface.append(surf_id)
+
+            used.add(idx)
+
+    # =========================================================
+    # SECONDO PASS:
+    # se una superficie non aveva abbastanza punti,
+    # completiamo fino a n_requested usando i punti rimasti
+    # nelle bande.
+    # =========================================================
+
+    remaining = (
+        n_requested
+        - len(chosen)
+    )
+
+    if remaining > 0:
+
+        for surf_id in range(3):
+
+            if remaining <= 0:
+                break
+
+            candidates = np.flatnonzero(
+                near_masks[surf_id]
+            )
+
+            candidates = np.asarray(
+                [
+                    i
+                    for i in candidates
+                    if int(i) not in used
+                ],
+                dtype=int,
+            )
+
+            if len(candidates) == 0:
+                continue
+
+            picked = distributed_pick(
+                candidates,
+                local_2d,
+                min(
+                    remaining,
+                    len(candidates),
+                ),
+                params.stratification_bins_2d,
+                rng,
+            )
+
+            for idx in picked:
+                idx = int(idx)
+
+                chosen.append(idx)
+                source_surface.append(surf_id)
+
+                used.add(idx)
+
+            remaining = (
+                n_requested
+                - len(chosen)
+            )
+
+    return (
+        np.asarray(chosen, dtype=int),
+        np.asarray(source_surface, dtype=np.int8),
+    )
 
 def select_training_nodes(valid_ids, local_2d, dists, n_requested, params, scale_mm, rng):
     valid_ids = np.asarray(valid_ids, dtype=int)
@@ -1246,16 +1415,22 @@ def generate_one_plane_samples(
                     },
                 )
 
-            chosen = distributed_pick(
-                valid_ids,
-                local,
-                min(
-                    n_requested,
-                    len(valid_ids),
-                ),
-                params.stratification_bins_2d,
-                rng,
+            chosen, source_surface = (
+                select_band_nodes_with_surface_labels(
+                    local_2d=local,
+                    near_epi=near_epi,
+                    near_lv=near_lv,
+                    near_rv=near_rv,
+                    n_requested=min(
+                        n_requested,
+                        len(valid_ids),
+                    ),
+                    params=params,
+                    rng=rng,
+                )
             )
+
+            
 
     # ==========================================================
     # LONG AXIS
@@ -1296,15 +1471,19 @@ def generate_one_plane_samples(
                 "of any LAX contour"
             )
 
-        chosen = distributed_pick(
-            valid_ids,
-            local,
-            min(
-                n_requested,
-                len(valid_ids),
-            ),
-            params.stratification_bins_2d,
-            rng,
+        chosen, source_surface = (
+            select_band_nodes_with_surface_labels(
+                local_2d=local,
+                near_epi=near_epi,
+                near_lv=near_lv,
+                near_rv=near_rv,
+                n_requested=min(
+                    n_requested,
+                    len(valid_ids),
+                ),
+                params=params,
+                rng=rng,
+            )
         )
 
     # ==========================================================
@@ -1332,11 +1511,16 @@ def generate_one_plane_samples(
 
     if plane_type == "short_axis":
 
+        # ======================================================
+        # SAX LEGACY / NO BAND
+        # ======================================================
+
         if params.sax_contour_band_mm is None:
 
-            # Vecchia logica SAX:
-            # se il contour esiste, la SDF è valida per tutti
-            # i punti selezionati.
+            # Comportamento globale originale:
+            # se il contour esiste sul SAX, tutti i punti
+            # selezionati supervisionano quella superficie.
+
             m_epi = np.isfinite(
                 d_epi_chosen
             ).astype(np.float32)
@@ -1349,66 +1533,90 @@ def generate_one_plane_samples(
                 d_rv_chosen
             ).astype(np.float32)
 
+        # ======================================================
+        # SAX BAND
+        # ======================================================
+
         else:
 
-            band_norm = (
-                params.sax_contour_band_mm
-                / scale_mm
-            )
+            mode = str(
+                params.sax_supervision_mode
+            ).lower()
 
-            m_epi = (
-                np.isfinite(d_epi_chosen)
-                & (
+            if mode not in {
+                "local",
+                "global",
+            }:
+                raise ValueError(
+                    "sax_supervision_mode must be "
+                    "'local' or 'global', got: "
+                    f"{params.sax_supervision_mode}"
+                )
+
+            # --------------------------------------------------
+            # LOCAL
+            #
+            # Punto campionato dalla banda EPI -> solo EPI
+            # Punto campionato dalla banda LV  -> solo LV
+            # Punto campionato dalla banda RV  -> solo RV
+            # --------------------------------------------------
+
+            if mode == "local":
+
+                m_epi = (
+                    source_surface == 0
+                ).astype(np.float32)
+
+                m_lv = (
+                    source_surface == 1
+                ).astype(np.float32)
+
+                m_rv = (
+                    source_surface == 2
+                ).astype(np.float32)
+
+            # --------------------------------------------------
+            # GLOBAL
+            #
+            # Il sampling resta a banda.
+            #
+            # Ma ogni punto SAX supervisiona tutte le superfici
+            # che hanno un contour valido su quel SAX.
+            # --------------------------------------------------
+
+            else:
+
+                m_epi = np.isfinite(
                     d_epi_chosen
-                    <= band_norm
-                )
-            ).astype(np.float32)
+                ).astype(np.float32)
 
-            m_lv = (
-                np.isfinite(d_lv_chosen)
-                & (
+                m_lv = np.isfinite(
                     d_lv_chosen
-                    <= band_norm
-                )
-            ).astype(np.float32)
+                ).astype(np.float32)
 
-            m_rv = (
-                np.isfinite(d_rv_chosen)
-                & (
+                m_rv = np.isfinite(
                     d_rv_chosen
-                    <= band_norm
-                )
-            ).astype(np.float32)
+                ).astype(np.float32)
+
+
+    # ==========================================================
+    # LAX
+    #
+    # SEMPRE LOCAL.
+    # ==========================================================
 
     else:
 
-        band_norm = (
-            params.lax_contour_band_mm
-            / scale_mm
-        )
-
         m_epi = (
-            np.isfinite(d_epi_chosen)
-            & (
-                d_epi_chosen
-                <= band_norm
-            )
+            source_surface == 0
         ).astype(np.float32)
 
         m_lv = (
-            np.isfinite(d_lv_chosen)
-            & (
-                d_lv_chosen
-                <= band_norm
-            )
+            source_surface == 1
         ).astype(np.float32)
 
         m_rv = (
-            np.isfinite(d_rv_chosen)
-            & (
-                d_rv_chosen
-                <= band_norm
-            )
+            source_surface == 2
         ).astype(np.float32)
 
     # ==========================================================
@@ -1711,6 +1919,8 @@ if __name__ == "__main__":
         save_csv=False,
         plot_debug=True,
         lax_contour_band_mm=2.0,
+        sax_contour_band_mm=2.0,
+        sax_supervision_mode="global"
     )
 
     generate_single_patient_grid_dataset(
