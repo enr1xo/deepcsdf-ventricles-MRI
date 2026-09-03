@@ -133,7 +133,7 @@ PARAMS = GridMRIParams(
 
 # Parti con 2 o 4.
 # Aumenta solamente dopo aver controllato la RAM con htop.
-MAX_WORKERS = 1
+MAX_WORKERS = 12
 
 # False: salta gli NPY già esistenti.
 # True: rigenera tutto.
