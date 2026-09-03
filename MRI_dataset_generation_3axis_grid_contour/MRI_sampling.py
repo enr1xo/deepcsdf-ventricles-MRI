@@ -1593,7 +1593,7 @@ def generate_one_plane_samples(
 
                 m_epi = (
                     source_surface == 0
-                ).as_integer_ratio
+                ).astype(np.float32)
 
                 m_lv = np.isfinite(
                     d_lv_chosen
