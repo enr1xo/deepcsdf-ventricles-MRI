@@ -117,7 +117,7 @@ PARAMS = GridMRIParams(
 
     save_npy=True,
     save_csv=False,
-    plot_debug=True,
+    plot_debug=False,
     lax_contour_band_mm=2.0,
     sax_contour_band_mm=None, # put None if you don't want to sample in a band around the contour
 
