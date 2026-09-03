@@ -57,6 +57,10 @@ class GridMRIParams:
     sax_supervision_mode: str = "hybrid"    # or "local": local significa che la supervisione di quella superficie è fatta solo attraverso punti samplati lungo questa
                                             #             hybrid significa che per gli LAX ed epi la supervisione è local, ma globnale per i due endo lungo SAX
 
+    use_curvature_sampling: bool = False
+    curvature_sampling_fraction: float = 0.35
+
+
 
 def normalize(v, name="vector"):
     v = np.asarray(v, dtype=float)
@@ -189,6 +193,337 @@ def contour_segments_2d(contour, origin, u, v):
     if not starts:
         return np.empty((0, 2)), np.empty((0, 2))
     return np.asarray(starts), np.asarray(ends)
+
+def contour_segment_curvature_2d(
+    contour,
+    origin,
+    u,
+    v,
+):
+    """
+    Stima la curvatura locale del contour 2D.
+
+    Returns
+    -------
+    segment_midpoints : (M, 2)
+        Centro dei segmenti del contour.
+
+    segment_curvature : (M,)
+        Score di curvatura associato a ciascun segmento.
+    """
+
+    if contour is None:
+        return (
+            np.empty((0, 2), dtype=float),
+            np.empty(0, dtype=float),
+        )
+
+    p2 = plane_coords(
+        contour.points,
+        origin,
+        u,
+        v,
+    )
+
+    lines = np.asarray(contour.lines)
+
+    edges = []
+
+    k = 0
+
+    while k < len(lines):
+
+        n = int(lines[k])
+
+        ids = lines[
+            k + 1:
+            k + 1 + n
+        ]
+
+        for j in range(n - 1):
+            edges.append(
+                (
+                    int(ids[j]),
+                    int(ids[j + 1]),
+                )
+            )
+
+        k += n + 1
+
+    if not edges:
+        return (
+            np.empty((0, 2), dtype=float),
+            np.empty(0, dtype=float),
+        )
+
+    # ---------------------------------------------------------
+    # Vicini di ogni vertice del contour
+    # ---------------------------------------------------------
+
+    neighbours = {
+        i: []
+        for i in range(len(p2))
+    }
+
+    for i, j in edges:
+        neighbours[i].append(j)
+        neighbours[j].append(i)
+
+    vertex_curvature = np.zeros(
+        len(p2),
+        dtype=float,
+    )
+
+    # ---------------------------------------------------------
+    # Curvatura al vertice
+    #
+    # Per una linea dritta:
+    # angle ~ pi -> curvature ~ 0
+    #
+    # Per una curva forte:
+    # angle diminuisce -> curvature aumenta
+    # ---------------------------------------------------------
+
+    for i, neigh in neighbours.items():
+
+        if len(neigh) < 2:
+            continue
+
+        # normalmente un contour regolare ha degree = 2
+        j1 = neigh[0]
+        j2 = neigh[1]
+
+        v1 = p2[j1] - p2[i]
+        v2 = p2[j2] - p2[i]
+
+        l1 = np.linalg.norm(v1)
+        l2 = np.linalg.norm(v2)
+
+        if l1 <= 1e-12 or l2 <= 1e-12:
+            continue
+
+        cos_angle = np.dot(v1, v2) / (l1 * l2)
+
+        cos_angle = np.clip(
+            cos_angle,
+            -1.0,
+            1.0,
+        )
+
+        angle = np.arccos(cos_angle)
+
+        turning_angle = np.pi - angle
+
+        mean_length = 0.5 * (l1 + l2)
+
+        vertex_curvature[i] = (
+            turning_angle
+            / max(mean_length, 1e-12)
+        )
+
+    # ---------------------------------------------------------
+    # Curvatura dei segmenti
+    # ---------------------------------------------------------
+
+    segment_midpoints = []
+    segment_curvature = []
+
+    for i, j in edges:
+
+        segment_midpoints.append(
+            0.5 * (p2[i] + p2[j])
+        )
+
+        segment_curvature.append(
+            0.5
+            * (
+                vertex_curvature[i]
+                + vertex_curvature[j]
+            )
+        )
+
+    return (
+        np.asarray(segment_midpoints),
+        np.asarray(segment_curvature),
+    )
+
+def curvature_scores_for_grid(
+    local_2d,
+    contour,
+    origin,
+    u,
+    v,
+):
+    """
+    Assegna a ogni punto della griglia la curvatura
+    del segmento di contour più vicino.
+    """
+
+    n = len(local_2d)
+
+    if contour is None:
+        return np.zeros(
+            n,
+            dtype=float,
+        )
+
+    midpoints, curvature = (
+        contour_segment_curvature_2d(
+            contour,
+            origin,
+            u,
+            v,
+        )
+    )
+
+    if len(midpoints) == 0:
+        return np.zeros(
+            n,
+            dtype=float,
+        )
+
+    tree = cKDTree(midpoints)
+
+    _, nearest = tree.query(
+        local_2d,
+        k=1,
+    )
+
+    return curvature[nearest]
+
+
+def curvature_mixed_pick(
+    candidate_indices,
+    local_2d,
+    curvature_scores,
+    n,
+    bins,
+    rng,
+    curvature_fraction,
+):
+    """
+    Seleziona:
+      - curvature_fraction dei punti con bias verso alta curvatura
+      - il resto con il normale sampling stratificato
+    """
+
+    ids = np.asarray(
+        candidate_indices,
+        dtype=int,
+    )
+
+    if n <= 0 or len(ids) == 0:
+        return np.empty(
+            0,
+            dtype=int,
+        )
+
+    n = min(
+        int(n),
+        len(ids),
+    )
+
+    fraction = float(
+        np.clip(
+            curvature_fraction,
+            0.0,
+            1.0,
+        )
+    )
+
+    n_curvature = int(
+        round(
+            n * fraction
+        )
+    )
+
+    # =========================================================
+    # CURVATURE-BIASED
+    # =========================================================
+
+    curvature_selected = np.empty(
+        0,
+        dtype=int,
+    )
+
+    if n_curvature > 0:
+
+        scores = np.asarray(
+            curvature_scores[ids],
+            dtype=float,
+        )
+
+        scores[~np.isfinite(scores)] = 0.0
+        scores = np.maximum(scores, 0.0)
+
+        if scores.sum() > 0:
+
+            # piccola baseline:
+            # anche regioni a curvatura bassa restano possibili
+            eps = 1e-6 * scores.max()
+
+            probabilities = (
+                scores + eps
+            )
+
+            probabilities /= probabilities.sum()
+
+            curvature_selected = rng.choice(
+                ids,
+                size=min(
+                    n_curvature,
+                    len(ids),
+                ),
+                replace=False,
+                p=probabilities,
+            )
+
+        else:
+
+            curvature_selected = distributed_pick(
+                ids,
+                local_2d,
+                n_curvature,
+                bins,
+                rng,
+            )
+
+    # =========================================================
+    # RESTO DEL BUDGET -> sampling normale
+    # =========================================================
+
+    used = set(
+        int(i)
+        for i in curvature_selected
+    )
+
+    remaining_candidates = np.asarray(
+        [
+            i
+            for i in ids
+            if int(i) not in used
+        ],
+        dtype=int,
+    )
+
+    n_regular = (
+        n - len(curvature_selected)
+    )
+
+    regular_selected = distributed_pick(
+        remaining_candidates,
+        local_2d,
+        n_regular,
+        bins,
+        rng,
+    )
+
+    return np.concatenate(
+        [
+            curvature_selected,
+            regular_selected,
+        ]
+    ).astype(int)
 
 
 def point_to_segment_distance_2d_old(query_2d, seg_a, seg_b, chunk=3000):
@@ -398,6 +733,7 @@ def select_band_nodes_with_surface_labels(
     n_requested,
     params,
     rng,
+    curvature_scores=None,
 ):
     """
     Seleziona punti dalle tre bande mantenendo l'identità
@@ -474,16 +810,35 @@ def select_band_nodes_with_surface_labels(
             dtype=int,
         )
 
-        picked = distributed_pick(
-            candidates,
-            local_2d,
-            min(
-                budgets[surf_id],
-                len(candidates),
-            ),
-            params.stratification_bins_2d,
-            rng,
+        need = min(
+            budgets[surf_id],
+            len(candidates),
         )
+
+        if (
+            params.use_curvature_sampling
+            and curvature_scores is not None
+        ):
+
+            picked = curvature_mixed_pick(
+                candidates,
+                local_2d,
+                curvature_scores[surf_id],
+                need,
+                params.stratification_bins_2d,
+                rng,
+                params.curvature_sampling_fraction,
+            )
+
+        else:
+
+            picked = distributed_pick(
+                candidates,
+                local_2d,
+                need,
+                params.stratification_bins_2d,
+                rng,
+            )
 
         for idx in picked:
             idx = int(idx)
@@ -528,16 +883,35 @@ def select_band_nodes_with_surface_labels(
             if len(candidates) == 0:
                 continue
 
-            picked = distributed_pick(
-                candidates,
-                local_2d,
-                min(
-                    remaining,
-                    len(candidates),
-                ),
-                params.stratification_bins_2d,
-                rng,
+            need = min(
+                remaining,
+                len(candidates),
             )
+
+            if (
+                params.use_curvature_sampling
+                and curvature_scores is not None
+            ):
+
+                picked = curvature_mixed_pick(
+                    candidates,
+                    local_2d,
+                    curvature_scores[surf_id],
+                    need,
+                    params.stratification_bins_2d,
+                    rng,
+                    params.curvature_sampling_fraction,
+                )
+
+            else:
+
+                picked = distributed_pick(
+                    candidates,
+                    local_2d,
+                    need,
+                    params.stratification_bins_2d,
+                    rng,
+                )
 
             for idx in picked:
                 idx = int(idx)
@@ -557,7 +931,7 @@ def select_band_nodes_with_surface_labels(
         np.asarray(source_surface, dtype=np.int8),
     )
 
-def select_training_nodes(valid_ids, local_2d, dists, n_requested, params, scale_mm, rng):
+def select_training_nodes(valid_ids, local_2d, dists, n_requested, params, scale_mm, rng, curvature_scores=None):
     valid_ids = np.asarray(valid_ids, dtype=int)
     if len(valid_ids) <= n_requested:
         return valid_ids.copy()
@@ -588,7 +962,32 @@ def select_training_nodes(valid_ids, local_2d, dists, n_requested, params, scale
                 candidates = c
             if len(c) >= need:
                 break
-        picked = distributed_pick(candidates, local_2d, need, params.stratification_bins_2d, rng)
+        #picked = distributed_pick(candidates, local_2d, need, params.stratification_bins_2d, rng)
+        if (
+            params.use_curvature_sampling
+            and curvature_scores is not None
+            ):
+
+            picked = curvature_mixed_pick(
+                candidates,
+                local_2d,
+                curvature_scores[surf_i],
+                need,
+                params.stratification_bins_2d,
+                rng,
+                params.curvature_sampling_fraction,
+            )
+
+        else:
+
+            picked = distributed_pick(
+                candidates,
+                local_2d,
+                need,
+                params.stratification_bins_2d,
+                rng,
+            )
+
         for i in picked:
             chosen.append(int(i)); used.add(int(i))
 
@@ -809,6 +1208,7 @@ def generate_one_plane_samples_old(
                 params,
                 scale_mm,
                 rng,
+                #curvature_scores=curvature_scores,
             )
 
         # ------------------------------------------------------
@@ -1257,6 +1657,59 @@ def generate_one_plane_samples(
             dtype=float,
         )
 
+
+    # ==========================================================
+    # CURVATURE SCORES
+    # ==========================================================
+
+    if params.use_curvature_sampling:
+
+        curv_epi = curvature_scores_for_grid(
+            local,
+            c_epi,
+            center,
+            u,
+            v,
+        )
+
+        curv_lv = curvature_scores_for_grid(
+            local,
+            c_lv,
+            center,
+            u,
+            v,
+        )
+
+        curv_rv = curvature_scores_for_grid(
+            local,
+            c_rv,
+            center,
+            u,
+            v,
+        )
+
+    else:
+
+        curv_epi = np.zeros(
+            len(grid),
+            dtype=float,
+        )
+
+        curv_lv = np.zeros(
+            len(grid),
+            dtype=float,
+        )
+
+        curv_rv = np.zeros(
+            len(grid),
+            dtype=float,
+        )
+
+    curvature_scores = (
+        curv_epi,
+        curv_lv,
+        curv_rv,
+    )
     # ==========================================================
     # SHORT AXIS
     # ==========================================================
@@ -1346,6 +1799,7 @@ def generate_one_plane_samples(
                 params,
                 scale_mm,
                 rng,
+                curvature_scores=curvature_scores,
             )
 
         # ------------------------------------------------------
@@ -1428,6 +1882,7 @@ def generate_one_plane_samples(
                     ),
                     params=params,
                     rng=rng,
+                    curvature_scores=curvature_scores
                 )
             )
 
@@ -1484,6 +1939,7 @@ def generate_one_plane_samples(
                 ),
                 params=params,
                 rng=rng,
+                curvature_scores=curvature_scores
             )
         )
 
@@ -1924,8 +2380,10 @@ if __name__ == "__main__":
         save_csv=False,
         plot_debug=True,
         lax_contour_band_mm=2.0,
-        sax_contour_band_mm=2.0,
-        sax_supervision_mode="hybrid"
+        sax_contour_band_mm=None,
+        sax_supervision_mode="hybrid",
+        use_curvature_sampling=True,
+        curvature_sampling_fraction=0.35,
     )
 
     generate_single_patient_grid_dataset(

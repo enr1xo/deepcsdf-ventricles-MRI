@@ -68,7 +68,7 @@ LANDMARKS_CSV = Path(
 
 OUTPUT_DIR = Path(
     "/home/rizzardi/Schreibtisch/"
-    "MRI_model/generated_npy_three_axis_grid_contourSDF_LAXband2mm_SAXband2mm_hybrid_supervision_SAXglobalEndo_LAX_and_epiEndo_local"
+    "MRI_model/generated_npy_three_axis_grid_contourSDF_LAXband2mm_SAXbandNone_curvature_sampling"
 )
 
 
@@ -117,11 +117,13 @@ PARAMS = GridMRIParams(
 
     save_npy=True,
     save_csv=False,
-    plot_debug=False,
+    plot_debug=True,
     lax_contour_band_mm=2.0,
-    sax_contour_band_mm=2.0, # put None if you don't want to sample in a band around the contour
+    sax_contour_band_mm=None, # put None if you don't want to sample in a band around the contour
 
     sax_supervision_mode = "hybrid", # "hybrid" or "local"s
+    use_curvature_sampling=True,
+    curvature_sampling_fraction=0.35,
 )
 
 
@@ -131,7 +133,7 @@ PARAMS = GridMRIParams(
 
 # Parti con 2 o 4.
 # Aumenta solamente dopo aver controllato la RAM con htop.
-MAX_WORKERS = 12
+MAX_WORKERS = 1
 
 # False: salta gli NPY già esistenti.
 # True: rigenera tutto.
