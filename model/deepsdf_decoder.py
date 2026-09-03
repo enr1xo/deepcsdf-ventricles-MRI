@@ -244,7 +244,7 @@ class DeepSDF(pl.LightningModule):
 
         # EIKONAL terms
         # self.use_eikonal = specs.get("use_eikonal_loss", False)
-        self.use_eikonal_loss = False
+        self.use_eikonal_loss = True
 
         # self.eikonal_weight = specs.get("eikonal_weight", 1e-2)
         self.eikonal_weight = 1e-3
