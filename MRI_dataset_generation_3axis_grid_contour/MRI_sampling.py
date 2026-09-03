@@ -54,7 +54,8 @@ class GridMRIParams:
     lax_contour_band_mm: float = 2.0
     sax_contour_band_mm: float | None = None  
 
-    sax_supervision_mode: str = "local"
+    sax_supervision_mode: str = "hybrid"    # or "local": local significa che la supervisione di quella superficie è fatta solo attraverso punti samplati lungo questa
+                                            #             hybrid significa che per gli LAX ed epi la supervisione è local, ma globnale per i due endo lungo SAX
 
 
 def normalize(v, name="vector"):
@@ -1545,11 +1546,11 @@ def generate_one_plane_samples(
 
             if mode not in {
                 "local",
-                "global",
+                "hybrid",
             }:
                 raise ValueError(
                     "sax_supervision_mode must be "
-                    "'local' or 'global', got: "
+                    "'local' or 'hybrid', got: "
                     f"{params.sax_supervision_mode}"
                 )
 
@@ -1586,9 +1587,13 @@ def generate_one_plane_samples(
 
             else:
 
-                m_epi = np.isfinite(
-                    d_epi_chosen
-                ).astype(np.float32)
+                #m_epi = np.isfinite(
+                #    d_epi_chosen
+                #).astype(np.float32)
+
+                m_epi = (
+                    source_surface == 0
+                ).as_integer_ratio
 
                 m_lv = np.isfinite(
                     d_lv_chosen
@@ -1920,7 +1925,7 @@ if __name__ == "__main__":
         plot_debug=True,
         lax_contour_band_mm=2.0,
         sax_contour_band_mm=2.0,
-        sax_supervision_mode="global"
+        sax_supervision_mode="hybrid"
     )
 
     generate_single_patient_grid_dataset(
