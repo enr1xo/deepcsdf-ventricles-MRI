@@ -2332,7 +2332,14 @@ def generate_single_patient_grid_dataset(patient, all_processed_dir, csv_path,
         pl = pv.Plotter()
         pl.add_mesh(epi, opacity=0.12, color="lightgray")
         for d in debug_planes:
-            pl.add_points(d["selected_points"], point_size=3)
+            #pl.add_points(d["selected_points"], point_size=3)
+            selected = d["selected_points"]
+
+            if selected is not None and len(selected) > 0:
+                pl.add_points(
+                    selected,
+                    point_size=3,
+                )
             for key, color in [("contour_epi","black"), ("contour_lv","red"), ("contour_rv","blue")]:
                 c = d[key]
                 if c is not None:
