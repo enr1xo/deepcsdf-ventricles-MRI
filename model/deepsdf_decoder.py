@@ -75,6 +75,9 @@ class LipschitzNormLinear(nn.Linear):
         # Linear forward (like nn.Linear)
         return F.linear(x, W_scaled, self.bias)
 
+    
+
+
     def lipschitz_bound(self): # this is so I can just get it when computing the loss in training
         return F.softplus(self.c)
     
@@ -90,6 +93,8 @@ class Decoder(nn.Module):
         self.use_positional_encoding = specs.get("positional_encoding", False)
         
         self.pos_enc_dim = specs.get("pos_enc_dim", 10)
+
+        self.spatial_scale = specs.get("scale_spatial_inputs_by", 1.0)
 
         self.latent_in = specs.get("latent_in", [-1])
 
@@ -148,7 +153,7 @@ class Decoder(nn.Module):
         # - if lipschitz_layers is not -1 but also use_lipschitz_normalized_layers is True, warn that the latter will override SpectraLinear layers !!
         # - check dimensions requested can be build with wanted skip connection, + pos enc
 
-    def forward(self, input_):
+    def forward_old(self, input_):
         x = input_
 
         for layer in range(0, self.num_layers - 1):
@@ -170,6 +175,94 @@ class Decoder(nn.Module):
             x = torch.tanh(x)
 
         return x
+
+    def forward(self, input_):
+
+        # =========================================================
+        # INPUT ORIGINALE
+        #
+        # input_ =
+        # [latent code | x | y | z]
+        # =========================================================
+
+        latent = input_[
+            :,
+            :self.latent_size
+        ]
+
+        xyz = input_[
+            :,
+            self.latent_size:
+            self.latent_size + 3
+        ]
+
+        # =========================================================
+        # POSITIONAL ENCODING DELLE SOLE COORDINATE
+        # =========================================================
+
+        xyz_encoded = self.positional_encode_xyz(
+            xyz
+        )
+
+        encoded_input = torch.cat(
+            [
+                latent,
+                xyz_encoded,
+            ],
+            dim=1,
+        )
+
+        x = encoded_input
+
+        # =========================================================
+        # MLP
+        # =========================================================
+
+        for layer in range(
+            0,
+            self.num_layers - 1
+        ):
+
+            lin = getattr(
+                self,
+                "lin" + str(layer)
+            )
+
+            if layer in self.latent_in:
+
+                x = torch.cat(
+                    [
+                        x,
+                        encoded_input,
+                    ],
+                    dim=1,
+                )
+
+            x = lin(x)
+
+            if layer < self.num_layers - 2:
+
+                if self.batch_norm:
+                    bn = getattr(
+                        self,
+                        "bn" + str(layer)
+                    )
+                    x = bn(x)
+
+                x = self.act(x)
+
+                if layer in self.dropout:
+                    x = F.dropout(
+                        x,
+                        p=self.dropout_prob,
+                        training=self.training,
+                    )
+
+        if self.last_tanh:
+            x = torch.tanh(x)
+
+        return x
+
 
     def description(self):
         desc = f"Decoder network:"
@@ -200,6 +293,48 @@ class Decoder(nn.Module):
             f = f + ", tanh on output. \n"
 
         return desc + f
+
+    def positional_encode_xyz(self, xyz):
+        """
+        Positional encoding delle sole coordinate xyz.
+
+        xyz arriva al decoder già moltiplicato per
+        scale_spatial_inputs_by (es. 100).
+
+        Per sin/cos torniamo alle coordinate non scalate,
+        mentre manteniamo xyz scalato come parte lineare
+        dell'input originale.
+        """
+
+        if not self.use_positional_encoding:
+            return xyz
+
+        # Coordinate alla scala originale
+        xyz_pe = xyz / self.spatial_scale
+
+        encoded = [xyz]
+
+        for k in range(self.pos_enc_dim):
+
+            frequency = (2.0 ** k) * math.pi
+
+            encoded.append(
+                torch.sin(
+                    frequency * xyz_pe
+                )
+            )
+
+            encoded.append(
+                torch.cos(
+                    frequency * xyz_pe
+                )
+            )
+
+        return torch.cat(
+            encoded,
+            dim=1,
+        )
+
 
 class DeepSDF(pl.LightningModule):
 
@@ -244,7 +379,7 @@ class DeepSDF(pl.LightningModule):
 
         # EIKONAL terms
         # self.use_eikonal = specs.get("use_eikonal_loss", False)
-        self.use_eikonal_loss = True
+        self.use_eikonal_loss = False
 
         # self.eikonal_weight = specs.get("eikonal_weight", 1e-2)
         #self.eikonal_weight = 1e-3
