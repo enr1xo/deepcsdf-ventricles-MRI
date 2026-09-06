@@ -90,6 +90,7 @@ else:
     PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/rizzardi/Schreibtisch/all_npy_files_5k")
     PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/rizzardi/Schreibtisch/MRI_model/generated_npy_three_axis_grid")
     PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/rizzardi/Schreibtisch/expanded_dataset_19500pts_npy")
+    PATIENTS_COORDS_AND_SDFS_DIR = Path("/home/rizzardi/Schreibtisch/expanded_dataset_40kpts_npy_MRIcomparison")
 
 PATIENTS_NPY_DATA_DIR =  PATIENTS_COORDS_AND_SDFS_DIR / "_expanded_dataset_19500pts_npy" 
 
