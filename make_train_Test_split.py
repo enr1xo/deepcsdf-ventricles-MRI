@@ -17,7 +17,8 @@ NPY_DIR = Path(
     # "/home/rizzardi/Schreibtisch/MRI_model/generated_npy_three_axis"
     # "/home/rizzardi/Schreibtisch/MRI_model/generated_npy_incremented_planes"
     # "/home/rizzardi/Schreibtisch/MRI_model/generated_npy_three_axis_LA_volume_2mm"
-    "/home/rizzardi/Schreibtisch/MRI_model/generated_npy_three_axis_grid"
+    # "/home/rizzardi/Schreibtisch/MRI_model/generated_npy_three_axis_grid"
+    "/home/rizzardi/Schreibtisch/old_model_on_MRI/expanded_dataset_40kpts_npy_MRIcomparison/S_0.025-L_0.75-R_0.5_50k_samples"
 )
 
 TRAIN_TXT = SPLITS_DIR / "train.txt"
@@ -37,6 +38,7 @@ OUTPUT_TEST_JSON = SPLITS_DIR / "data_fnames_test.json"
 # NPY_SUFFIX = "_mri_samples.npy"
 # NPY_SUFFIX = "_three_axis_mri_samples.npy"
 NPY_SUFFIX = "_three_axis_mri_grid_samples.npy"
+NPY_SUFFIX = "-epi_lv_rv_40000_coords_and_sdf.npy"
 
 
 # True:

@@ -898,9 +898,9 @@ if __name__ == "__main__":
     # num_rendo_samples = 1050
 
     # samples number comparable to MRI-specific models samples count
-    num_epi_samples = 5850
-    num_lendo_samples = 6825 
-    num_rendo_samples = 6825
+    num_epi_samples = 12000
+    num_lendo_samples = 14000 
+    num_rendo_samples = 14000
     
     num = num_epi_samples + num_lendo_samples + num_rendo_samples
 
@@ -922,6 +922,10 @@ if __name__ == "__main__":
     else:
         print(f"\n--- PARALELL PREPROCESSING ---\n")
 
+    source_dir=Path(
+                "/home/rizzardi/Schreibtisch/AF001_aligned_processed"
+            )
+    
     for sigma in sigmas:
         for lam in lambdas:
             for rho in rhos:
@@ -930,13 +934,13 @@ if __name__ == "__main__":
                     print(f"\nSamples number: {num}")
                     print(f"\nPreprocessing sampling combination {combination} / {combs}.")
 
-                    save_dir = PATIENTS_COORDS_AND_SDFS_DIR / f"S_{sigma}-L_{lam}-R_{rho}"
+                    save_dir = PATIENTS_COORDS_AND_SDFS_DIR / f"S_{sigma}-L_{lam}-R_{rho}_50k_samples"
                     save_dir.mkdir(parents=True, exist_ok=True)
 
                     start_time = time.time()
 
                     _create_deepsdf_data_npy(
-                        source_dir=PATIENT_MESHES_DIR,
+                        source_dir=source_dir,
                         save_to_dir= save_dir,
                         reference_patient=reference_patient,
                         num_epi_samples=num_epi_samples,
@@ -946,7 +950,7 @@ if __name__ == "__main__":
                         lamb=lam,
                         rho=rho,
                         create_processed_meshes=False,
-                        store_processed_meshes=True
+                        store_processed_meshes=False
                     )
                     
                     end_time = time.time()
@@ -962,7 +966,7 @@ if __name__ == "__main__":
                     print(f"\nSamples number: {num}")
                     print(f"\nPreprocessing sampling combination {combination} / {combs}.")
 
-                    save_dir = PATIENTS_COORDS_AND_SDFS_DIR / f"S_{sigma}-L_{lam}-R_{rho}"
+                    save_dir = PATIENTS_COORDS_AND_SDFS_DIR / f"S_{sigma}-L_{lam}-R_{rho}_50k_samples"
                     save_dir.mkdir(parents=True, exist_ok=True)
 
                     # DEBUG
@@ -972,7 +976,7 @@ if __name__ == "__main__":
                     start_time = time.time()
 
                     _create_deepsdf_data_npy_parallel(
-                        source_dir=PATIENT_MESHES_DIR,
+                        source_dir=source_dir,
                         # source_dir=patient_dir,
                         save_to_dir= save_dir,
                         reference_patient=reference_patient,
@@ -983,7 +987,7 @@ if __name__ == "__main__":
                         lamb=lam,
                         rho=rho,
                         create_processed_meshes=False,
-                        store_processed_meshes=True,
+                        store_processed_meshes=False,
                         max_workers=6
                     )
                     

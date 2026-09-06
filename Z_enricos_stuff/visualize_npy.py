@@ -10,11 +10,14 @@ import pyvista as pv
 #NPY_PATH = Path("/home/rizzardi/Schreibtisch/MRI_model/generated_npy_three_axis_LA_volume_2mm")
 #CARDIAC_SURFS_PATH = Path("/home/rizzardi/Schreibtisch/AF001_aligned_processed")
 
-NPY_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop")
-CARDIAC_SURFS_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\AF001_aligned_processed")
+# NPY_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop")
+NPY_PATH = Path(r"/home/rizzardi/Schreibtisch/old_model_on_MRI/expanded_dataset_40kpts_npy_MRIcomparison/S_0.025-L_0.75-R_0.5_50k_samples")
+# CARDIAC_SURFS_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\AF001_aligned_processed")
+CARDIAC_SURFS_PATH = Path(r"/home/rizzardi/Schreibtisch/AF001_aligned_processed")
 
 NPY_SUFFIX = "_echo_samples.npy"
 NPY_SUFFIX = "_three_axis_mri_grid_samples.npy"
+NPY_SUFFIX = "-epi_lv_rv_40000_coords_and_sdf.npy"
 #NPY_SUFFIX = "-epi_lv_rv_19500_coords_and_sdf.npy"
 
 PATIENT_ID = "AF001"
@@ -70,7 +73,7 @@ import pyvista as pv
 # "mask_lv"
 # "mask_rv"
 # "constant"
-POINT_COLOR_MODE = "sdf_epi"
+POINT_COLOR_MODE = "sdf_rv"
 
 POINT_SIZE = 5.0
 SURFACE_OPACITY = 0.30

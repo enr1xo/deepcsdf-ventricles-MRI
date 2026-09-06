@@ -357,6 +357,7 @@ def run(
     patient : str | None=None,
     surface : str = "all",
     reconstructed_meshes_dir_override: Path | None = None,
+    test_data_dir: Path | None = None,
 ):
     experiments_dir = combo_dir / "experiments"
     images_dir = combo_config.IMAGES_DIR
@@ -380,6 +381,29 @@ def run(
     patient_meshes_dir = combo_config.PATIENT_MESHES_DIR
     patients_npy_data_dir = Path(combo_config.PATIENTS_NPY_DATA_DIR)
 
+    if test_data_dir is not None:
+
+        effective_test_data_dir = (
+            Path(test_data_dir)
+            .expanduser()
+            .resolve()
+        )
+
+        if not effective_test_data_dir.is_dir():
+            raise NotADirectoryError(
+                f"Test data directory not found: "
+                f"{effective_test_data_dir}"
+            )
+
+    else:
+
+        effective_test_data_dir = (
+            patients_npy_data_dir
+            .expanduser()
+            .resolve()
+        )
+
+
     exp_dir = experiments_dir / experiment_name
     if version is None or version == "latest":
         version_dir = get_latest_version_dir(exp_dir)
@@ -401,7 +425,19 @@ def run(
     specs["TrainSplit"] = str((combo_dir / "train" / "data_fnames_train.json").resolve())
 
     # important: use combo-specific datasource
-    specs["DataSource"] = str(patients_npy_data_dir)
+    # specs["DataSource"] = str(patients_npy_data_dir)
+    specs["DataSource"] = str(
+                                effective_test_data_dir
+                            )
+    print(
+        "[TEST] DataSource:",
+        specs["DataSource"],
+    )
+
+    print(
+        "[TEST] TestSplit:",
+        specs["TestSplit"],
+    )
 
     #old
     if override_with_dataset is not None:
@@ -506,10 +542,11 @@ def run(
         patient_name = patient_names[shape_idx]
         print("\n\033[48;2;30;30;30;0;38;2;255;200;0m" + f"# {'='*10} PATIENT {patient_name} : {shape_idx+1}/{len(dataset)} {'='*10} #" + "\033[0m")
 
-        coords_and_sdf_file = next(patients_npy_data_dir.glob(f"{patient_name}*.npy"), None)
+        # coords_and_sdf_file = next(patients_npy_data_dir.glob(f"{patient_name}*.npy"), None)
+        coords_and_sdf_file = next(effective_test_data_dir.glob(f"{patient_name}*.npy"), None)
         if coords_and_sdf_file is None:
             raise FileNotFoundError(
-                f"No original npy data found in {patients_npy_data_dir} for patient {patient_name}"
+                f"No original npy data found in {effective_test_data_dir} for patient {patient_name}"
             )
 
         chamfer_dists[patient_name] = {}
@@ -1003,6 +1040,13 @@ def parse_args():
         default=None,
         help="Optional override for reconstructed meshes output directory.",
     )
+
+    parser.add_argument(
+        "--test_data_dir",
+        type=Path,
+        default=None,
+        help="Optional override for test data directory.",
+    )
     
     return parser.parse_args()
 
@@ -1035,6 +1079,7 @@ def main():
         "patient": args.patient,
         "surface": args.surface,
         "reconstructed_meshes_dir_override": args.reconstructed_meshes_dir,
+        "test_data_dir": args.test_data_dir,
     }
 
     if args.mode == 1:

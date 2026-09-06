@@ -212,6 +212,13 @@ class Decoder(nn.Module):
             dim=1,
         )
 
+        if encoded_input.shape[1] != self.dims[0]:
+            raise RuntimeError(
+                f"Positional encoding dimension mismatch: "
+                f"got {encoded_input.shape[1]}, "
+                f"expected {self.dims[0]}"
+            )
+
         x = encoded_input
 
         # =========================================================
