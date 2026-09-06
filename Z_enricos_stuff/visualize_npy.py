@@ -10,8 +10,8 @@ import pyvista as pv
 #NPY_PATH = Path("/home/rizzardi/Schreibtisch/MRI_model/generated_npy_three_axis_LA_volume_2mm")
 #CARDIAC_SURFS_PATH = Path("/home/rizzardi/Schreibtisch/AF001_aligned_processed")
 
-NPY_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\3axis_grid_contourSDF_LAXband2mm_SAXbandNone_curvature_sampling")
-NPY_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\generated_npy_three_axis_grid_contourSDF_LAXband2mm_SAXbandNone_curvature_sampling")
+NPY_PATH = Path(r"/home/rizzardi/Schreibtisch/old_model_on_MRI/expanded_dataset_40kpts_npy_MRIcomparison/S_0.025-L_0.75-R_0.5_50k_samples")
+CARDIAC_SURFS_PATH = Path(r"/home/rizzardi/Schreibtisch/AF001_aligned_processed")
 #NPY_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop")
 
 CARDIAC_SURFS_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\AF001_aligned_processed")
