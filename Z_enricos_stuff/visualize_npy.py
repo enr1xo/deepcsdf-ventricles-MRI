@@ -10,7 +10,10 @@ import pyvista as pv
 #NPY_PATH = Path("/home/rizzardi/Schreibtisch/MRI_model/generated_npy_three_axis_LA_volume_2mm")
 #CARDIAC_SURFS_PATH = Path("/home/rizzardi/Schreibtisch/AF001_aligned_processed")
 
-NPY_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop")
+NPY_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\3axis_grid_contourSDF_LAXband2mm_SAXbandNone_curvature_sampling")
+NPY_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\generated_npy_three_axis_grid_contourSDF_LAXband2mm_SAXbandNone_curvature_sampling")
+#NPY_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop")
+
 CARDIAC_SURFS_PATH = Path(r"C:\Users\e.rizzardi\OneDrive\Desktop\AF001_aligned_processed")
 
 NPY_SUFFIX = "_echo_samples.npy"
@@ -70,7 +73,7 @@ import pyvista as pv
 # "mask_lv"
 # "mask_rv"
 # "constant"
-POINT_COLOR_MODE = "sdf_epi"
+POINT_COLOR_MODE = "sdf_rv"
 
 POINT_SIZE = 5.0
 SURFACE_OPACITY = 0.30
